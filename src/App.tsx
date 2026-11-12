@@ -3,6 +3,9 @@ import { initDb } from "./db";
 import { useT } from "./i18n";
 import { useStore } from "./store";
 import { Dashboard } from "./views/Dashboard";
+import { Grades } from "./views/Grades";
+import { Timetable } from "./views/Timetable";
+import { notifyDueTasks } from "./reminders";
 import { MoveDialog } from "./views/MoveDialog";
 import { PageView } from "./views/PageView";
 import { Review } from "./views/Review";
@@ -30,6 +33,7 @@ export function App() {
       async (db) => {
         await Promise.all([useStore.getState().refreshPages(), useStore.getState().refreshDue()]);
         setStatus({ state: "ready", persistent: db.persistent });
+        void notifyDueTasks();
       },
       (err) => setStatus({ state: "error", message: String(err?.message ?? err) }),
     );
@@ -76,6 +80,8 @@ export function App() {
         {route.view === "review" && <Review />}
         {route.view === "tasks" && <Tasks />}
         {route.view === "trash" && <Trash />}
+        {route.view === "timetable" && <Timetable />}
+        {route.view === "grades" && <Grades />}
       </main>
       {searchOpen && <SearchDialog />}
       {moveId && <MoveDialog id={moveId} />}

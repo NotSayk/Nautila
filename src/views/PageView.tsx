@@ -1,5 +1,9 @@
 import {
   ALargeSmall,
+  BookmarkPlus,
+  CodeXml,
+  History,
+  Printer,
   Copy,
   CornerUpRight,
   Download,
@@ -17,10 +21,13 @@ import {
 import { Fragment, useEffect, useRef, useState } from "react";
 import { download } from "../data/backup";
 import { saveFile } from "../data/files";
+import { deleteTemplate, listTemplates, saveTemplate, type CustomTemplate } from "../data/templates";
+import { snapshot } from "../data/versions";
 import {
   backlinks,
   duplicatePage,
   getPageDoc,
+  replacePageDoc,
   trashPage,
   updatePageMeta,
   type PageFont,
@@ -34,6 +41,7 @@ import { useStore } from "../store";
 import { Cover, IconButton, Menu, PageIcon, Popover, relativeTime, SectionTitle, TopBar } from "./common";
 import { DatabaseView, RowProperties } from "./database/DatabaseView";
 import { EmojiPicker } from "./EmojiPicker";
+import { HistoryDialog } from "./HistoryDialog";
 
 const COVER_COLORS = [
   "#ebeced",
@@ -93,7 +101,9 @@ export function PageView({ id }: { id: string }) {
   const refreshPages = useStore((s) => s.refreshPages);
   const page = pages.find((p) => p.id === id);
 
-  const [doc, setDoc] = useState<{ ydoc: string | null } | undefined>();
+  const [doc, setDoc] = useState<{ ydoc: string | null; rev: number } | undefined>();
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const [custom, setCustom] = useState<CustomTemplate[]>([]);
   const [pristine, setPristine] = useState(false);
   const [title, setTitle] = useState(page?.title ?? "");
   const [picker, setPicker] = useState<DOMRect | null>(null);
@@ -109,7 +119,8 @@ export function PageView({ id }: { id: string }) {
     let live = true;
     getPageDoc(id).then((ydoc) => {
       if (!live) return;
-      setDoc({ ydoc });
+      setDoc({ ydoc, rev: 0 });
+      if (ydoc === null) void listTemplates().then((list) => live && setCustom(list));
       setPristine(ydoc === null);
     });
     backlinks(id).then((rows) => live && setMentions(rows));
@@ -133,6 +144,21 @@ export function PageView({ id }: { id: string }) {
 
   const trail: PageMeta[] = [];
   for (let p: PageMeta | undefined = page; p; p = pages.find((x) => x.id === p!.parent_id)) trail.unshift(p);
+
+  // Remplace le contenu de la page ; l'état courant est d'abord gardé dans l'historique.
+  const applyDoc = async (ydoc: string, body: string) => {
+    const current = editor.current;
+    if (current) await snapshot(id, current.docState(), current.bodyText(), true);
+    await replacePageDoc(id, ydoc, body);
+    setPristine(false);
+    setDoc((d) => ({ ydoc, rev: (d?.rev ?? 0) + 1 }));
+  };
+
+  const exportHtml = () => {
+    const name = title || t("untitled");
+    const html = `<!doctype html><html><head><meta charset="utf-8"><title>${name.replace(/[<&]/g, "")}</title></head><body><h1>${name.replace(/[<&]/g, "")}</h1>${editor.current?.toHTML() ?? ""}</body></html>`;
+    download(`${name.replace(/[\\/:*?"<>|]/g, "-")}.html`, html, "text/html");
+  };
 
   const exportMarkdown = () => {
     const name = title || t("untitled");
@@ -215,6 +241,20 @@ export function PageView({ id }: { id: string }) {
                     label: t("exportMd"),
                     onClick: exportMarkdown,
                   },
+                  ...(isDatabase
+                    ? []
+                    : [
+                        { icon: <CodeXml size={16} />, label: t("exportHtml"), onClick: exportHtml },
+                        { icon: <Printer size={16} />, label: t("print"), onClick: () => window.print() },
+                        "separator" as const,
+                        { icon: <History size={16} />, label: t("history"), onClick: () => setHistoryOpen(true) },
+                        {
+                          icon: <BookmarkPlus size={16} />,
+                          label: t("saveAsTemplate"),
+                          onClick: () =>
+                            editor.current && saveTemplate(title || t("untitled"), editor.current.docState()),
+                        },
+                      ]),
                   "separator",
                   {
                     icon: <Trash2 size={16} />,
@@ -382,9 +422,11 @@ export function PageView({ id }: { id: string }) {
         <div className={isDatabase ? "hidden" : "mt-2"}>
           {doc && !isDatabase && (
             <PageEditor
+              key={doc.rev}
               ref={editor}
               pageId={id}
               initialDoc={doc.ydoc}
+              saveOnMount={doc.rev > 0}
               editable={!page.locked}
               onFirstEdit={() => setPristine(false)}
             />
@@ -395,6 +437,27 @@ export function PageView({ id }: { id: string }) {
           <div className="mt-6 px-(--page-pad) text-muted">
             <p className="mb-1 text-faint">{t("template")}</p>
             <div className="-mx-1.5">
+              {custom.map((tpl) => (
+                <div key={tpl.id} className="group flex h-8 items-center rounded-md hover:bg-hover">
+                  <button
+                    onClick={() => applyDoc(tpl.ydoc, "")}
+                    className="flex h-full min-w-0 flex-1 items-center gap-2 px-1.5 text-left text-[15px]"
+                  >
+                    <BookmarkPlus size={18} strokeWidth={1.75} />
+                    <span className="truncate">{tpl.name}</span>
+                  </button>
+                  <IconButton
+                    label={t("delete")}
+                    className="mr-1 size-6 opacity-0 focus:opacity-100 group-hover:opacity-100"
+                    onClick={async () => {
+                      await deleteTemplate(tpl.id);
+                      setCustom(await listTemplates());
+                    }}
+                  >
+                    <Trash2 size={14} />
+                  </IconButton>
+                </div>
+              ))}
               {TEMPLATES.map(([tid, key]) => (
                 <button
                   key={tid}
@@ -418,6 +481,16 @@ export function PageView({ id }: { id: string }) {
 
         {!isDatabase && <PageList title={t("subpages")} pages={pages.filter((p) => p.parent_id === id)} />}
         <PageList title={t("backlinks")} pages={mentions} />
+        {historyOpen && (
+          <HistoryDialog
+            pageId={id}
+            onClose={() => setHistoryOpen(false)}
+            onRestore={async (version) => {
+              setHistoryOpen(false);
+              await applyDoc(version.ydoc, version.body);
+            }}
+          />
+        )}
       </div>
     </>
   );

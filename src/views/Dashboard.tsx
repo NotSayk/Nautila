@@ -1,6 +1,7 @@
-import { CalendarCheck, Clock, Layers } from "lucide-react";
+import { CalendarCheck, CalendarDays, Clock, Layers } from "lucide-react";
 import { useEffect, useState } from "react";
 import { cardStats } from "../data/cards";
+import { listSlots, type Slot } from "../data/school";
 import { listTasks, type Task } from "../data/tasks";
 import { useT } from "../i18n";
 import { useStore } from "../store";
@@ -13,9 +14,12 @@ export function Dashboard() {
   const navigate = useStore((s) => s.navigate);
   const [stats, setStats] = useState({ due: 0, total: 0 });
   const [tasks, setTasks] = useState<Task[]>([]);
+  const [classes, setClasses] = useState<Slot[]>([]);
 
   useEffect(() => {
     cardStats().then(setStats);
+    const today = (new Date().getDay() + 6) % 7;
+    listSlots().then((all) => setClasses(all.filter((x) => x.day === today)));
     listTasks().then((all) => setTasks(all.filter((x) => !x.done && x.due_at !== null && daysUntil(x.due_at) <= 14)));
   }, []);
 
@@ -59,6 +63,29 @@ export function Dashboard() {
 
         <div className="grid gap-8 md:grid-cols-[minmax(0,1fr)_260px]">
           <section>
+            {classes.length > 0 && (
+              <>
+                <SectionTitle>
+                  <CalendarDays size={14} />
+                  {t("todayClasses")}
+                </SectionTitle>
+                <div className="mb-8 rounded-xl bg-panel p-1.5">
+                  {classes.map((c) => (
+                    <button
+                      key={c.id}
+                      onClick={() => navigate({ view: "timetable" })}
+                      className="flex h-9 w-full items-center gap-2.5 rounded-lg px-2.5 text-left hover:bg-hover"
+                    >
+                      <span className="w-24 shrink-0 tabular-nums text-muted">
+                        {c.start} – {c.end}
+                      </span>
+                      <span className="min-w-0 flex-1 truncate font-medium">{c.title}</span>
+                      <span className="truncate text-muted">{c.room}</span>
+                    </button>
+                  ))}
+                </div>
+              </>
+            )}
             <SectionTitle>
               <CalendarCheck size={14} />
               {t("upcoming")}

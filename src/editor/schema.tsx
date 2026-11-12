@@ -159,6 +159,25 @@ const PageLink = createReactInlineContentSpec(
   },
 );
 
+/** Identifiant d'un langage de code connu (alias compris), sinon texte brut. */
+export function languageId(name: string): string {
+  const wanted = name.trim().toLowerCase();
+  for (const [id, lang] of Object.entries(codeBlockOptions.supportedLanguages))
+    if (id === wanted || lang.aliases?.some((a) => a === wanted)) return id;
+  return "text";
+}
+
+// Un bloc de code collé ou importé peut porter un alias (« js ») ou un langage
+// inconnu, que le rendu d'origine refuse en levant une erreur : on le normalise.
+const codeBlock = createCodeBlockSpec(codeBlockOptions);
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const renderCode = codeBlock.implementation.render as (this: unknown, block: any, editor: any) => any;
+codeBlock.implementation.render = function (block, editor) {
+  const language = languageId(block.props.language);
+  const fixed = language === block.props.language ? block : { ...block, props: { ...block.props, language } };
+  return renderCode.call(this, fixed, editor);
+};
+
 const Callout = createReactBlockSpec(
   { type: "callout", propSchema: { icon: { default: "💡" } }, content: "inline" },
   {
@@ -244,7 +263,7 @@ export const schema = withMultiColumn(
   BlockNoteSchema.create({
     blockSpecs: {
       ...defaultBlockSpecs,
-      codeBlock: createCodeBlockSpec(codeBlockOptions),
+      codeBlock,
       mathBlock: MathBlock(),
       flashcard: Flashcard(),
       callout: Callout(),

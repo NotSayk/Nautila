@@ -22,9 +22,10 @@ import * as Y from "yjs";
 import { extract } from "../data/extract";
 import { resolveFileUrl, saveFile } from "../data/files";
 import { savePageContent } from "../data/pages";
+import { pendingMarkdown } from "../data/templates";
 import { useT } from "../i18n";
 import { useStore } from "../store";
-import { schema, type NautilaBlock, type NautilaEditor } from "./schema";
+import { languageId, schema, type NautilaBlock, type NautilaEditor } from "./schema";
 
 function toBase64(bytes: Uint8Array): string {
   let s = "";
@@ -33,10 +34,24 @@ function toBase64(bytes: Uint8Array): string {
 }
 const fromBase64 = (b64: string) => Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
 
+/** Ramène les langages de code inconnus à du texte brut : le colorateur refuse les autres. */
+function knownLanguages<T extends { type: string; props?: any; children?: T[] }>(blocks: T[]): T[] {
+  return blocks.map((b) => ({
+    ...b,
+    props: b.type === "codeBlock" ? { ...b.props, language: languageId(b.props?.language ?? "") } : b.props,
+    children: b.children ? knownLanguages(b.children) : b.children,
+  }));
+}
+
 export type PageEditorHandle = {
   toMarkdown: () => string;
   applyTemplate: (blocks: NautilaBlock[]) => void;
   wordCount: () => number;
+  toHTML: () => string;
+  /** Texte brut de la page. */
+  bodyText: () => string;
+  /** État Yjs courant, en base64. */
+  docState: () => string;
 };
 
 type Props = {
@@ -44,12 +59,14 @@ type Props = {
   /** État Yjs enregistré (base64), ou null pour une page neuve. */
   initialDoc: string | null;
   editable?: boolean;
+  /** Réindexe le contenu dès l'ouverture (après une restauration ou un modèle). */
+  saveOnMount?: boolean;
   /** Appelé à la première modification du contenu. */
   onFirstEdit?: () => void;
 };
 
 export const PageEditor = forwardRef<PageEditorHandle, Props>(function PageEditor(
-  { pageId, initialDoc, editable = true, onFirstEdit },
+  { pageId, initialDoc, editable = true, saveOnMount, onFirstEdit },
   ref,
 ) {
   const t = useT();
@@ -94,12 +111,15 @@ export const PageEditor = forwardRef<PageEditorHandle, Props>(function PageEdito
     () => ({
       toMarkdown: () => editor.blocksToMarkdownLossy(),
       applyTemplate: (blocks) => void editor.replaceBlocks(editor.document, blocks),
+      toHTML: () => editor.blocksToHTMLLossy(),
+      bodyText: () => extract(editor.document as never).body,
+      docState: () => toBase64(Y.encodeStateAsUpdate(doc)),
       wordCount: () =>
         extract(editor.document as never)
           .body.split(/\s+/)
           .filter(Boolean).length,
     }),
-    [editor],
+    [editor, doc],
   );
 
   // Enregistrement différé à chaque modification, et immédiat quand on quitte.
@@ -126,6 +146,12 @@ export const PageEditor = forwardRef<PageEditorHandle, Props>(function PageEdito
     const onHide = () => document.visibilityState === "hidden" && flush();
 
     doc.on("update", onUpdate);
+    const markdown = pendingMarkdown.get(pageId);
+    if (markdown !== undefined) {
+      pendingMarkdown.delete(pageId);
+      const current = editorRef.current;
+      current.replaceBlocks(current.document, knownLanguages(current.tryParseMarkdownToBlocks(markdown)));
+    } else if (saveOnMount) void save();
     document.addEventListener("visibilitychange", onHide);
     window.addEventListener("pagehide", flush);
     return () => {

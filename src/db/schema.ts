@@ -72,6 +72,35 @@ const MIGRATIONS: string[][] = [
     `CREATE TABLE databases (page_id TEXT PRIMARY KEY, config TEXT NOT NULL)`,
     `ALTER TABLE pages ADD COLUMN props TEXT`,
   ],
+  [
+    `CREATE TABLE slots (
+      id TEXT PRIMARY KEY,
+      course_id TEXT,
+      title TEXT NOT NULL,
+      day INTEGER NOT NULL,
+      start TEXT NOT NULL,
+      end TEXT NOT NULL,
+      room TEXT NOT NULL DEFAULT ''
+    )`,
+    `CREATE TABLE grades (
+      id TEXT PRIMARY KEY,
+      course_id TEXT NOT NULL,
+      title TEXT NOT NULL,
+      score REAL NOT NULL,
+      out_of REAL NOT NULL DEFAULT 20,
+      weight REAL NOT NULL DEFAULT 1,
+      created_at INTEGER NOT NULL
+    )`,
+    `CREATE TABLE versions (
+      id TEXT PRIMARY KEY,
+      page_id TEXT NOT NULL,
+      ydoc TEXT NOT NULL,
+      body TEXT NOT NULL,
+      created_at INTEGER NOT NULL
+    )`,
+    `CREATE INDEX versions_page ON versions(page_id, created_at)`,
+    `CREATE TABLE templates (id TEXT PRIMARY KEY, name TEXT NOT NULL, ydoc TEXT NOT NULL, created_at INTEGER NOT NULL)`,
+  ],
 ];
 
 export async function migrate(db: Db): Promise<void> {

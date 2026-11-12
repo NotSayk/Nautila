@@ -1,5 +1,9 @@
 import {
+  Bell,
   CalendarCheck,
+  CalendarDays,
+  ChartNoAxesColumn,
+  FileDown,
   ChevronRight,
   ChevronsLeft,
   Copy,
@@ -22,10 +26,13 @@ import {
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { download, exportBackup, importBackup } from "../data/backup";
-import { duplicatePage, movePage, trashPage, updatePageMeta, type PageMeta } from "../data/pages";
+import { createPage, duplicatePage, movePage, trashPage, updatePageMeta, type PageMeta } from "../data/pages";
+import { pendingMarkdown } from "../data/templates";
+import { enableReminders } from "../reminders";
 import { useT } from "../i18n";
 import { useStore, type Route } from "../store";
 import { IconButton, Menu, PageIcon } from "./common";
+import { Pomodoro } from "./Pomodoro";
 
 const ICON = { size: 18, strokeWidth: 1.75 } as const;
 const ROW = "flex h-[30px] w-full items-center gap-2 rounded-md px-2 text-left font-medium text-muted hover:bg-hover";
@@ -304,6 +311,23 @@ export function Sidebar() {
   const roots = tree.get(null) ?? [];
   const favorites = pages.filter((p) => p.favorite);
 
+  const mdInput = useRef<HTMLInputElement>(null);
+  const onImportMarkdown = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = [...(e.target.files ?? [])];
+    e.target.value = "";
+    let last: string | undefined;
+    for (const file of files) {
+      const text = await file.text();
+      // Un titre de niveau 1 en première ligne devient le titre de la page.
+      const heading = text.match(/^\s*# (.+)\n?/);
+      const page = await createPage({ title: heading?.[1].trim() ?? file.name.replace(/\.[^.]+$/, "") });
+      pendingMarkdown.set(page.id, heading ? text.slice(heading[0].length) : text);
+      last = page.id;
+    }
+    await useStore.getState().refreshPages();
+    if (last) navigate({ view: "page", id: last });
+  };
+
   const onImport = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     e.target.value = "";
@@ -365,6 +389,18 @@ export function Sidebar() {
             active={route.view === "tasks"}
             onClick={go({ view: "tasks" })}
           />
+          <NavItem
+            icon={<CalendarDays {...ICON} />}
+            label={t("timetable")}
+            active={route.view === "timetable"}
+            onClick={go({ view: "timetable" })}
+          />
+          <NavItem
+            icon={<ChartNoAxesColumn {...ICON} />}
+            label={t("grades")}
+            active={route.view === "grades"}
+            onClick={go({ view: "grades" })}
+          />
         </nav>
 
         <div className="min-h-0 flex-1 overflow-y-auto px-1.5 pb-4">
@@ -397,6 +433,7 @@ export function Sidebar() {
         </div>
 
         <div className="px-1.5 pb-2 pt-1 shadow-[inset_0_1px_0_var(--color-line)]">
+          <Pomodoro />
           <Menu
             label={t("settingsMenu")}
             className={ROW}
@@ -425,6 +462,13 @@ export function Sidebar() {
                   ),
               },
               { icon: <Upload size={16} />, label: t("importBackup"), onClick: () => fileInput.current?.click() },
+              { icon: <FileDown size={16} />, label: t("importMd"), onClick: () => mdInput.current?.click() },
+              "separator",
+              {
+                icon: <Bell size={16} />,
+                label: t("enableReminders"),
+                onClick: async () => alert(t((await enableReminders()) ? "remindersOn" : "remindersBlocked")),
+              },
             ]}
           />
           <NavItem
@@ -434,6 +478,14 @@ export function Sidebar() {
             onClick={go({ view: "trash" })}
           />
           <input ref={fileInput} type="file" accept="application/json,.json" hidden onChange={onImport} />
+          <input
+            ref={mdInput}
+            type="file"
+            accept=".md,.markdown,.txt,text/markdown,text/plain"
+            multiple
+            hidden
+            onChange={onImportMarkdown}
+          />
         </div>
       </aside>
     </>

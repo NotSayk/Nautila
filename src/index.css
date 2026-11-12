@@ -358,3 +358,25 @@ textarea:focus-visible,
   background: #69314c;
   color: rgb(255 255 255 / 0.85);
 }
+
+/* Impression et export PDF : seul le contenu de la page est conservé. */
+@media print {
+  aside,
+  header,
+  .bn-side-menu,
+  .no-print {
+    display: none !important;
+  }
+  html,
+  body,
+  #root,
+  #root > div,
+  main {
+    height: auto !important;
+    overflow: visible !important;
+    display: block !important;
+  }
+  :root {
+    --page-pad: 0px;
+  }
+}

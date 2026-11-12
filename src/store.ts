@@ -8,12 +8,15 @@ export type Route =
   | { view: "review" }
   | { view: "tasks" }
   | { view: "trash" }
+  | { view: "timetable" }
+  | { view: "grades" }
   | { view: "page"; id: string };
 
 function parseHash(): Route {
   const [view, id] = location.hash.replace(/^#\/?/, "").split("/");
   if (view === "page" && id) return { view: "page", id };
-  if (view === "review" || view === "tasks" || view === "trash") return { view };
+  if (view === "review" || view === "tasks" || view === "trash" || view === "timetable" || view === "grades")
+    return { view };
   return { view: "home" };
 }
 
@@ -44,6 +47,8 @@ type State = {
   sidebarOpen: boolean;
   /** Page en cours de déplacement (boîte « Déplacer vers »). */
   moveId: string | null;
+  /** Minuteur Pomodoro : `endsAt` défini quand il tourne, `left` (ms) quand il est en pause. */
+  pomodoro: { mode: "focus" | "break"; endsAt: number | null; left: number };
   navigate: (route: Route) => void;
   refreshPages: () => Promise<void>;
   refreshDue: () => Promise<void>;
@@ -69,6 +74,7 @@ export const useStore = create<State>((set, get) => ({
   dark: stored("nautila.dark") ? stored("nautila.dark") === "1" : matchMedia("(prefers-color-scheme: dark)").matches,
   searchOpen: false,
   moveId: null,
+  pomodoro: { mode: "focus", endsAt: null, left: 25 * 60_000 },
   sidebarOpen: isDesktop() && stored("nautila.sidebar") !== "0",
 
   navigate: (route) => {

@@ -1,5 +1,6 @@
 import { db } from "../db";
 import { syncCards } from "./cards";
+import { snapshot } from "./versions";
 import { toFtsQuery, type Extracted } from "./extract";
 
 export type PageKind = "note" | "course" | "semester" | "database";
@@ -162,6 +163,7 @@ export async function savePageContent(id: string, ydoc: string, extracted: Extra
     id,
   ]);
   await reindex(id);
+  await snapshot(id, ydoc, extracted.body);
   await db().run("DELETE FROM links WHERE source_id = ?", [id]);
   for (const target of extracted.links)
     await db().run("INSERT OR IGNORE INTO links (source_id, target_id) VALUES (?, ?)", [id, target]);
@@ -212,6 +214,9 @@ export async function deletePageForever(id: string) {
     await db().run("DELETE FROM links WHERE source_id = ? OR target_id = ?", [pid, pid]);
     await db().run("DELETE FROM cards WHERE page_id = ?", [pid]);
     await db().run("DELETE FROM databases WHERE page_id = ?", [pid]);
+    await db().run("DELETE FROM versions WHERE page_id = ?", [pid]);
+    await db().run("DELETE FROM grades WHERE course_id = ?", [pid]);
+    await db().run("UPDATE slots SET course_id = NULL WHERE course_id = ?", [pid]);
     await db().run("UPDATE tasks SET course_id = NULL WHERE course_id = ?", [pid]);
   }
 }
@@ -237,3 +242,9 @@ export const backlinks = (id: string) =>
      AND id IN (SELECT source_id FROM links WHERE target_id = ?) ORDER BY title`,
     [id],
   );
+
+/** Remplace le contenu d'une page (restauration d'une version, application d'un modèle). */
+export async function replacePageDoc(id: string, ydoc: string, body = "") {
+  await db().run("UPDATE pages SET ydoc = ?, body = ?, updated_at = ? WHERE id = ?", [ydoc, body, Date.now(), id]);
+  await reindex(id);
+}
