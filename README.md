@@ -5,30 +5,42 @@ Tes notes restent sur ton appareil : pas de compte, pas de télémétrie.
 
 ## Ce qui existe aujourd'hui
 
-- **Éditeur par blocs** : titres, listes, cases à cocher, citations, code, tableaux, images,
-  commandes `/`, glisser-déposer des blocs.
-- **Semestres, matières et pages** imbriqués dans la barre latérale.
-- **Formules LaTeX** en bloc et dans le texte (`/formule`).
-- **Flashcards à répétition espacée** (algorithme FSRS) : un bloc `/flashcard` dans une note
-  devient une carte à réviser.
-- **Devoirs et examens** avec échéances, et un tableau de bord d'accueil.
-- **Liens entre pages** (`@`) et rétroliens.
-- **Recherche plein texte** (`Ctrl K`), insensible aux accents.
-- **Modèles** : notes de cours, méthode Cornell, fiche de révision, compte-rendu de TP.
-- Favoris, fil d'Ariane, sous-pages, pleine largeur, barre latérale repliable.
-- Corbeille, thème clair/sombre, interface en français et en anglais.
-- **Données ouvertes** : export Markdown par page, sauvegarde et restauration complètes en JSON.
+**Éditeur**
+- Blocs : titres, listes, cases à cocher, citations, tableaux, images, fichiers, blocs repliables.
+- Encadrés, sommaire automatique, colonnes, code avec coloration syntaxique.
+- Formules LaTeX en bloc et dans le texte, croquis à main levée, PDF intégré, enregistrement audio.
+- Commandes `/`, raccourcis Markdown, couleurs, glisser-déposer des blocs.
 
-## Feuille de route
+**Pages**
+- Semestres, matières et pages imbriqués ; favoris, fil d'Ariane, sous-pages.
+- Icône, couverture, police et largeur par page, verrouillage, compteur de mots.
+- Renommer, dupliquer, déplacer et réordonner par glisser-déposer.
+- Liens entre pages (`@`) et rétroliens, recherche plein texte (`Ctrl K`).
+- Modèles fournis et modèles personnalisés, historique des versions, corbeille.
 
-1. **Bases de données** : vues tableau, kanban et calendrier, avec filtres et tris.
-2. **PDF** : annotation des supports de cours, extraits liés aux notes.
-3. **Emploi du temps** hebdomadaire et calcul de moyennes par matière.
-4. **Synchronisation** entre appareils via un serveur auto-hébergé (le contenu est déjà
-   stocké au format CRDT Yjs, ce qui la rend possible sans réécriture).
-5. Dessin et schémas, minuteur Pomodoro, citations BibTeX/Zotero, enregistrement audio.
-6. Réorganisation des pages par glisser-déposer, historique des versions, import Notion/Markdown.
-7. Applications Android et iOS.
+**Bases de données**
+- Une page peut devenir une base dont chaque ligne est une page.
+- Propriétés : texte, nombre, sélection simple ou multiple, date, case à cocher, lien.
+- Vues tableau, kanban, calendrier, liste et galerie, avec filtres et tri.
+
+**Études**
+- Flashcards à répétition espacée (FSRS) créées depuis les notes.
+- Devoirs et examens avec rappels, emploi du temps, notes et moyennes pondérées.
+- Minuteur Pomodoro, tableau de bord du jour.
+
+**Données**
+- Tout est stocké sur l'appareil. Export Markdown, HTML et PDF par page.
+- Import Markdown, sauvegarde et restauration complètes en JSON.
+- Interface en français et en anglais, thème clair et sombre.
+
+## Pas encore fait
+
+- Synchronisation entre appareils via un serveur auto-hébergé (le contenu est déjà au format Yjs).
+- Annotation des PDF (surlignage lié aux notes) ; le PDF est pour l'instant seulement affiché.
+- Applications Android et iOS ; l'application de bureau Tauri est prête mais n'a pas encore été compilée.
+- Bases de données : relations, formules, vue chronologie, bases intégrées dans une page.
+- Blocs synchronisés, commentaires, étiquettes de pages, filtres de recherche.
+- Import depuis Notion ou Word, citations BibTeX/Zotero.
 
 ## Développement
 

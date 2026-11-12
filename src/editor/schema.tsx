@@ -9,6 +9,7 @@ import { useEffect, useRef, useState } from "react";
 import { useT } from "../i18n";
 import { useStore } from "../store";
 import { EmojiPicker } from "../views/EmojiPicker";
+import { AudioNote, PdfBlock, Sketch } from "./media";
 
 function renderLatex(latex: string, displayMode: boolean) {
   return katex.renderToString(latex, { displayMode, throwOnError: false });
@@ -268,6 +269,9 @@ export const schema = withMultiColumn(
       flashcard: Flashcard(),
       callout: Callout(),
       toc: TableOfContents(),
+      audioNote: AudioNote(),
+      pdf: PdfBlock(),
+      sketch: Sketch(),
     },
     inlineContentSpecs: { ...defaultInlineContentSpecs, math: InlineMath, pageLink: PageLink },
   }),

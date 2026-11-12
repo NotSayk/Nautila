@@ -16,7 +16,7 @@ import {
   locales as columnLocales,
   multiColumnDropCursor,
 } from "@blocknote/xl-multi-column";
-import { FileText, Layers, ListTree, MessageSquareQuote, Sigma } from "lucide-react";
+import { FileText, Layers, ListTree, Mic, PenLine, MessageSquareQuote, Sigma } from "lucide-react";
 import { forwardRef, useEffect, useImperativeHandle, useMemo, useRef } from "react";
 import * as Y from "yjs";
 import { extract } from "../data/extract";
@@ -205,6 +205,30 @@ export const PageEditor = forwardRef<PageEditorHandle, Props>(function PageEdito
       group: t("groupLayout"),
       icon: <ListTree size={18} />,
       onItemClick: () => insertOrUpdateBlockForSlashMenu(editor, { type: "toc" }),
+    },
+    {
+      title: t("sketch"),
+      subtext: t("sketchSub"),
+      aliases: ["dessin", "croquis", "schema", "draw", "sketch"],
+      group: t("groupLayout"),
+      icon: <PenLine size={18} />,
+      onItemClick: () => insertOrUpdateBlockForSlashMenu(editor, { type: "sketch" }),
+    },
+    {
+      title: t("pdfBlock"),
+      subtext: t("pdfBlockSub"),
+      aliases: ["pdf", "document", "support"],
+      group: t("groupLayout"),
+      icon: <FileText size={18} />,
+      onItemClick: () => insertOrUpdateBlockForSlashMenu(editor, { type: "pdf" }),
+    },
+    {
+      title: t("audioNote"),
+      subtext: t("audioNoteSub"),
+      aliases: ["audio", "micro", "enregistrer", "record", "voice"],
+      group: t("groupLayout"),
+      icon: <Mic size={18} />,
+      onItemClick: () => insertOrUpdateBlockForSlashMenu(editor, { type: "audioNote" }),
     },
     ...getMultiColumnSlashMenuItems(editor).map((item) => ({
       ...item,

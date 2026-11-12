@@ -192,7 +192,7 @@ const fr = {
   noCourses: "Crée d'abord une matière dans un semestre : les notes se rangent par matière.",
   noGrade: "Aucune note",
   todayClasses: "Cours du jour",
-  pomodoroFocus: "Concentration",
+  pomodoroFocus: "Focus",
   pomodoroBreak: "Pause",
   pomodoroDone: "Session terminée",
   start: "Démarrer",
@@ -210,6 +210,18 @@ const fr = {
   remindersOn:
     "Les rappels sont activés : tu seras prévenu la veille et le jour d'une échéance, quand Nautila est ouvert.",
   dueSoon: "À rendre",
+  sketch: "Croquis",
+  sketchSub: "Dessiner un schéma à main levée",
+  pdfBlock: "PDF",
+  pdfBlockSub: "Afficher un support de cours dans la page",
+  audioNote: "Enregistrement audio",
+  audioNoteSub: "Enregistrer le cours au micro",
+  startRecording: "Démarrer l'enregistrement",
+  stopRecording: "Arrêter",
+  micBlocked: "Micro indisponible ou refusé — réessayer",
+  choosePdf: "Choisir un fichier PDF",
+  undo: "Annuler le dernier trait",
+  clear: "Tout effacer",
   forward: "Suivant",
 };
 
@@ -421,6 +433,18 @@ const en: typeof fr = {
   remindersOn:
     "Reminders are on: you will be notified the day before and on the day of a deadline, while Nautila is open.",
   dueSoon: "Due",
+  sketch: "Sketch",
+  sketchSub: "Draw a freehand diagram",
+  pdfBlock: "PDF",
+  pdfBlockSub: "Show course material in the page",
+  audioNote: "Audio recording",
+  audioNoteSub: "Record the lecture with the microphone",
+  startRecording: "Start recording",
+  stopRecording: "Stop",
+  micBlocked: "Microphone unavailable or denied — try again",
+  choosePdf: "Choose a PDF file",
+  undo: "Undo last stroke",
+  clear: "Clear all",
   forward: "Forward",
 };
 
