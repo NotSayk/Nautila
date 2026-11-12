@@ -10,11 +10,12 @@ export type Route =
   | { view: "trash" }
   | { view: "timetable" }
   | { view: "grades" }
+  | { view: "join"; id: string }
   | { view: "page"; id: string };
 
 function parseHash(): Route {
   const [view, id] = location.hash.replace(/^#\/?/, "").split("/");
-  if (view === "page" && id) return { view: "page", id };
+  if ((view === "page" || view === "join") && id) return { view, id };
   if (view === "review" || view === "tasks" || view === "trash" || view === "timetable" || view === "grades")
     return { view };
   return { view: "home" };
@@ -82,7 +83,12 @@ export const useStore = create<State>((set, get) => ({
   sidebarOpen: isDesktop() && stored("nautila.sidebar") !== "0",
 
   navigate: (route) => {
-    location.hash = route.view === "page" ? `/page/${route.id}` : route.view === "home" ? "/" : `/${route.view}`;
+    location.hash =
+      route.view === "page" || route.view === "join"
+        ? `/${route.view}/${route.id}`
+        : route.view === "home"
+          ? "/"
+          : `/${route.view}`;
     // Sur mobile la barre latérale recouvre la page : on la referme.
     set({ route, searchOpen: false, ...(isDesktop() ? {} : { sidebarOpen: false }) });
   },

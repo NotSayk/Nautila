@@ -1,5 +1,6 @@
 import {
   Bell,
+  Users,
   Cloud,
   CloudAlert,
   CloudOff,
@@ -37,6 +38,7 @@ import { useT } from "../i18n";
 import { useStore, type Route } from "../store";
 import { IconButton, Menu, PageIcon } from "./common";
 import { Pomodoro } from "./Pomodoro";
+import { JoinDialog } from "./ShareDialog";
 
 const ICON = { size: 18, strokeWidth: 1.75 } as const;
 const ROW = "flex h-[30px] w-full items-center gap-2 rounded-md px-2 text-left font-medium text-muted hover:bg-hover";
@@ -248,6 +250,7 @@ export function Sidebar() {
   const { navigate, newPage, toggleDark, setLang, setSearchOpen, setSidebarOpen } = useStore();
   const [open, setOpen] = useState<Set<string>>(new Set());
   const fileInput = useRef<HTMLInputElement>(null);
+  const [joinOpen, setJoinOpen] = useState(false);
 
   const tree = useMemo(() => {
     const map = new Map<string | null, PageMeta[]>();
@@ -474,6 +477,7 @@ export function Sidebar() {
                   ),
               },
               { icon: <Upload size={16} />, label: t("importBackup"), onClick: () => fileInput.current?.click() },
+              { icon: <Users size={16} />, label: t("joinShared"), onClick: () => setJoinOpen(true) },
               { icon: <FileDown size={16} />, label: t("importDocs"), onClick: () => mdInput.current?.click() },
               "separator",
               {
@@ -500,6 +504,7 @@ export function Sidebar() {
           />
         </div>
       </aside>
+      {joinOpen && <JoinDialog onClose={() => setJoinOpen(false)} />}
     </>
   );
 }

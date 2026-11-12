@@ -552,3 +552,32 @@ textarea:focus-visible,
 .db-embed-title:hover {
   background: var(--color-hover);
 }
+
+/* Blocs de code : fond clair en thème clair, sombre en thème sombre. */
+.bn-editor [data-content-type="codeBlock"],
+.bn-editor [data-content-type="codeBlock"]:has(> pre) {
+  border-radius: 4px;
+  background: var(--color-panel);
+  color: var(--color-ink);
+}
+.bn-editor [data-content-type="codeBlock"] > pre {
+  padding: 32px 20px 20px;
+  font-size: 14px;
+  line-height: 1.55;
+}
+.bn-editor [data-content-type="codeBlock"] .shiki {
+  color: var(--shiki-light);
+}
+.dark .bn-editor [data-content-type="codeBlock"] .shiki {
+  color: var(--shiki-dark);
+}
+.bn-editor [data-content-type="codeBlock"] > div > select {
+  top: 6px;
+  left: 14px;
+  color: var(--color-muted);
+  opacity: 1;
+}
+.bn-editor [data-content-type="codeBlock"] > div > select > option {
+  background: var(--color-pop);
+  color: var(--color-ink);
+}

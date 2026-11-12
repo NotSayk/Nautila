@@ -23,7 +23,10 @@ export async function syncCards(pageId: string, cards: ExtractedCard[]) {
   const existing = await db().all<{ id: string }>("SELECT id FROM cards WHERE page_id = ?", [pageId]);
   cards = cards.map((c) => ({ ...c, id: `${pageId}:${c.id}` }));
   const keep = new Set(cards.map((c) => c.id));
-  for (const { id } of existing) if (!keep.has(id)) await db().run("DELETE FROM cards WHERE id = ?", [id]);
+  // Seules les cartes issues d'un bloc de la page sont alignées ; celles ajoutées à la main
+  // ou par le connecteur IA (identifiant « extra:… ») ne sont jamais retirées ici.
+  for (const { id } of existing)
+    if (id.startsWith(`${pageId}:`) && !keep.has(id)) await db().run("DELETE FROM cards WHERE id = ?", [id]);
 
   const known = new Set(existing.map((e) => e.id));
   const now = Date.now();
@@ -47,10 +50,44 @@ export async function syncCards(pageId: string, cards: ExtractedCard[]) {
 
 const LIVE = "page_id IN (SELECT id FROM pages WHERE deleted_at IS NULL)";
 
-export const dueCards = (now = Date.now()) =>
-  db().all<CardRow>(`SELECT id, page_id, front, back, fsrs, due FROM cards WHERE due <= ? AND ${LIVE} ORDER BY due`, [
+/** Cartes à réviser, de tous les paquets ou d'une seule page. */
+export const dueCards = (now = Date.now(), pageId?: string) =>
+  db().all<CardRow>(
+    `SELECT id, page_id, front, back, fsrs, due FROM cards
+     WHERE due <= ? AND ${LIVE} ${pageId ? "AND page_id = ?" : ""} ORDER BY due`,
+    pageId ? [now, pageId] : [now],
+  );
+
+export type Deck = { page_id: string; total: number; due: number };
+
+export const listDecks = (now = Date.now()) =>
+  db().all<Deck>(
+    `SELECT page_id, COUNT(*) AS total, SUM(due <= ?) AS due FROM cards WHERE ${LIVE} GROUP BY page_id ORDER BY MAX(created_at) DESC`,
+    [now],
+  );
+
+export const deckCards = (pageId: string) =>
+  db().all<CardRow>("SELECT id, page_id, front, back, fsrs, due FROM cards WHERE page_id = ? ORDER BY created_at", [
+    pageId,
+  ]);
+
+/** Carte ajoutée directement au paquet, sans bloc dans la page. */
+export async function addCard(pageId: string, front: string, back: string) {
+  const now = Date.now();
+  const state = createEmptyCard(new Date(now));
+  await db().run("INSERT INTO cards (id, page_id, front, back, fsrs, due, created_at) VALUES (?,?,?,?,?,?,?)", [
+    `extra:${crypto.randomUUID()}`,
+    pageId,
+    front,
+    back,
+    JSON.stringify(state),
+    state.due.getTime(),
     now,
   ]);
+}
+
+export const isExtraCard = (id: string) => id.startsWith("extra:");
+export const deleteCard = (id: string) => db().run("DELETE FROM cards WHERE id = ?", [id]);
 
 export async function cardStats(now = Date.now()): Promise<{ due: number; total: number }> {
   const [row] = await db().all<{ due: number | null; total: number }>(

@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { isTauri } from "../db";
 import { useT, type Key } from "../i18n";
 import { useStore } from "../store";
-import { connect, disconnect, getSyncState, SyncError, syncNow } from "../sync/engine";
+import { connect, createAccessToken, disconnect, getSyncState, SyncError, syncNow } from "../sync/engine";
 import { relativeTime } from "./common";
 
 const FIELD = "mt-1 h-8 w-full rounded-md bg-hover px-2 text-sm text-ink placeholder:text-faint";
@@ -36,6 +36,7 @@ export function SyncDialog() {
   const [invite, setInvite] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string>();
+  const [mcp, setMcp] = useState<{ url: string; token: string } | null>(null);
 
   useEffect(() => {
     getSyncState().then((state) => {
@@ -65,7 +66,7 @@ export function SyncDialog() {
       <div
         role="dialog"
         aria-label={t("syncTitle")}
-        className="w-full max-w-sm rounded-xl bg-pop p-5 shadow-pop"
+        className="max-h-[90vh] w-full max-w-md overflow-y-auto rounded-xl bg-pop p-5 shadow-pop"
         onClick={(e) => e.stopPropagation()}
         onKeyDown={(e) => e.key === "Escape" && close()}
       >
@@ -86,6 +87,44 @@ export function SyncDialog() {
                 {errorKey(failure) === "errUnknown" ? ` : ${failure}` : ""}
               </p>
             )}
+            <div className="mt-5 pt-4 shadow-[inset_0_1px_0_var(--color-line)]">
+              <p className="font-medium">{t("mcpTitle")}</p>
+              <p className="mt-1 text-[13px] leading-5 text-muted">{t("mcpIntro")}</p>
+              {mcp ? (
+                <>
+                  <p className="mt-2 text-[13px] text-danger">{t("mcpShownOnce")}</p>
+                  {[
+                    [
+                      "Claude Code",
+                      `claude mcp add --transport http nautila ${mcp.url} --header "Authorization: Bearer ${mcp.token}"`,
+                    ],
+                    [
+                      "Codex (~/.codex/config.toml)",
+                      `[mcp_servers.nautila]\nurl = "${mcp.url}"\nbearer_token_env_var = "NAUTILA_TOKEN"\n# export NAUTILA_TOKEN=${mcp.token}`,
+                    ],
+                    ["claude.ai", `${mcp.url}/${mcp.token}`],
+                  ].map(([label, text]) => (
+                    <label key={label} className="mt-2 block text-xs text-muted">
+                      {label}
+                      <textarea
+                        readOnly
+                        rows={label.startsWith("Codex") ? 4 : 2}
+                        value={text}
+                        onFocus={(e) => e.currentTarget.select()}
+                        className="mt-1 w-full resize-none rounded-md bg-hover p-2 font-mono text-[11px] leading-4 text-ink"
+                      />
+                    </label>
+                  ))}
+                </>
+              ) : (
+                <button
+                  className={`${button} mt-2 shadow-[0_0_0_1px_var(--color-line)] hover:bg-hover`}
+                  onClick={async () => setMcp(await createAccessToken().catch(() => null))}
+                >
+                  {t("mcpCreate")}
+                </button>
+              )}
+            </div>
             <div className="mt-5 flex justify-between gap-2">
               <button className={`${button} text-danger hover:bg-hover`} onClick={() => disconnect()}>
                 {t("logout")}

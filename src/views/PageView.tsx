@@ -17,11 +17,12 @@ import {
   Table2,
   Trash2,
   Type,
+  Users,
 } from "lucide-react";
 import { Fragment, useEffect, useRef, useState } from "react";
 import { download } from "../data/backup";
 import { saveFile } from "../data/files";
-import { deleteTemplate, listTemplates, saveTemplate, type CustomTemplate } from "../data/templates";
+import { deleteTemplate, listTemplates, pendingMarkdown, saveTemplate, type CustomTemplate } from "../data/templates";
 import { snapshot } from "../data/versions";
 import {
   backlinks,
@@ -42,6 +43,7 @@ import { Cover, IconButton, Menu, PageIcon, Popover, relativeTime, SectionTitle,
 import { DatabaseView, RowProperties } from "./database/DatabaseView";
 import { EmojiPicker } from "./EmojiPicker";
 import { HistoryDialog } from "./HistoryDialog";
+import { ShareDialog } from "./ShareDialog";
 
 const COVER_COLORS = [
   "#ebeced",
@@ -103,6 +105,8 @@ export function PageView({ id }: { id: string }) {
 
   const [doc, setDoc] = useState<{ ydoc: string | null; rev: number } | undefined>();
   const [historyOpen, setHistoryOpen] = useState(false);
+  const [shareOpen, setShareOpen] = useState(false);
+  const [share, setShare] = useState({ online: false, peers: 0 });
   const [custom, setCustom] = useState<CustomTemplate[]>([]);
   const [pristine, setPristine] = useState(false);
   const [title, setTitle] = useState(page?.title ?? "");
@@ -117,11 +121,13 @@ export function PageView({ id }: { id: string }) {
 
   useEffect(() => {
     let live = true;
-    getPageDoc(id).then((ydoc) => {
+    getPageDoc(id).then(({ ydoc, markdown }) => {
       if (!live) return;
+      // Page créée hors de l'application (connecteur IA) : son Markdown est mis en forme à l'ouverture.
+      if (ydoc === null && markdown) pendingMarkdown.set(id, markdown);
       setDoc({ ydoc, rev: 0 });
       if (ydoc === null) void listTemplates().then((list) => live && setCustom(list));
-      setPristine(ydoc === null);
+      setPristine(ydoc === null && !markdown);
     });
     backlinks(id).then((rows) => live && setMentions(rows));
     return () => {
@@ -179,6 +185,19 @@ export function PageView({ id }: { id: string }) {
                 <Lock size={14} />
                 {t("locked")}
               </span>
+            )}
+            {!isDatabase && (
+              <button
+                onClick={() => setShareOpen(true)}
+                className={`mr-1 flex h-7 items-center gap-1.5 rounded-md px-2 hover:bg-hover ${
+                  page.share_id ? (share.online ? "text-accent" : "text-muted") : "text-muted"
+                }`}
+              >
+                <Users size={16} strokeWidth={1.75} />
+                <span className="max-sm:hidden">
+                  {page.share_id ? (share.peers > 1 ? `${t("shared")} · ${share.peers}` : t("shared")) : t("share")}
+                </span>
+              </button>
             )}
             <span className="mr-1 hidden text-faint sm:block">
               {t("edited")} {relativeTime(page.updated_at, lang)}
@@ -427,6 +446,8 @@ export function PageView({ id }: { id: string }) {
               pageId={id}
               initialDoc={doc.ydoc}
               saveOnMount={doc.rev > 0}
+              shareId={page.share_id}
+              onShareState={setShare}
               editable={!page.locked}
               onFirstEdit={() => setPristine(false)}
             />
@@ -481,6 +502,15 @@ export function PageView({ id }: { id: string }) {
 
         {!isDatabase && <PageList title={t("subpages")} pages={pages.filter((p) => p.parent_id === id)} />}
         <PageList title={t("backlinks")} pages={mentions} />
+        {shareOpen && (
+          <ShareDialog
+            page={page}
+            peers={share.peers}
+            online={share.online}
+            getDoc={() => editor.current?.docState() ?? null}
+            onClose={() => setShareOpen(false)}
+          />
+        )}
         {historyOpen && (
           <HistoryDialog
             pageId={id}

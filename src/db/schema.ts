@@ -12,15 +12,16 @@ export const SYNC_TABLES: Record<string, string[]> = {
   templates: ["id"],
   links: ["source_id", "target_id"],
   page_files: ["page_id", "file_id"],
+  quizzes: ["id"],
 };
 
 /** Chaque écriture locale note la ligne dans sync_log, sauf pendant l'application de changements distants. */
-function syncTriggers(): string[] {
+function syncTriggers(tables: string[]): string[] {
   const now = "CAST((julianday('now') - 2440587.5) * 86400000 AS INTEGER)";
-  return Object.entries(SYNC_TABLES).flatMap(([table, key]) =>
+  return tables.flatMap((table) =>
     (["INSERT", "UPDATE", "DELETE"] as const).map((op) => {
       const row = op === "DELETE" ? "OLD" : "NEW";
-      const id = key.map((k) => `${row}.${k}`).join(" || '|' || ");
+      const id = SYNC_TABLES[table].map((k) => `${row}.${k}`).join(" || '|' || ");
       return `CREATE TRIGGER sync_${table}_${op.toLowerCase()} AFTER ${op} ON ${table}
         WHEN (SELECT applying FROM sync_state) = 0
         BEGIN
@@ -150,7 +151,32 @@ const MIGRATIONS: string[][] = [
       last_sync INTEGER
     )`,
     `INSERT INTO sync_state (one) VALUES (1)`,
-    ...syncTriggers(),
+    ...syncTriggers([
+      "pages",
+      "tasks",
+      "cards",
+      "files",
+      "databases",
+      "slots",
+      "grades",
+      "templates",
+      "links",
+      "page_files",
+    ]),
+  ],
+  [
+    // Page partagée en direct (identifiant de la salle sur le serveur) et
+    // contenu Markdown en attente de mise en forme (page créée hors de l'application).
+    `ALTER TABLE pages ADD COLUMN share_id TEXT`,
+    `ALTER TABLE pages ADD COLUMN import_md TEXT`,
+    `CREATE TABLE quizzes (
+      id TEXT PRIMARY KEY,
+      page_id TEXT,
+      title TEXT NOT NULL,
+      questions TEXT NOT NULL,
+      created_at INTEGER NOT NULL
+    )`,
+    ...syncTriggers(["quizzes"]),
   ],
 ];
 

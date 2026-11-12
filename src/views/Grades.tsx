@@ -77,7 +77,7 @@ function CourseGrades({
       </div>
       <div className={`${cols} h-7 px-1 text-xs text-faint shadow-[inset_0_-1px_0_var(--color-line)]`}>
         <span className="px-2">{t("gradeTitle")}</span>
-        <span className="px-2">{t("score")}</span>
+        <span className="px-2">{t("gradeScore")}</span>
         <span className="px-2">{t("outOf")}</span>
         <span className="px-2">{t("weight")}</span>
         <span />
@@ -129,7 +129,7 @@ function CourseGrades({
           onChange={(e) => setScore(e.target.value)}
           placeholder="14"
           inputMode="decimal"
-          aria-label={t("score")}
+          aria-label={t("gradeScore")}
           className={FIELD}
         />
         <input

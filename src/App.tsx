@@ -7,6 +7,7 @@ import { Grades } from "./views/Grades";
 import { Timetable } from "./views/Timetable";
 import { notifyDueTasks } from "./reminders";
 import { startSync } from "./sync/engine";
+import { JoinView } from "./views/ShareDialog";
 import { SyncDialog } from "./views/SyncDialog";
 import { MoveDialog } from "./views/MoveDialog";
 import { PageView } from "./views/PageView";
@@ -86,6 +87,7 @@ export function App() {
         {route.view === "trash" && <Trash />}
         {route.view === "timetable" && <Timetable />}
         {route.view === "grades" && <Grades />}
+        {route.view === "join" && <JoinView id={route.id} />}
       </main>
       {searchOpen && <SearchDialog />}
       {moveId && <MoveDialog id={moveId} />}

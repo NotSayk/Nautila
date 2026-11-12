@@ -83,6 +83,14 @@ export async function connect(input: {
   await syncNow();
 }
 
+/** Crée un jeton pour le connecteur MCP ; renvoie l'adresse du connecteur et le jeton. */
+export async function createAccessToken(): Promise<{ url: string; token: string }> {
+  const state = await getSyncState();
+  if (!state.server || !state.token) throw new SyncError(401, "auth");
+  const { token } = await api<{ token: string }>(state.server, "token", {}, state.token);
+  return { url: `${state.server}/mcp`, token };
+}
+
 export async function disconnect() {
   const state = await getSyncState();
   if (state.server && state.token) await api(state.server, "logout", {}, state.token).catch(() => undefined);

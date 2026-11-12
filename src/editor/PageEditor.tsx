@@ -1,5 +1,5 @@
 import { filterSuggestionItems, insertOrUpdateBlockForSlashMenu } from "@blocknote/core";
-import { syntaxHighlighter } from "@blocknote/code-block";
+import { syntaxHighlighter } from "./highlight";
 import { en, fr } from "@blocknote/core/locales";
 import { withCollaboration } from "@blocknote/core/yjs";
 import { BlockNoteView } from "@blocknote/mantine";
@@ -18,6 +18,7 @@ import {
 } from "@blocknote/xl-multi-column";
 import { FileText, Layers, ListTree, Mic, PenLine, MessageSquareQuote, Sigma, Table2 } from "lucide-react";
 import { forwardRef, useEffect, useImperativeHandle, useMemo, useRef } from "react";
+import { Awareness } from "y-protocols/awareness";
 import * as Y from "yjs";
 import { extract } from "../data/extract";
 import { resolveFileUrl, saveFile } from "../data/files";
@@ -26,6 +27,7 @@ import { pendingHtml, pendingMarkdown } from "../data/templates";
 import { useT } from "../i18n";
 import { useStore } from "../store";
 import { REMOTE_DOC_EVENT } from "../sync/engine";
+import { startShareSession } from "../sync/share";
 import { fromBase64, toBase64 } from "../util/base64";
 import { languageId, schema, type NautilaBlock, type NautilaEditor } from "./schema";
 
@@ -36,6 +38,14 @@ function knownLanguages<T extends { type: string; props?: any; children?: T[] }>
     props: b.type === "codeBlock" ? { ...b.props, language: languageId(b.props?.language ?? "") } : b.props,
     children: b.children ? knownLanguages(b.children) : b.children,
   }));
+}
+
+const CURSOR_COLORS = ["#2383e2", "#d44c47", "#448361", "#9065b0", "#d9730d", "#c14c8a", "#0b6e99"];
+/** Couleur de curseur stable pour un identifiant donné. */
+function userColor(name: string) {
+  let hash = 0;
+  for (const ch of name) hash = (hash * 31 + ch.charCodeAt(0)) >>> 0;
+  return CURSOR_COLORS[hash % CURSOR_COLORS.length];
 }
 
 export type PageEditorHandle = {
@@ -56,12 +66,15 @@ type Props = {
   editable?: boolean;
   /** Réindexe le contenu dès l'ouverture (après une restauration ou un modèle). */
   saveOnMount?: boolean;
+  /** Page partagée en direct : identifiant de la salle, et retour d'état pour l'en-tête. */
+  shareId?: string | null;
+  onShareState?: (state: { online: boolean; peers: number }) => void;
   /** Appelé à la première modification du contenu. */
   onFirstEdit?: () => void;
 };
 
 export const PageEditor = forwardRef<PageEditorHandle, Props>(function PageEditor(
-  { pageId, initialDoc, editable = true, saveOnMount, onFirstEdit },
+  { pageId, initialDoc, editable = true, saveOnMount, shareId, onShareState, onFirstEdit },
   ref,
 ) {
   const t = useT();
@@ -74,6 +87,26 @@ export const PageEditor = forwardRef<PageEditorHandle, Props>(function PageEdito
     if (initialDoc) Y.applyUpdate(d, fromBase64(initialDoc));
     return d;
   }, [initialDoc]);
+  const awareness = useMemo(() => new Awareness(doc), [doc]);
+  const username = useStore((s) => s.sync.username);
+  const connected = useStore((s) => s.sync.status !== "off");
+
+  // Session en direct : ouverte tant que la page partagée est affichée et le compte connecté.
+  const shareStateRef = useRef(onShareState);
+  shareStateRef.current = onShareState;
+  useEffect(() => {
+    if (!shareId || !connected) return;
+    const state = { online: false, peers: 0 };
+    const report = (patch: Partial<typeof state>) => shareStateRef.current?.(Object.assign(state, patch));
+    const stop = startShareSession(shareId, doc, awareness, {
+      onPeers: (peers) => report({ peers }),
+      onState: (online) => report({ online }),
+    });
+    return () => {
+      stop();
+      shareStateRef.current?.({ online: false, peers: 0 });
+    };
+  }, [shareId, connected, doc, awareness]);
 
   const editor: NautilaEditor = useCreateBlockNote(
     withCollaboration({
@@ -95,10 +128,11 @@ export const PageEditor = forwardRef<PageEditorHandle, Props>(function PageEdito
       resolveFileUrl,
       collaboration: {
         fragment: doc.getXmlFragment("doc"),
-        user: { name: "local", color: "#2383e2" },
+        user: { name: username ?? "…", color: userColor(username ?? "") },
+        provider: { awareness },
       },
     }),
-    [doc, lang],
+    [doc, lang, awareness, username],
   );
 
   useImperativeHandle(

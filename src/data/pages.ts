@@ -20,13 +20,15 @@ export type PageMeta = {
   locked: number;
   font: PageFont;
   small_text: number;
+  /** Identifiant de la page partagée sur le serveur, si elle est partagée en direct. */
+  share_id: string | null;
   created_at: number;
   updated_at: number;
   deleted_at: number | null;
 };
 
 const META =
-  "id, parent_id, kind, title, icon, position, favorite, full_width, cover, locked, font, small_text, created_at, updated_at, deleted_at";
+  "id, parent_id, kind, title, icon, position, favorite, full_width, cover, locked, font, small_text, share_id, created_at, updated_at, deleted_at";
 
 export const listPages = () =>
   db().all<PageMeta>(`SELECT ${META} FROM pages WHERE deleted_at IS NULL ORDER BY position, created_at`);
@@ -34,9 +36,13 @@ export const listPages = () =>
 export const listTrash = () =>
   db().all<PageMeta>(`SELECT ${META} FROM pages WHERE deleted_at IS NOT NULL ORDER BY deleted_at DESC`);
 
-export async function getPageDoc(id: string): Promise<string | null> {
-  const rows = await db().all<{ ydoc: string | null }>("SELECT ydoc FROM pages WHERE id = ?", [id]);
-  return rows[0]?.ydoc ?? null;
+/** Contenu d'une page : son état Yjs, ou du Markdown à mettre en forme si elle a été créée ailleurs. */
+export async function getPageDoc(id: string): Promise<{ ydoc: string | null; markdown: string | null }> {
+  const rows = await db().all<{ ydoc: string | null; import_md: string | null }>(
+    "SELECT ydoc, import_md FROM pages WHERE id = ?",
+    [id],
+  );
+  return { ydoc: rows[0]?.ydoc ?? null, markdown: rows[0]?.import_md ?? null };
 }
 
 async function reindex(id: string) {
@@ -67,6 +73,7 @@ export async function createPage(input: {
     locked: 0,
     font: "sans",
     small_text: 0,
+    share_id: null,
     created_at: now,
     updated_at: now,
     deleted_at: null,
@@ -82,6 +89,7 @@ export async function createPage(input: {
 export type PagePatch = {
   title?: string;
   kind?: PageKind;
+  share_id?: string | null;
   icon?: string | null;
   cover?: string | null;
   font?: PageFont;
@@ -162,7 +170,7 @@ export async function duplicatePage(id: string, suffix: string): Promise<string>
 }
 
 export async function savePageContent(id: string, ydoc: string, extracted: Extracted) {
-  await db().run("UPDATE pages SET ydoc = ?, body = ?, updated_at = ? WHERE id = ?", [
+  await db().run("UPDATE pages SET ydoc = ?, body = ?, import_md = NULL, updated_at = ? WHERE id = ?", [
     ydoc,
     extracted.body,
     Date.now(),

@@ -1,5 +1,5 @@
 import { BlockNoteSchema, createCodeBlockSpec, defaultBlockSpecs, defaultInlineContentSpecs } from "@blocknote/core";
-import { codeBlockOptions } from "@blocknote/code-block";
+import { codeBlockOptions } from "./highlight";
 import { withMultiColumn } from "@blocknote/xl-multi-column";
 import { createReactBlockSpec, createReactInlineContentSpec } from "@blocknote/react";
 import katex from "katex";
