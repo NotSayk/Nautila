@@ -11,8 +11,7 @@ export type Task = {
   created_at: number;
 };
 
-export const listTasks = () =>
-  db().all<Task>("SELECT * FROM tasks ORDER BY done, due_at IS NULL, due_at, created_at");
+export const listTasks = () => db().all<Task>("SELECT * FROM tasks ORDER BY done, due_at IS NULL, due_at, created_at");
 
 export async function addTask(input: Pick<Task, "title" | "kind" | "course_id" | "due_at">) {
   await db().run("INSERT INTO tasks (id, title, kind, course_id, due_at, done, created_at) VALUES (?,?,?,?,?,0,?)", [

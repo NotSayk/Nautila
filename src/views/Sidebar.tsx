@@ -31,7 +31,13 @@ const ICON = { size: 18, strokeWidth: 1.75 } as const;
 const ROW = "flex h-[30px] w-full items-center gap-2 rounded-md px-2 text-left font-medium text-muted hover:bg-hover";
 const ROW_ACTION = "grid size-5 shrink-0 place-items-center rounded text-muted hover:bg-active";
 
-function NavItem(props: { icon: React.ReactNode; label: string; active?: boolean; badge?: number; onClick: () => void }) {
+function NavItem(props: {
+  icon: React.ReactNode;
+  label: string;
+  active?: boolean;
+  badge?: number;
+  onClick: () => void;
+}) {
   return (
     <button onClick={props.onClick} className={`${ROW} ${props.active ? "bg-hover text-ink" : ""}`}>
       {props.icon}
@@ -235,7 +241,10 @@ export function Sidebar() {
   const tree = useMemo(() => {
     const map = new Map<string | null, PageMeta[]>();
     const ids = new Set(pages.map((p) => p.id));
+    const databases = new Set(pages.filter((p) => p.kind === "database").map((p) => p.id));
     for (const p of pages) {
+      // Les lignes d'une base de données se consultent dans la base, pas dans l'arbre.
+      if (p.parent_id && databases.has(p.parent_id)) continue;
       const parent = p.parent_id && ids.has(p.parent_id) ? p.parent_id : null;
       map.set(parent, [...(map.get(parent) ?? []), p]);
     }
@@ -282,7 +291,9 @@ export function Sidebar() {
         const siblings = (tree.get(dest.parent_id) ?? []).filter((p) => p.id !== dragId);
         const i = siblings.findIndex((p) => p.id === dest.id);
         const other = siblings[target.zone === "before" ? i - 1 : i + 1];
-        const position = other ? (other.position + dest.position) / 2 : dest.position + (target.zone === "before" ? -1 : 1);
+        const position = other
+          ? (other.position + dest.position) / 2
+          : dest.position + (target.zone === "before" ? -1 : 1);
         await movePage(dragId, dest.parent_id, position);
       }
       await useStore.getState().refreshPages();
@@ -335,7 +346,12 @@ export function Sidebar() {
             <span className="flex-1">{t("search")}</span>
             <kbd className="font-sans text-xs text-faint">Ctrl K</kbd>
           </button>
-          <NavItem icon={<Home {...ICON} />} label={t("home")} active={route.view === "home"} onClick={go({ view: "home" })} />
+          <NavItem
+            icon={<Home {...ICON} />}
+            label={t("home")}
+            active={route.view === "home"}
+            onClick={go({ view: "home" })}
+          />
           <NavItem
             icon={<Layers {...ICON} />}
             label={t("review")}
@@ -392,18 +408,31 @@ export function Sidebar() {
             }
             items={[
               { icon: <Moon size={16} />, label: t("darkTheme"), checked: dark, onClick: toggleDark },
-              { icon: <Languages size={16} />, label: t("switchLang"), onClick: () => setLang(lang === "fr" ? "en" : "fr") },
+              {
+                icon: <Languages size={16} />,
+                label: t("switchLang"),
+                onClick: () => setLang(lang === "fr" ? "en" : "fr"),
+              },
               "separator",
               {
                 icon: <Download size={16} />,
                 label: t("exportBackup"),
                 onClick: async () =>
-                  download(`nautila-${new Date().toISOString().slice(0, 10)}.json`, await exportBackup(), "application/json"),
+                  download(
+                    `nautila-${new Date().toISOString().slice(0, 10)}.json`,
+                    await exportBackup(),
+                    "application/json",
+                  ),
               },
               { icon: <Upload size={16} />, label: t("importBackup"), onClick: () => fileInput.current?.click() },
             ]}
           />
-          <NavItem icon={<Trash2 {...ICON} />} label={t("trash")} active={route.view === "trash"} onClick={go({ view: "trash" })} />
+          <NavItem
+            icon={<Trash2 {...ICON} />}
+            label={t("trash")}
+            active={route.view === "trash"}
+            onClick={go({ view: "trash" })}
+          />
           <input ref={fileInput} type="file" accept="application/json,.json" hidden onChange={onImport} />
         </div>
       </aside>

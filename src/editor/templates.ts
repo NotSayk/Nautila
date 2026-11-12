@@ -57,7 +57,10 @@ export function template(id: TemplateId, lang: Lang): NautilaBlock[] {
           type: "table",
           content: {
             type: "tableContent",
-            rows: [{ cells: [fr ? "Mesure" : "Measurement", fr ? "Valeur" : "Value", fr ? "Unité" : "Unit"] }, { cells: ["", "", ""] }],
+            rows: [
+              { cells: [fr ? "Mesure" : "Measurement", fr ? "Valeur" : "Value", fr ? "Unité" : "Unit"] },
+              { cells: ["", "", ""] },
+            ],
           },
         },
         h(fr ? "Analyse" : "Analysis"),

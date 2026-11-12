@@ -1,6 +1,7 @@
-import { ArrowLeft, ArrowRight, BookOpen, Check, FileText, GraduationCap, PanelLeft } from "lucide-react";
-import { useLayoutEffect, useRef, useState } from "react";
+import { ArrowLeft, ArrowRight, BookOpen, Check, FileText, GraduationCap, PanelLeft, Table2 } from "lucide-react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
+import { resolveFileUrl } from "../data/files";
 import type { PageMeta } from "../data/pages";
 import { translate, useT, type Lang } from "../i18n";
 import { useStore } from "../store";
@@ -8,11 +9,21 @@ import { useStore } from "../store";
 export function PageIcon({ page, size = 18 }: { page: Pick<PageMeta, "icon" | "kind">; size?: number }) {
   if (page.icon)
     return (
-      <span className="grid shrink-0 place-items-center" style={{ fontSize: size * 0.9, width: size, height: size, lineHeight: 1 }}>
+      <span
+        className="grid shrink-0 place-items-center"
+        style={{ fontSize: size * 0.9, width: size, height: size, lineHeight: 1 }}
+      >
         {page.icon}
       </span>
     );
-  const Icon = page.kind === "semester" ? GraduationCap : page.kind === "course" ? BookOpen : FileText;
+  const Icon =
+    page.kind === "semester"
+      ? GraduationCap
+      : page.kind === "course"
+        ? BookOpen
+        : page.kind === "database"
+          ? Table2
+          : FileText;
   return <Icon size={size} strokeWidth={1.75} className="shrink-0 text-muted" />;
 }
 
@@ -77,6 +88,7 @@ export function Popover({
     const below = anchor.bottom + 4;
     setPos({
       left: Math.max(8, Math.min(left, innerWidth - width - 8)),
+      // (Invisible mais focalisable tant que la position est inconnue.)
       // Bascule au-dessus de l'ancre s'il n'y a pas la place en dessous.
       top: below + height > innerHeight - 8 ? Math.max(8, anchor.top - height - 4) : below,
     });
@@ -88,7 +100,7 @@ export function Popover({
         ref={ref}
         role="menu"
         onClick={(e) => e.stopPropagation()}
-        style={{ width, ...(pos ?? { visibility: "hidden" }) }}
+        style={{ width, ...(pos ?? { top: 0, left: 0, opacity: 0 }) }}
         className="fixed rounded-lg bg-pop p-1 text-sm shadow-pop"
       >
         {children}
@@ -185,7 +197,15 @@ export function TopBar({ children, right }: { children?: React.ReactNode; right?
   );
 }
 
-export function View({ title, right, children }: { title: string; right?: React.ReactNode; children: React.ReactNode }) {
+export function View({
+  title,
+  right,
+  children,
+}: {
+  title: string;
+  right?: React.ReactNode;
+  children: React.ReactNode;
+}) {
   return (
     <>
       <TopBar right={right}>
@@ -201,4 +221,22 @@ export function View({ title, right, children }: { title: string; right?: React.
 
 export function SectionTitle({ children }: { children: React.ReactNode }) {
   return <h2 className="mb-2 flex items-center gap-1.5 text-xs font-medium text-muted">{children}</h2>;
+}
+
+/** Bandeau de couverture : une couleur (`color:#hex`) ou une image stockée. */
+export function Cover({ value }: { value: string }) {
+  const [url, setUrl] = useState("");
+  const color = value.startsWith("color:") ? value.slice(6) : null;
+  useEffect(() => {
+    let live = true;
+    if (!color) resolveFileUrl(value).then((u) => live && setUrl(u));
+    return () => {
+      live = false;
+    };
+  }, [value, color]);
+  return color ? (
+    <div className="h-full w-full" style={{ background: color }} />
+  ) : (
+    url && <img src={url} alt="" className="h-full w-full object-cover" />
+  );
 }

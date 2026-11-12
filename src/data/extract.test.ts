@@ -21,7 +21,12 @@ describe("extract", () => {
       {
         id: "f",
         type: "table",
-        content: { type: "tableContent", rows: [{ cells: [[{ type: "text", text: "u" }], { type: "tableCell", content: [{ type: "text", text: "v" }] }] }] },
+        content: {
+          type: "tableContent",
+          rows: [
+            { cells: [[{ type: "text", text: "u" }], { type: "tableCell", content: [{ type: "text", text: "v" }] }] },
+          ],
+        },
       },
     ]);
     expect(result.cards).toEqual([{ id: "c", front: "Q", back: "R" }]);

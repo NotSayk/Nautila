@@ -6,6 +6,6 @@ export async function openTauriDb(): Promise<Db> {
   return {
     persistent: true,
     run: async (sql, params = []) => void (await db.execute(sql, params)),
-    all: <T,>(sql: string, params: SqlValue[] = []) => db.select<T[]>(sql, params),
+    all: <T>(sql: string, params: SqlValue[] = []) => db.select<T[]>(sql, params),
   };
 }

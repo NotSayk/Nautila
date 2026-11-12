@@ -2,7 +2,7 @@ import { db } from "../db";
 import { syncCards } from "./cards";
 import { toFtsQuery, type Extracted } from "./extract";
 
-export type PageKind = "note" | "course" | "semester";
+export type PageKind = "note" | "course" | "semester" | "database";
 export type PageFont = "sans" | "serif" | "mono";
 
 export type PageMeta = {
@@ -79,6 +79,7 @@ export async function createPage(input: {
 
 export type PagePatch = {
   title?: string;
+  kind?: PageKind;
   icon?: string | null;
   cover?: string | null;
   font?: PageFont;
@@ -92,7 +93,10 @@ export async function updatePageMeta(id: string, patch: PagePatch) {
   for (const [key, value] of Object.entries(patch)) {
     if (value === undefined) continue;
     // Les noms de colonnes viennent du type PagePatch, jamais d'une saisie.
-    await db().run(`UPDATE pages SET ${key} = ? WHERE id = ?`, [typeof value === "boolean" ? Number(value) : value, id]);
+    await db().run(`UPDATE pages SET ${key} = ? WHERE id = ?`, [
+      typeof value === "boolean" ? Number(value) : value,
+      id,
+    ]);
   }
   if (patch.title !== undefined) {
     await db().run("UPDATE pages SET updated_at = ? WHERE id = ?", [Date.now(), id]);
@@ -113,20 +117,36 @@ export async function duplicatePage(id: string, suffix: string): Promise<string>
     const newId = crypto.randomUUID();
     const now = Date.now();
     await db().run(
-      `INSERT INTO pages (id, parent_id, kind, title, icon, position, ydoc, body, cover, font, small_text, full_width, created_at, updated_at)
-       SELECT ?, ?, kind, title || ?, icon, ?, ydoc, body, cover, font, small_text, full_width, ?, ? FROM pages WHERE id = ?`,
+      `INSERT INTO pages (id, parent_id, kind, title, icon, position, ydoc, body, cover, font, small_text, full_width, props, created_at, updated_at)
+       SELECT ?, ?, kind, title || ?, icon, ?, ydoc, body, cover, font, small_text, full_width, props, ?, ? FROM pages WHERE id = ?`,
       [newId, parentId, top ? suffix : "", top ? now : null, now, now, sourceId],
     );
-    if (!top) await db().run("UPDATE pages SET position = (SELECT position FROM pages WHERE id = ?) WHERE id = ?", [sourceId, newId]);
+    if (!top)
+      await db().run("UPDATE pages SET position = (SELECT position FROM pages WHERE id = ?) WHERE id = ?", [
+        sourceId,
+        newId,
+      ]);
     await reindex(newId);
-    await db().run("INSERT INTO links (source_id, target_id) SELECT ?, target_id FROM links WHERE source_id = ?", [newId, sourceId]);
+    await db().run("INSERT INTO databases (page_id, config) SELECT ?, config FROM databases WHERE page_id = ?", [
+      newId,
+      sourceId,
+    ]);
+    await db().run("INSERT INTO links (source_id, target_id) SELECT ?, target_id FROM links WHERE source_id = ?", [
+      newId,
+      sourceId,
+    ]);
     // Les cartes repartent de zéro : la copie a sa propre progression.
     const cards = await db().all<{ id: string; front: string; back: string }>(
       "SELECT id, front, back FROM cards WHERE page_id = ?",
       [sourceId],
     );
-    await syncCards(newId, cards.map((c) => ({ ...c, id: c.id.slice(sourceId.length + 1) })));
-    const kids = await db().all<{ id: string }>("SELECT id FROM pages WHERE parent_id = ? AND deleted_at IS NULL", [sourceId]);
+    await syncCards(
+      newId,
+      cards.map((c) => ({ ...c, id: c.id.slice(sourceId.length + 1) })),
+    );
+    const kids = await db().all<{ id: string }>("SELECT id FROM pages WHERE parent_id = ? AND deleted_at IS NULL", [
+      sourceId,
+    ]);
     for (const k of kids) await copy(k.id, newId, false);
     return newId;
   };
@@ -178,8 +198,7 @@ export async function restorePage(id: string) {
   const parent = rows[0].parent_id
     ? await db().all("SELECT id FROM pages WHERE id = ? AND deleted_at IS NULL", [rows[0].parent_id])
     : [];
-  if (rows[0].parent_id && parent.length === 0)
-    await db().run("UPDATE pages SET parent_id = NULL WHERE id = ?", [id]);
+  if (rows[0].parent_id && parent.length === 0) await db().run("UPDATE pages SET parent_id = NULL WHERE id = ?", [id]);
   for (const pid of await subtree(id)) {
     await db().run("UPDATE pages SET deleted_at = NULL WHERE id = ? AND deleted_at = ?", [pid, stamp]);
     await reindex(pid);
@@ -192,6 +211,7 @@ export async function deletePageForever(id: string) {
     await db().run("DELETE FROM pages_fts WHERE page_id = ?", [pid]);
     await db().run("DELETE FROM links WHERE source_id = ? OR target_id = ?", [pid, pid]);
     await db().run("DELETE FROM cards WHERE page_id = ?", [pid]);
+    await db().run("DELETE FROM databases WHERE page_id = ?", [pid]);
     await db().run("UPDATE tasks SET course_id = NULL WHERE course_id = ?", [pid]);
   }
 }

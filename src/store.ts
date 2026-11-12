@@ -58,7 +58,14 @@ export const useStore = create<State>((set, get) => ({
   route: parseHash(),
   pages: [],
   dueCount: 0,
-  lang: stored("nautila.lang") === "en" ? "en" : stored("nautila.lang") === "fr" ? "fr" : navigator.language.startsWith("fr") ? "fr" : "en",
+  lang:
+    stored("nautila.lang") === "en"
+      ? "en"
+      : stored("nautila.lang") === "fr"
+        ? "fr"
+        : navigator.language.startsWith("fr")
+          ? "fr"
+          : "en",
   dark: stored("nautila.dark") ? stored("nautila.dark") === "1" : matchMedia("(prefers-color-scheme: dark)").matches,
   searchOpen: false,
   moveId: null,

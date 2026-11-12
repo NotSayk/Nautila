@@ -34,7 +34,15 @@ export function Review() {
 
   const card = queue?.[0];
   const bar = (
-    <TopBar right={card && <span className="px-2 text-faint">{queue!.length} {t("remaining")}</span>}>
+    <TopBar
+      right={
+        card && (
+          <span className="px-2 text-faint">
+            {queue!.length} {t("remaining")}
+          </span>
+        )
+      }
+    >
       <span className="px-1.5">{t("review")}</span>
     </TopBar>
   );
@@ -80,7 +88,9 @@ export function Review() {
           </button>
         )}
         <div className="rounded-xl bg-pop shadow-[0_0_0_1px_var(--color-line),0_2px_8px_rgb(0_0_0/0.05)]">
-          <div className="whitespace-pre-wrap px-8 py-14 text-center text-2xl font-semibold leading-snug">{card.front}</div>
+          <div className="whitespace-pre-wrap px-8 py-14 text-center text-2xl font-semibold leading-snug">
+            {card.front}
+          </div>
           {revealed && (
             <div className="whitespace-pre-wrap px-8 py-10 text-center text-lg shadow-[inset_0_1px_0_var(--color-line)]">
               {card.back}

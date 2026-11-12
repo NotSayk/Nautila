@@ -66,6 +66,12 @@ const MIGRATIONS: string[][] = [
       created_at INTEGER NOT NULL
     )`,
   ],
+  [
+    // Bases de données : la configuration est sur la page « database »,
+    // et chaque ligne est une page enfant dont `props` porte les valeurs.
+    `CREATE TABLE databases (page_id TEXT PRIMARY KEY, config TEXT NOT NULL)`,
+    `ALTER TABLE pages ADD COLUMN props TEXT`,
+  ],
 ];
 
 export async function migrate(db: Db): Promise<void> {

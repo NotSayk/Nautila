@@ -5,7 +5,8 @@ import { useT } from "../i18n";
 import { useStore } from "../store";
 import { daysUntil, formatDue, IconButton, View } from "./common";
 
-const COLS = "grid grid-cols-[20px_minmax(0,1fr)_auto_auto_28px] items-center gap-3 sm:grid-cols-[20px_minmax(0,1fr)_84px_150px_120px_28px]";
+const COLS =
+  "grid grid-cols-[20px_minmax(0,1fr)_auto_auto_28px] items-center gap-3 sm:grid-cols-[20px_minmax(0,1fr)_84px_150px_120px_28px]";
 const field = "h-8 rounded-md bg-transparent px-2 hover:bg-hover focus:bg-hover";
 
 export function Tasks() {
@@ -89,11 +90,21 @@ export function Tasks() {
           aria-label={t("taskTitle")}
           className={`${field} min-w-40 flex-1 placeholder:text-faint`}
         />
-        <select aria-label={t("type")} value={kind} onChange={(e) => setKind(e.target.value as TaskKind)} className={field}>
+        <select
+          aria-label={t("type")}
+          value={kind}
+          onChange={(e) => setKind(e.target.value as TaskKind)}
+          className={field}
+        >
           <option value="homework">{t("homework")}</option>
           <option value="exam">{t("exam")}</option>
         </select>
-        <select aria-label={t("course")} value={course} onChange={(e) => setCourse(e.target.value)} className={`${field} max-w-44`}>
+        <select
+          aria-label={t("course")}
+          value={course}
+          onChange={(e) => setCourse(e.target.value)}
+          className={`${field} max-w-44`}
+        >
           <option value="">{t("noCourse")}</option>
           {courses.map((c) => (
             <option key={c.id} value={c.id}>
@@ -101,8 +112,16 @@ export function Tasks() {
             </option>
           ))}
         </select>
-        <input type="date" aria-label={t("dueDate")} value={due} onChange={(e) => setDue(e.target.value)} className={field} />
-        <button className="h-8 rounded-md bg-accent px-3 font-medium text-white hover:brightness-95">{t("newTask")}</button>
+        <input
+          type="date"
+          aria-label={t("dueDate")}
+          value={due}
+          onChange={(e) => setDue(e.target.value)}
+          className={field}
+        />
+        <button className="h-8 rounded-md bg-accent px-3 font-medium text-white hover:brightness-95">
+          {t("newTask")}
+        </button>
       </form>
 
       {tasks.length === 0 ? (

@@ -10,12 +10,13 @@ import {
   MoveHorizontal,
   SmilePlus,
   Star,
+  Table2,
   Trash2,
   Type,
 } from "lucide-react";
 import { Fragment, useEffect, useRef, useState } from "react";
 import { download } from "../data/backup";
-import { resolveFileUrl, saveFile } from "../data/files";
+import { saveFile } from "../data/files";
 import {
   backlinks,
   duplicatePage,
@@ -30,15 +31,8 @@ import { PageEditor, type PageEditorHandle } from "../editor/PageEditor";
 import { template, type TemplateId } from "../editor/templates";
 import { useT, type Key } from "../i18n";
 import { useStore } from "../store";
-import {
-  IconButton,
-  Menu,
-  PageIcon,
-  Popover,
-  relativeTime,
-  SectionTitle,
-  TopBar,
-} from "./common";
+import { Cover, IconButton, Menu, PageIcon, Popover, relativeTime, SectionTitle, TopBar } from "./common";
+import { DatabaseView, RowProperties } from "./database/DatabaseView";
 import { EmojiPicker } from "./EmojiPicker";
 
 const COVER_COLORS = [
@@ -59,23 +53,6 @@ const FONTS: [PageFont, Key][] = [
   ["mono", "fontMono"],
 ];
 
-/** Bandeau de couverture : une couleur (`color:#hex`) ou une image stockée. */
-function Cover({ value }: { value: string }) {
-  const [url, setUrl] = useState("");
-  const color = value.startsWith("color:") ? value.slice(6) : null;
-  useEffect(() => {
-    let live = true;
-    if (!color) resolveFileUrl(value).then((u) => live && setUrl(u));
-    return () => {
-      live = false;
-    };
-  }, [value, color]);
-  return color ? (
-    <div className="h-full w-full" style={{ background: color }} />
-  ) : (
-    url && <img src={url} alt="" className="h-full w-full object-cover" />
-  );
-}
 const TEMPLATES: [TemplateId, Key][] = [
   ["lecture", "tplLecture"],
   ["cornell", "tplCornell"],
@@ -125,6 +102,8 @@ export function PageView({ id }: { id: string }) {
   const coverInput = useRef<HTMLInputElement>(null);
   const [mentions, setMentions] = useState<PageMeta[]>([]);
   const editor = useRef<PageEditorHandle>(null);
+  const isDatabase = page?.kind === "database";
+  const parent = pages.find((p) => p.id === page?.parent_id);
 
   useEffect(() => {
     let live = true;
@@ -153,12 +132,7 @@ export function PageView({ id }: { id: string }) {
   };
 
   const trail: PageMeta[] = [];
-  for (
-    let p: PageMeta | undefined = page;
-    p;
-    p = pages.find((x) => x.id === p!.parent_id)
-  )
-    trail.unshift(p);
+  for (let p: PageMeta | undefined = page; p; p = pages.find((x) => x.id === p!.parent_id)) trail.unshift(p);
 
   const exportMarkdown = () => {
     const name = title || t("untitled");
@@ -187,15 +161,9 @@ export function PageView({ id }: { id: string }) {
               label={page.favorite ? t("removeFavorite") : t("addFavorite")}
               onClick={() => saveMeta({ favorite: !page.favorite })}
             >
-              <Star
-                size={18}
-                strokeWidth={1.75}
-                className={page.favorite ? "fill-[#f6c050] text-[#f6c050]" : ""}
-              />
+              <Star size={18} strokeWidth={1.75} className={page.favorite ? "fill-[#f6c050] text-[#f6c050]" : ""} />
             </IconButton>
-            <span
-              onPointerDown={() => setWords(editor.current?.wordCount() ?? 0)}
-            >
+            <span onPointerDown={() => setWords(editor.current?.wordCount() ?? 0)}>
               <Menu
                 label={t("more")}
                 align="right"
@@ -276,9 +244,7 @@ export function PageView({ id }: { id: string }) {
               }`}
             >
               <PageIcon page={p} size={16} />
-              <span className="max-w-40 truncate">
-                {p.title || t("untitled")}
-              </span>
+              <span className="max-w-40 truncate">{p.title || t("untitled")}</span>
             </button>
           </Fragment>
         ))}
@@ -291,16 +257,11 @@ export function PageView({ id }: { id: string }) {
             <div className="absolute bottom-3 right-3 flex overflow-hidden rounded-md bg-pop text-xs text-muted opacity-0 shadow-pop focus-within:opacity-100 group-hover/cover:opacity-100 max-md:opacity-100">
               <button
                 className="h-7 px-2 hover:bg-hover"
-                onClick={(e) =>
-                  setCoverPicker(e.currentTarget.getBoundingClientRect())
-                }
+                onClick={(e) => setCoverPicker(e.currentTarget.getBoundingClientRect())}
               >
                 {t("changeCover")}
               </button>
-              <button
-                className="h-7 px-2 hover:bg-hover"
-                onClick={() => saveMeta({ cover: null })}
-              >
+              <button className="h-7 px-2 hover:bg-hover" onClick={() => saveMeta({ cover: null })}>
                 {t("removeCover")}
               </button>
             </div>
@@ -324,12 +285,7 @@ export function PageView({ id }: { id: string }) {
         }}
       />
       {coverPicker && (
-        <Popover
-          anchor={coverPicker}
-          onClose={() => setCoverPicker(null)}
-          width={236}
-          align="right"
-        >
+        <Popover anchor={coverPicker} onClose={() => setCoverPicker(null)} width={236} align="right">
           <div className="grid grid-cols-5 gap-1.5 p-1.5">
             {COVER_COLORS.map((c) => (
               <button
@@ -358,20 +314,16 @@ export function PageView({ id }: { id: string }) {
       )}
 
       <div
-        className={`mx-auto pb-40 ${page.full_width ? "" : "max-w-[900px]"} ${
+        className={`mx-auto pb-40 ${page.full_width || isDatabase ? "" : "max-w-[900px]"} ${
           page.font === "sans" ? "" : `page-${page.font}`
         } ${page.small_text ? "page-small" : ""}`}
       >
-        <div
-          className={`group px-(--page-pad) ${page.cover ? (page.icon ? "" : "pt-6") : "pt-16"}`}
-        >
+        <div className={`group px-(--page-pad) ${page.cover ? (page.icon ? "" : "pt-6") : "pt-16"}`}>
           {page.icon && (
             <button
               aria-label={t("addIcon")}
               disabled={!!page.locked}
-              onClick={(e) =>
-                setPicker(e.currentTarget.getBoundingClientRect())
-              }
+              onClick={(e) => setPicker(e.currentTarget.getBoundingClientRect())}
               className={`relative -ml-1 mb-1 grid size-[72px] place-items-center rounded-md text-[60px] leading-none enabled:hover:bg-hover ${
                 page.cover ? "-mt-9" : ""
               }`}
@@ -383,9 +335,7 @@ export function PageView({ id }: { id: string }) {
             <div className="-ml-1.5 mb-1 flex h-7 gap-1 text-faint opacity-0 focus-within:opacity-100 group-hover:opacity-100 max-md:opacity-100">
               {!page.icon && (
                 <button
-                  onClick={(e) =>
-                    setPicker(e.currentTarget.getBoundingClientRect())
-                  }
+                  onClick={(e) => setPicker(e.currentTarget.getBoundingClientRect())}
                   className="flex items-center gap-1.5 rounded px-1.5 hover:bg-hover"
                 >
                   <SmilePlus size={16} />
@@ -394,9 +344,7 @@ export function PageView({ id }: { id: string }) {
               )}
               {!page.cover && (
                 <button
-                  onClick={(e) =>
-                    setCoverPicker(e.currentTarget.getBoundingClientRect())
-                  }
+                  onClick={(e) => setCoverPicker(e.currentTarget.getBoundingClientRect())}
                   className="flex items-center gap-1.5 rounded px-1.5 hover:bg-hover"
                 >
                   <ImagePlus size={16} />
@@ -410,16 +358,12 @@ export function PageView({ id }: { id: string }) {
               anchor={picker}
               onClose={() => setPicker(null)}
               onPick={(icon) => void saveMeta({ icon })}
-              onRemove={
-                page.icon ? () => void saveMeta({ icon: null }) : undefined
-              }
+              onRemove={page.icon ? () => void saveMeta({ icon: null }) : undefined}
             />
           )}
 
-          {page.kind !== "note" && (
-            <p className="mb-1 text-xs font-medium text-muted">
-              {t(page.kind === "semester" ? "semester" : "course")}
-            </p>
+          {(page.kind === "semester" || page.kind === "course") && (
+            <p className="mb-1 text-xs font-medium text-muted">{t(page.kind === "semester" ? "semester" : "course")}</p>
           )}
           <input
             value={title}
@@ -431,10 +375,12 @@ export function PageView({ id }: { id: string }) {
             onKeyDown={(e) => e.key === "Enter" && e.currentTarget.blur()}
             className="page-title w-full bg-transparent text-[40px] font-bold leading-[1.2] placeholder:text-faint"
           />
+          {parent?.kind === "database" && <RowProperties page={page} databaseId={parent.id} />}
         </div>
 
-        <div className="mt-2">
-          {doc && (
+        {isDatabase && <DatabaseView page={page} />}
+        <div className={isDatabase ? "hidden" : "mt-2"}>
+          {doc && !isDatabase && (
             <PageEditor
               ref={editor}
               pageId={id}
@@ -445,30 +391,32 @@ export function PageView({ id }: { id: string }) {
           )}
         </div>
 
-        {pristine && !page.locked && (
+        {pristine && !page.locked && !isDatabase && (
           <div className="mt-6 px-(--page-pad) text-muted">
             <p className="mb-1 text-faint">{t("template")}</p>
             <div className="-mx-1.5">
               {TEMPLATES.map(([tid, key]) => (
                 <button
                   key={tid}
-                  onClick={() =>
-                    editor.current?.applyTemplate(template(tid, lang))
-                  }
+                  onClick={() => editor.current?.applyTemplate(template(tid, lang))}
                   className="flex h-8 w-full items-center gap-2 rounded-md px-1.5 text-left text-[15px] hover:bg-hover"
                 >
                   <FileText size={18} strokeWidth={1.75} />
                   {t(key)}
                 </button>
               ))}
+              <button
+                onClick={() => saveMeta({ kind: "database" })}
+                className="flex h-8 w-full items-center gap-2 rounded-md px-1.5 text-left text-[15px] hover:bg-hover"
+              >
+                <Table2 size={18} strokeWidth={1.75} />
+                {t("database")}
+              </button>
             </div>
           </div>
         )}
 
-        <PageList
-          title={t("subpages")}
-          pages={pages.filter((p) => p.parent_id === id)}
-        />
+        {!isDatabase && <PageList title={t("subpages")} pages={pages.filter((p) => p.parent_id === id)} />}
         <PageList title={t("backlinks")} pages={mentions} />
       </div>
     </>

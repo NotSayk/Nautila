@@ -32,10 +32,15 @@ export async function syncCards(pageId: string, cards: ExtractedCard[]) {
       await db().run("UPDATE cards SET front = ?, back = ? WHERE id = ?", [c.front, c.back, c.id]);
     } else {
       const state = createEmptyCard(new Date(now));
-      await db().run(
-        "INSERT INTO cards (id, page_id, front, back, fsrs, due, created_at) VALUES (?,?,?,?,?,?,?)",
-        [c.id, pageId, c.front, c.back, JSON.stringify(state), state.due.getTime(), now],
-      );
+      await db().run("INSERT INTO cards (id, page_id, front, back, fsrs, due, created_at) VALUES (?,?,?,?,?,?,?)", [
+        c.id,
+        pageId,
+        c.front,
+        c.back,
+        JSON.stringify(state),
+        state.due.getTime(),
+        now,
+      ]);
     }
   }
 }
@@ -63,9 +68,5 @@ export function previewIntervals(row: CardRow, now = new Date()): Record<Grade, 
 
 export async function gradeCard(row: CardRow, grade: Grade, now = new Date()) {
   const { card } = scheduler.next(revive(row.fsrs), now, grade);
-  await db().run("UPDATE cards SET fsrs = ?, due = ? WHERE id = ?", [
-    JSON.stringify(card),
-    card.due.getTime(),
-    row.id,
-  ]);
+  await db().run("UPDATE cards SET fsrs = ?, due = ? WHERE id = ?", [JSON.stringify(card), card.due.getTime(), row.id]);
 }

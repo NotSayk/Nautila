@@ -32,6 +32,6 @@ export async function openWebDb(): Promise<Db> {
   return {
     persistent,
     run: async (sql, params = []) => void (await call(sql, params, false)),
-    all: async <T,>(sql: string, params: SqlValue[] = []) => (await call(sql, params, true)) as T[],
+    all: async <T>(sql: string, params: SqlValue[] = []) => (await call(sql, params, true)) as T[],
   };
 }

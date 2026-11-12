@@ -301,3 +301,60 @@ textarea:focus-visible,
 .page-small .bn-editor {
   font-size: 14px;
 }
+
+.tag-gray {
+  background: #e3e2e0;
+  color: #32302c;
+}
+.tag-brown {
+  background: #eee0da;
+  color: #442a1e;
+}
+.tag-orange {
+  background: #fadec9;
+  color: #49290e;
+}
+.tag-yellow {
+  background: #fdecc8;
+  color: #402c1b;
+}
+.tag-green {
+  background: #dbeddb;
+  color: #1c3829;
+}
+.tag-purple {
+  background: #e8deee;
+  color: #412454;
+}
+.tag-pink {
+  background: #f5e0e9;
+  color: #4c2337;
+}
+.dark .tag-gray {
+  background: #5a5a5a;
+  color: rgb(255 255 255 / 0.85);
+}
+.dark .tag-brown {
+  background: #603b2c;
+  color: rgb(255 255 255 / 0.85);
+}
+.dark .tag-orange {
+  background: #854c1d;
+  color: rgb(255 255 255 / 0.85);
+}
+.dark .tag-yellow {
+  background: #89632a;
+  color: rgb(255 255 255 / 0.85);
+}
+.dark .tag-green {
+  background: #2b593f;
+  color: rgb(255 255 255 / 0.85);
+}
+.dark .tag-purple {
+  background: #492f64;
+  color: rgb(255 255 255 / 0.85);
+}
+.dark .tag-pink {
+  background: #69314c;
+  color: rgb(255 255 255 / 0.85);
+}

@@ -6,9 +6,7 @@ let instance: Db | undefined;
 export const isTauri = () => typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 
 export async function initDb(): Promise<Db> {
-  const db = isTauri()
-    ? await (await import("./tauri")).openTauriDb()
-    : await (await import("./web")).openWebDb();
+  const db = isTauri() ? await (await import("./tauri")).openTauriDb() : await (await import("./web")).openWebDb();
   await migrate(db);
   instance = db;
   return db;
