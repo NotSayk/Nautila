@@ -1,0 +1,82 @@
+import { create } from "zustand";
+import { cardStats } from "./data/cards";
+import { createPage, listPages, type PageKind, type PageMeta } from "./data/pages";
+import type { Lang } from "./i18n";
+
+export type Route =
+  | { view: "home" }
+  | { view: "review" }
+  | { view: "tasks" }
+  | { view: "trash" }
+  | { view: "page"; id: string };
+
+function parseHash(): Route {
+  const [view, id] = location.hash.replace(/^#\/?/, "").split("/");
+  if (view === "page" && id) return { view: "page", id };
+  if (view === "review" || view === "tasks" || view === "trash") return { view };
+  return { view: "home" };
+}
+
+const stored = (key: string) => {
+  try {
+    return localStorage.getItem(key);
+  } catch {
+    return null;
+  }
+};
+const store = (key: string, value: string) => {
+  try {
+    localStorage.setItem(key, value);
+  } catch {
+    /* préférence non mémorisée, sans gravité */
+  }
+};
+
+type State = {
+  route: Route;
+  pages: PageMeta[];
+  dueCount: number;
+  lang: Lang;
+  dark: boolean;
+  searchOpen: boolean;
+  navigate: (route: Route) => void;
+  refreshPages: () => Promise<void>;
+  refreshDue: () => Promise<void>;
+  newPage: (input: { parentId?: string | null; kind?: PageKind }) => Promise<void>;
+  setLang: (lang: Lang) => void;
+  toggleDark: () => void;
+  setSearchOpen: (open: boolean) => void;
+};
+
+export const useStore = create<State>((set, get) => ({
+  route: parseHash(),
+  pages: [],
+  dueCount: 0,
+  lang: stored("nautila.lang") === "en" ? "en" : stored("nautila.lang") === "fr" ? "fr" : navigator.language.startsWith("fr") ? "fr" : "en",
+  dark: stored("nautila.dark") ? stored("nautila.dark") === "1" : matchMedia("(prefers-color-scheme: dark)").matches,
+  searchOpen: false,
+
+  navigate: (route) => {
+    location.hash = route.view === "page" ? `/page/${route.id}` : route.view === "home" ? "/" : `/${route.view}`;
+    set({ route, searchOpen: false });
+  },
+  refreshPages: async () => set({ pages: await listPages() }),
+  refreshDue: async () => set({ dueCount: (await cardStats()).due }),
+  newPage: async ({ parentId, kind }) => {
+    const page = await createPage({ parentId, kind });
+    await get().refreshPages();
+    get().navigate({ view: "page", id: page.id });
+  },
+  setLang: (lang) => {
+    store("nautila.lang", lang);
+    set({ lang });
+  },
+  toggleDark: () => {
+    const dark = !get().dark;
+    store("nautila.dark", dark ? "1" : "0");
+    set({ dark });
+  },
+  setSearchOpen: (searchOpen) => set({ searchOpen }),
+}));
+
+window.addEventListener("hashchange", () => useStore.setState({ route: parseHash() }));

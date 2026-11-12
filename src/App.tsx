@@ -1,0 +1,81 @@
+import { useEffect, useState } from "react";
+import { initDb } from "./db";
+import { useT } from "./i18n";
+import { useStore } from "./store";
+import { Dashboard } from "./views/Dashboard";
+import { PageView } from "./views/PageView";
+import { Review } from "./views/Review";
+import { SearchDialog } from "./views/SearchDialog";
+import { Sidebar } from "./views/Sidebar";
+import { Tasks } from "./views/Tasks";
+import { Trash } from "./views/Trash";
+
+type Status = { state: "loading" } | { state: "ready"; persistent: boolean } | { state: "error"; message: string };
+
+// Une seule ouverture de la base, même si React monte le composant deux fois.
+let opening: ReturnType<typeof initDb> | undefined;
+
+export function App() {
+  const t = useT();
+  const [status, setStatus] = useState<Status>({ state: "loading" });
+  const route = useStore((s) => s.route);
+  const dark = useStore((s) => s.dark);
+  const lang = useStore((s) => s.lang);
+  const searchOpen = useStore((s) => s.searchOpen);
+
+  useEffect(() => {
+    (opening ??= initDb()).then(
+      async (db) => {
+        await Promise.all([useStore.getState().refreshPages(), useStore.getState().refreshDue()]);
+        setStatus({ state: "ready", persistent: db.persistent });
+      },
+      (err) => setStatus({ state: "error", message: String(err?.message ?? err) }),
+    );
+  }, []);
+
+  useEffect(() => {
+    document.documentElement.classList.toggle("dark", dark);
+    document.documentElement.lang = lang;
+  }, [dark, lang]);
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "k") {
+        e.preventDefault();
+        useStore.getState().setSearchOpen(true);
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
+
+  if (status.state === "loading") return <div className="grid h-full place-items-center text-muted">Nautila…</div>;
+  if (status.state === "error")
+    return (
+      <div className="grid h-full place-items-center p-6 text-center">
+        <div>
+          <p className="font-medium">{t("loadError")}</p>
+          <p className="mt-2 text-sm text-muted">{status.message}</p>
+        </div>
+      </div>
+    );
+
+  return (
+    <div className="flex h-full">
+      <Sidebar />
+      <main className="min-w-0 flex-1 overflow-y-auto">
+        {!status.persistent && (
+          <div className="bg-amber-100 px-4 py-2 text-sm text-amber-900 dark:bg-amber-950 dark:text-amber-200">
+            {t("notPersistent")}
+          </div>
+        )}
+        {route.view === "home" && <Dashboard />}
+        {route.view === "page" && <PageView key={route.id} id={route.id} />}
+        {route.view === "review" && <Review />}
+        {route.view === "tasks" && <Tasks />}
+        {route.view === "trash" && <Trash />}
+      </main>
+      {searchOpen && <SearchDialog />}
+    </div>
+  );
+}
