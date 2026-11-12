@@ -46,3 +46,21 @@ export function resolveFileUrl(url: string): Promise<string> {
   }
   return pending;
 }
+
+const HOUR = 3_600_000;
+
+export const fileId = (url: string | null | undefined) =>
+  url?.startsWith(FILE_SCHEME) ? url.slice(FILE_SCHEME.length) : null;
+
+/** Note qu'une page (ou un modèle) utilise ces fichiers. */
+export async function linkFiles(ownerId: string, ids: (string | null)[]) {
+  for (const id of ids)
+    if (id) await db().run("INSERT OR IGNORE INTO page_files (page_id, file_id) VALUES (?, ?)", [ownerId, id]);
+}
+
+/**
+ * Supprime les fichiers que plus aucune page ni modèle n'utilise. Un fichier
+ * récent est épargné : il peut être joint à une page pas encore enregistrée.
+ */
+export const collectFiles = (now = Date.now()) =>
+  db().run("DELETE FROM files WHERE created_at < ? AND id NOT IN (SELECT file_id FROM page_files)", [now - HOUR]);

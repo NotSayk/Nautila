@@ -25,14 +25,9 @@ import { savePageContent } from "../data/pages";
 import { pendingMarkdown } from "../data/templates";
 import { useT } from "../i18n";
 import { useStore } from "../store";
+import { REMOTE_DOC_EVENT } from "../sync/engine";
+import { fromBase64, toBase64 } from "../util/base64";
 import { languageId, schema, type NautilaBlock, type NautilaEditor } from "./schema";
-
-function toBase64(bytes: Uint8Array): string {
-  let s = "";
-  for (let i = 0; i < bytes.length; i += 0x8000) s += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
-  return btoa(s);
-}
-const fromBase64 = (b64: string) => Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
 
 /** Ramène les langages de code inconnus à du texte brut : le colorateur refuse les autres. */
 function knownLanguages<T extends { type: string; props?: any; children?: T[] }>(blocks: T[]): T[] {
@@ -145,6 +140,12 @@ export const PageEditor = forwardRef<PageEditorHandle, Props>(function PageEdito
     };
     const onHide = () => document.visibilityState === "hidden" && flush();
 
+    // Modifications de la même page arrivées d'un autre appareil : fusion en direct.
+    const onRemote = (e: Event) => {
+      const { id, ydoc } = (e as CustomEvent<{ id: string; ydoc: string }>).detail;
+      if (id === pageId) Y.applyUpdate(doc, fromBase64(ydoc));
+    };
+    window.addEventListener(REMOTE_DOC_EVENT, onRemote);
     doc.on("update", onUpdate);
     const markdown = pendingMarkdown.get(pageId);
     if (markdown !== undefined) {
@@ -156,6 +157,7 @@ export const PageEditor = forwardRef<PageEditorHandle, Props>(function PageEdito
     window.addEventListener("pagehide", flush);
     return () => {
       doc.off("update", onUpdate);
+      window.removeEventListener(REMOTE_DOC_EVENT, onRemote);
       document.removeEventListener("visibilitychange", onHide);
       window.removeEventListener("pagehide", flush);
       flush();

@@ -9,7 +9,10 @@ type AnyBlock = {
 };
 
 export type ExtractedCard = { id: string; front: string; back: string };
-export type Extracted = { body: string; cards: ExtractedCard[]; links: string[] };
+/** `files` : identifiants des fichiers locaux utilisés par les blocs. */
+export type Extracted = { body: string; cards: ExtractedCard[]; links: string[]; files: string[] };
+
+const FILE_SCHEME = "nautila-file:";
 
 function inlineText(content: unknown, links: Set<string>): string {
   if (!content) return "";
@@ -42,9 +45,12 @@ export function extract(blocks: AnyBlock[]): Extracted {
   const lines: string[] = [];
   const cards: ExtractedCard[] = [];
   const links = new Set<string>();
+  const files = new Set<string>();
 
   const walk = (list: AnyBlock[]) => {
     for (const b of list) {
+      const url = b.props?.url;
+      if (typeof url === "string" && url.startsWith(FILE_SCHEME)) files.add(url.slice(FILE_SCHEME.length));
       if (b.type === "flashcard") {
         const front = String(b.props?.front ?? "").trim();
         const back = String(b.props?.back ?? "").trim();
@@ -60,7 +66,7 @@ export function extract(blocks: AnyBlock[]): Extracted {
   };
   walk(blocks);
 
-  return { body: lines.filter(Boolean).join("\n"), cards, links: [...links] };
+  return { body: lines.filter(Boolean).join("\n"), cards, links: [...links], files: [...files] };
 }
 
 /** Transforme une saisie libre en requête FTS5 sûre (recherche par préfixe). */

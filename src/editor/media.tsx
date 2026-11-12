@@ -131,17 +131,31 @@ type Stroke = { d: string; color: string };
 const INK = ["currentColor", "#d44c47", "#2383e2", "#448361"];
 const SIZE = { w: 800, h: 360 };
 
+// Le trait en cours vit hors du composant : l'éditeur peut remonter le bloc
+// pendant le tracé (sélection, insertion) sans que le trait soit perdu.
+const drafts = new Map<string, Stroke>();
+const DRAFT_EVENT = "nautila-sketch";
+
 /** Croquis à main levée, enregistré sous forme de tracés vectoriels. */
 export const Sketch = createReactBlockSpec(
   { type: "sketch", propSchema: { strokes: { default: "[]" } }, content: "none" },
   {
     render: ({ block, editor }) => {
       const t = useT();
+      const id = block.id;
       const strokes: Stroke[] = JSON.parse(block.props.strokes);
       const [color, setColor] = useState(INK[0]);
-      const [current, setCurrent] = useState<Stroke | null>(null);
-      const save = (next: Stroke[]) => editor.updateBlock(block, { props: { strokes: JSON.stringify(next) } });
-      // Sans cela, l'éditeur sélectionne le bloc au premier clic et le trait en cours est perdu.
+      const [, redraw] = useState(0);
+      const current = drafts.get(id);
+      const save = (next: Stroke[]) => editor.updateBlock(id, { props: { strokes: JSON.stringify(next) } });
+
+      useEffect(() => {
+        const onDraft = () => redraw((n) => n + 1);
+        window.addEventListener(DRAFT_EVENT, onDraft);
+        return () => window.removeEventListener(DRAFT_EVENT, onDraft);
+      }, []);
+
+      // Sans cela, l'éditeur sélectionne le bloc au clic au lieu de laisser dessiner.
       const svg = useRef<SVGSVGElement>(null);
       useEffect(() => {
         const stop = (e: Event) => e.stopPropagation();
@@ -150,31 +164,44 @@ export const Sketch = createReactBlockSpec(
         return () => el?.removeEventListener("mousedown", stop);
       }, []);
 
-      // Coordonnées dans le repère du dessin, quelle que soit la taille affichée.
-      const point = (e: React.PointerEvent<SVGSVGElement>) => {
-        const box = e.currentTarget.getBoundingClientRect();
-        const x = ((e.clientX - box.left) / box.width) * SIZE.w;
-        const y = ((e.clientY - box.top) / box.height) * SIZE.h;
-        return `${x.toFixed(1)} ${y.toFixed(1)}`;
+      const begin = (e: React.PointerEvent<SVGSVGElement>) => {
+        if (!editor.isEditable) return;
+        // Coordonnées dans le repère du dessin, quelle que soit la taille affichée.
+        const point = (ev: { clientX: number; clientY: number }) => {
+          const box = (document.querySelector(`[data-sketch="${id}"]`) ?? e.currentTarget).getBoundingClientRect();
+          const x = ((ev.clientX - box.left) / box.width) * SIZE.w;
+          const y = ((ev.clientY - box.top) / box.height) * SIZE.h;
+          return `${x.toFixed(1)} ${y.toFixed(1)}`;
+        };
+        const notify = () => window.dispatchEvent(new Event(DRAFT_EVENT));
+        const move = (ev: PointerEvent) => {
+          const draft = drafts.get(id);
+          if (draft) drafts.set(id, { ...draft, d: `${draft.d} L${point(ev)}` });
+          notify();
+        };
+        const end = () => {
+          window.removeEventListener("pointermove", move);
+          const draft = drafts.get(id);
+          drafts.delete(id);
+          const latest = editor.getBlock(id);
+          if (draft && latest) save([...JSON.parse((latest.props as { strokes: string }).strokes), draft]);
+          notify();
+        };
+        drafts.set(id, { d: `M${point(e)}`, color });
+        window.addEventListener("pointermove", move);
+        window.addEventListener("pointerup", end, { once: true });
+        notify();
       };
 
       return (
         <div className="media-block sketch" contentEditable={false}>
           <svg
             ref={svg}
+            data-sketch={id}
             viewBox={`0 0 ${SIZE.w} ${SIZE.h}`}
             className="w-full touch-none"
             style={{ cursor: editor.isEditable ? "crosshair" : "default" }}
-            onPointerDown={(e) => {
-              if (!editor.isEditable) return;
-              e.currentTarget.setPointerCapture(e.pointerId);
-              setCurrent({ d: `M${point(e)}`, color });
-            }}
-            onPointerMove={(e) => current && setCurrent({ ...current, d: `${current.d} L${point(e)}` })}
-            onPointerUp={() => {
-              if (current) save([...strokes, current]);
-              setCurrent(null);
-            }}
+            onPointerDown={begin}
           >
             {[...strokes, ...(current ? [current] : [])].map((s, i) => (
               <path

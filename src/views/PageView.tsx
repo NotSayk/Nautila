@@ -252,7 +252,7 @@ export function PageView({ id }: { id: string }) {
                           icon: <BookmarkPlus size={16} />,
                           label: t("saveAsTemplate"),
                           onClick: () =>
-                            editor.current && saveTemplate(title || t("untitled"), editor.current.docState()),
+                            editor.current && saveTemplate(title || t("untitled"), editor.current.docState(), id),
                         },
                       ]),
                   "separator",

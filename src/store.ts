@@ -48,6 +48,8 @@ type State = {
   /** Page en cours de déplacement (boîte « Déplacer vers »). */
   moveId: string | null;
   /** Minuteur Pomodoro : `endsAt` défini quand il tourne, `left` (ms) quand il est en pause. */
+  sync: { status: "off" | "idle" | "syncing" | "error"; username?: string; error?: string; lastSync?: number };
+  syncOpen: boolean;
   pomodoro: { mode: "focus" | "break"; endsAt: number | null; left: number };
   navigate: (route: Route) => void;
   refreshPages: () => Promise<void>;
@@ -74,6 +76,8 @@ export const useStore = create<State>((set, get) => ({
   dark: stored("nautila.dark") ? stored("nautila.dark") === "1" : matchMedia("(prefers-color-scheme: dark)").matches,
   searchOpen: false,
   moveId: null,
+  sync: { status: "off" },
+  syncOpen: false,
   pomodoro: { mode: "focus", endsAt: null, left: 25 * 60_000 },
   sidebarOpen: isDesktop() && stored("nautila.sidebar") !== "0",
 

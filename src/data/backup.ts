@@ -1,7 +1,19 @@
 import { db } from "../db";
 import type { SqlValue } from "../db/types";
 
-const TABLES = ["pages", "links", "tasks", "cards", "files", "databases", "slots", "grades", "templates"] as const;
+const TABLES = [
+  "pages",
+  "links",
+  "tasks",
+  "cards",
+  "files",
+  "databases",
+  "slots",
+  "grades",
+  "templates",
+  "versions",
+  "page_files",
+] as const;
 type Backup = { app: "nautila"; version: 1; exported_at: number; tables: Record<string, Record<string, SqlValue>[]> };
 
 export async function exportBackup(): Promise<string> {

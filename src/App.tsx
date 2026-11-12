@@ -6,6 +6,8 @@ import { Dashboard } from "./views/Dashboard";
 import { Grades } from "./views/Grades";
 import { Timetable } from "./views/Timetable";
 import { notifyDueTasks } from "./reminders";
+import { startSync } from "./sync/engine";
+import { SyncDialog } from "./views/SyncDialog";
 import { MoveDialog } from "./views/MoveDialog";
 import { PageView } from "./views/PageView";
 import { Review } from "./views/Review";
@@ -27,6 +29,7 @@ export function App() {
   const lang = useStore((s) => s.lang);
   const searchOpen = useStore((s) => s.searchOpen);
   const moveId = useStore((s) => s.moveId);
+  const syncOpen = useStore((s) => s.syncOpen);
 
   useEffect(() => {
     (opening ??= initDb()).then(
@@ -34,6 +37,7 @@ export function App() {
         await Promise.all([useStore.getState().refreshPages(), useStore.getState().refreshDue()]);
         setStatus({ state: "ready", persistent: db.persistent });
         void notifyDueTasks();
+        void startSync();
       },
       (err) => setStatus({ state: "error", message: String(err?.message ?? err) }),
     );
@@ -85,6 +89,7 @@ export function App() {
       </main>
       {searchOpen && <SearchDialog />}
       {moveId && <MoveDialog id={moveId} />}
+      {syncOpen && <SyncDialog />}
     </div>
   );
 }

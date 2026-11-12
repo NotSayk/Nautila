@@ -4,6 +4,8 @@ export type SqlValue = string | number | null;
 export interface Db {
   run(sql: string, params?: SqlValue[]): Promise<void>;
   all<T = Record<string, SqlValue>>(sql: string, params?: SqlValue[]): Promise<T[]>;
+  /** Exécute les instructions dans une seule transaction (tout ou rien). */
+  batch(statements: { sql: string; params?: SqlValue[] }[]): Promise<void>;
   /** false si les données ne survivront pas à la fermeture (stockage indisponible). */
   readonly persistent: boolean;
 }

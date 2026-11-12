@@ -22,16 +22,17 @@ export async function openWebDb(): Promise<Db> {
     worker.onerror = (e) => reject(new Error(e.message));
   });
 
-  const call = (sql: string, params: SqlValue[], rows: boolean) =>
+  const post = (message: object) =>
     new Promise<unknown>((resolve, reject) => {
       const id = nextId++;
       pending.set(id, { resolve, reject });
-      worker.postMessage({ id, sql, params, rows });
+      worker.postMessage({ id, ...message });
     });
 
   return {
     persistent,
-    run: async (sql, params = []) => void (await call(sql, params, false)),
-    all: async <T>(sql: string, params: SqlValue[] = []) => (await call(sql, params, true)) as T[],
+    run: async (sql, params = []) => void (await post({ sql, params, rows: false })),
+    all: async <T>(sql: string, params: SqlValue[] = []) => (await post({ sql, params, rows: true })) as T[],
+    batch: async (batch) => void (await post({ batch })),
   };
 }

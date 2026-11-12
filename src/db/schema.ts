@@ -1,5 +1,36 @@
 import type { Db } from "./types";
 
+/** Tables synchronisées et expression SQL de leur identifiant (voir src/sync). */
+export const SYNC_TABLES: Record<string, string[]> = {
+  pages: ["id"],
+  tasks: ["id"],
+  cards: ["id"],
+  files: ["id"],
+  databases: ["page_id"],
+  slots: ["id"],
+  grades: ["id"],
+  templates: ["id"],
+  links: ["source_id", "target_id"],
+  page_files: ["page_id", "file_id"],
+};
+
+/** Chaque écriture locale note la ligne dans sync_log, sauf pendant l'application de changements distants. */
+function syncTriggers(): string[] {
+  const now = "CAST((julianday('now') - 2440587.5) * 86400000 AS INTEGER)";
+  return Object.entries(SYNC_TABLES).flatMap(([table, key]) =>
+    (["INSERT", "UPDATE", "DELETE"] as const).map((op) => {
+      const row = op === "DELETE" ? "OLD" : "NEW";
+      const id = key.map((k) => `${row}.${k}`).join(" || '|' || ");
+      return `CREATE TRIGGER sync_${table}_${op.toLowerCase()} AFTER ${op} ON ${table}
+        WHEN (SELECT applying FROM sync_state) = 0
+        BEGIN
+          INSERT INTO sync_log (tbl, id, at) VALUES ('${table}', ${id}, ${now})
+            ON CONFLICT (tbl, id) DO UPDATE SET at = excluded.at;
+        END`;
+    }),
+  );
+}
+
 /** Chaque entrée fait passer la base à la version suivante (PRAGMA user_version). */
 const MIGRATIONS: string[][] = [
   [
@@ -100,6 +131,26 @@ const MIGRATIONS: string[][] = [
     )`,
     `CREATE INDEX versions_page ON versions(page_id, created_at)`,
     `CREATE TABLE templates (id TEXT PRIMARY KEY, name TEXT NOT NULL, ydoc TEXT NOT NULL, created_at INTEGER NOT NULL)`,
+  ],
+  [
+    // Quels fichiers une page (ou un modèle) utilise : sert à supprimer les
+    // fichiers devenus orphelins. Les fichiers déjà présents sont conservés.
+    `CREATE TABLE page_files (page_id TEXT NOT NULL, file_id TEXT NOT NULL, PRIMARY KEY (page_id, file_id))`,
+    `INSERT INTO page_files (page_id, file_id) SELECT 'legacy', id FROM files`,
+    // Synchronisation : journal des lignes modifiées localement, alimenté par
+    // des déclencheurs, et état de la connexion au serveur.
+    `CREATE TABLE sync_log (tbl TEXT NOT NULL, id TEXT NOT NULL, at INTEGER NOT NULL, PRIMARY KEY (tbl, id))`,
+    `CREATE TABLE sync_state (
+      one INTEGER PRIMARY KEY CHECK (one = 1),
+      applying INTEGER NOT NULL DEFAULT 0,
+      server TEXT,
+      username TEXT,
+      token TEXT,
+      seq INTEGER NOT NULL DEFAULT 0,
+      last_sync INTEGER
+    )`,
+    `INSERT INTO sync_state (one) VALUES (1)`,
+    ...syncTriggers(),
   ],
 ];
 

@@ -1,5 +1,9 @@
 import {
   Bell,
+  Cloud,
+  CloudAlert,
+  CloudOff,
+  RefreshCw,
   CalendarCheck,
   CalendarDays,
   ChartNoAxesColumn,
@@ -240,7 +244,7 @@ function PageRow({
 
 export function Sidebar() {
   const t = useT();
-  const { route, pages, dueCount, dark, lang, sidebarOpen } = useStore();
+  const { route, pages, dueCount, dark, lang, sidebarOpen, sync } = useStore();
   const { navigate, newPage, toggleDark, setLang, setSearchOpen, setSidebarOpen } = useStore();
   const [open, setOpen] = useState<Set<string>>(new Set());
   const fileInput = useRef<HTMLInputElement>(null);
@@ -355,6 +359,21 @@ export function Sidebar() {
         <div className="flex h-11 items-center gap-2 px-3">
           <img src="/icon.svg" alt="" className="size-5 rounded" />
           <span className="flex-1 truncate font-semibold">Nautila</span>
+          <IconButton
+            label={t("syncTitle")}
+            onClick={() => useStore.setState({ syncOpen: true })}
+            className={`size-6 ${sync.status === "error" ? "text-danger" : ""}`}
+          >
+            {sync.status === "off" ? (
+              <CloudOff size={16} strokeWidth={1.75} className="text-faint" />
+            ) : sync.status === "syncing" ? (
+              <RefreshCw size={15} strokeWidth={1.75} className="animate-spin" />
+            ) : sync.status === "error" ? (
+              <CloudAlert size={16} strokeWidth={1.75} />
+            ) : (
+              <Cloud size={16} strokeWidth={1.75} />
+            )}
+          </IconButton>
           <IconButton
             label={t("closeSidebar")}
             onClick={() => setSidebarOpen(false)}

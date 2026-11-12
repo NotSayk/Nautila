@@ -1,7 +1,10 @@
 /// <reference lib="webworker" />
 import sqlite3InitModule, { type Database } from "@sqlite.org/sqlite-wasm";
 
-type Req = { id: number; sql: string; params: (string | number | null)[]; rows: boolean };
+type Param = string | number | null;
+type Req =
+  | { id: number; sql: string; params: Param[]; rows: boolean }
+  | { id: number; batch: { sql: string; params?: Param[] }[] };
 
 let db: Database;
 
@@ -26,14 +29,16 @@ ready.then(
 );
 
 onmessage = async (e: MessageEvent<Req>) => {
-  const { id, sql, params, rows } = e.data;
+  const req = e.data;
   try {
     await ready;
-    const result = rows
-      ? db.exec({ sql, bind: params, rowMode: "object", returnValue: "resultRows" })
-      : void db.exec(sql, { bind: params });
-    postMessage({ id, result });
+    let result: unknown;
+    if ("batch" in req) db.transaction(() => req.batch.forEach((s) => db.exec(s.sql, { bind: s.params ?? [] })));
+    else if (req.rows)
+      result = db.exec({ sql: req.sql, bind: req.params, rowMode: "object", returnValue: "resultRows" });
+    else db.exec(req.sql, { bind: req.params });
+    postMessage({ id: req.id, result });
   } catch (err) {
-    postMessage({ id, error: err instanceof Error ? err.message : String(err) });
+    postMessage({ id: req.id, error: err instanceof Error ? err.message : String(err) });
   }
 };

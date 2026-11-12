@@ -18,6 +18,8 @@ describe("extract", () => {
       },
       { id: "d", type: "flashcard", props: { front: "incomplète", back: "" } },
       { id: "e", type: "mathBlock", props: { latex: "\\pi" } },
+      { id: "g", type: "image", props: { url: "nautila-file:abc" } },
+      { id: "h", type: "image", props: { url: "https://example.org/x.png" } },
       {
         id: "f",
         type: "table",
@@ -31,6 +33,7 @@ describe("extract", () => {
     ]);
     expect(result.cards).toEqual([{ id: "c", front: "Q", back: "R" }]);
     expect(result.links).toEqual(["p1"]);
+    expect(result.files).toEqual(["abc"]);
     expect(result.body).toBe("Dérivées\nVoir wikix^2\nQ\nR\nincomplète\n\\pi\nu v");
   });
 });

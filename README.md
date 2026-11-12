@@ -31,11 +31,11 @@ Tes notes restent sur ton appareil : pas de compte, pas de télémétrie.
 **Données**
 - Tout est stocké sur l'appareil. Export Markdown, HTML et PDF par page.
 - Import Markdown, sauvegarde et restauration complètes en JSON.
+- Synchronisation entre appareils via un serveur auto-hébergé, avec comptes.
 - Interface en français et en anglais, thème clair et sombre.
 
 ## Pas encore fait
 
-- Synchronisation entre appareils via un serveur auto-hébergé (le contenu est déjà au format Yjs).
 - Annotation des PDF (surlignage lié aux notes) ; le PDF est pour l'instant seulement affiché.
 - Applications Android et iOS ; l'application de bureau Tauri est prête mais n'a pas encore été compilée.
 - Bases de données : relations, formules, vue chronologie, bases intégrées dans une page.
@@ -58,21 +58,34 @@ npm run tauri dev
 npm run tauri build
 ```
 
-## Héberger la version web
+## Héberger Nautila (application web et synchronisation)
 
-`dist/` est un site statique : n'importe quel serveur web suffit. Après une première visite,
-l'application fonctionne hors connexion et les notes sont stockées dans le navigateur.
-Exemple avec Caddy :
+Un seul conteneur sert l'application web et l'API de synchronisation. Sur un serveur avec Docker et Caddy :
 
-```
-notes.example.org {
-    root * /var/www/nautila
-    try_files {path} /index.html
-    file_server
-}
+```bash
+git clone https://github.com/NotSayk/Nautila && cd Nautila
+# Choisis le code d'invitation dans deploy/docker-compose.yml, puis :
+docker compose -f deploy/docker-compose.yml up -d --build
 ```
 
+Ajoute ensuite à ton Caddyfile le contenu de `deploy/Caddyfile` avec ton domaine, et recharge Caddy.
 HTTPS est obligatoire : sans lui, le navigateur refuse le stockage local persistant.
+
+Chaque étudiant crée son compte depuis l'icône nuage de la barre latérale. Réglages du serveur :
+
+| Variable | Rôle | Défaut |
+|---|---|---|
+| `REGISTRATION` | `open`, `invite` ou `closed` | `open`, ou `invite` si un code est défini |
+| `INVITE_CODE` | Code demandé à l'inscription | aucun |
+| `MAX_USER_MB` | Espace maximal par compte | 1024 |
+| `DATA_FILE` | Base SQLite du serveur | `/data/nautila.db` |
+
+Fonctionnement : chaque appareil garde toutes ses données et travaille hors connexion ; les
+modifications partent dès que le serveur est joignable. Le contenu des pages est fusionné (Yjs),
+donc deux appareils peuvent modifier la même page. Pour le reste (titres, devoirs, notes…), la
+modification la plus récente l'emporte, d'après l'horloge des appareils.
+Le serveur stocke les notes en clair : il n'y a pas de chiffrement de bout en bout.
+Pour sauvegarder le serveur, copie le volume `nautila-data`.
 
 ## Architecture
 
@@ -89,6 +102,8 @@ HTTPS est obligatoire : sans lui, le navigateur refuse le stockage local persist
 - `src/data/` : pages, cartes, devoirs, sauvegarde.
 - `src/editor/` : éditeur, blocs personnalisés, modèles.
 - `src/views/` : écrans.
+- `src/sync/` : synchronisation côté appareil.
+- `server/` : serveur de synchronisation (Node, SQLite).
 - `src-tauri/` : enveloppe de l'application de bureau.
 
 ## Licence

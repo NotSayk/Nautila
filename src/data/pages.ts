@@ -2,6 +2,7 @@ import { db } from "../db";
 import { syncCards } from "./cards";
 import { snapshot } from "./versions";
 import { toFtsQuery, type Extracted } from "./extract";
+import { collectFiles, fileId, linkFiles } from "./files";
 
 export type PageKind = "note" | "course" | "semester" | "database";
 export type PageFont = "sans" | "serif" | "mono";
@@ -99,6 +100,7 @@ export async function updatePageMeta(id: string, patch: PagePatch) {
       id,
     ]);
   }
+  if (patch.cover) await linkFiles(id, [fileId(patch.cover)]);
   if (patch.title !== undefined) {
     await db().run("UPDATE pages SET updated_at = ? WHERE id = ?", [Date.now(), id]);
     await reindex(id);
@@ -129,6 +131,10 @@ export async function duplicatePage(id: string, suffix: string): Promise<string>
       ]);
     await reindex(newId);
     await db().run("INSERT INTO databases (page_id, config) SELECT ?, config FROM databases WHERE page_id = ?", [
+      newId,
+      sourceId,
+    ]);
+    await db().run("INSERT INTO page_files (page_id, file_id) SELECT ?, file_id FROM page_files WHERE page_id = ?", [
       newId,
       sourceId,
     ]);
@@ -168,6 +174,9 @@ export async function savePageContent(id: string, ydoc: string, extracted: Extra
   for (const target of extracted.links)
     await db().run("INSERT OR IGNORE INTO links (source_id, target_id) VALUES (?, ?)", [id, target]);
   await syncCards(id, extracted.cards);
+  // Les liens vers les fichiers ne sont jamais retirés tant que la page existe :
+  // une version de l'historique peut encore les utiliser.
+  await linkFiles(id, extracted.files);
 }
 
 /** Identifiants de la page et de toute sa descendance. */
@@ -215,10 +224,12 @@ export async function deletePageForever(id: string) {
     await db().run("DELETE FROM cards WHERE page_id = ?", [pid]);
     await db().run("DELETE FROM databases WHERE page_id = ?", [pid]);
     await db().run("DELETE FROM versions WHERE page_id = ?", [pid]);
+    await db().run("DELETE FROM page_files WHERE page_id = ?", [pid]);
     await db().run("DELETE FROM grades WHERE course_id = ?", [pid]);
     await db().run("UPDATE slots SET course_id = NULL WHERE course_id = ?", [pid]);
     await db().run("UPDATE tasks SET course_id = NULL WHERE course_id = ?", [pid]);
   }
+  await collectFiles();
 }
 
 export type SearchHit = { id: string; title: string; icon: string | null; snippet: string };
