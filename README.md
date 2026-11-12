@@ -15,6 +15,7 @@ Tes notes restent sur ton appareil : pas de compte, pas de télémétrie.
 - **Liens entre pages** (`@`) et rétroliens.
 - **Recherche plein texte** (`Ctrl K`), insensible aux accents.
 - **Modèles** : notes de cours, méthode Cornell, fiche de révision, compte-rendu de TP.
+- Favoris, fil d'Ariane, sous-pages, pleine largeur, barre latérale repliable.
 - Corbeille, thème clair/sombre, interface en français et en anglais.
 - **Données ouvertes** : export Markdown par page, sauvegarde et restauration complètes en JSON.
 

@@ -1,9 +1,10 @@
+import { CalendarCheck, Clock, Layers } from "lucide-react";
 import { useEffect, useState } from "react";
 import { cardStats } from "../data/cards";
 import { listTasks, type Task } from "../data/tasks";
 import { useT } from "../i18n";
 import { useStore } from "../store";
-import { daysUntil, formatDue, PageIcon, View } from "./common";
+import { daysUntil, formatDue, PageIcon, relativeTime, SectionTitle, TopBar } from "./common";
 
 export function Dashboard() {
   const t = useT();
@@ -18,74 +19,94 @@ export function Dashboard() {
     listTasks().then((all) => setTasks(all.filter((x) => !x.done && x.due_at !== null && daysUntil(x.due_at) <= 14)));
   }, []);
 
-  const recent = [...pages].sort((a, b) => b.updated_at - a.updated_at).slice(0, 6);
+  const hour = new Date().getHours();
+  const greeting = t(hour < 12 ? "goodMorning" : hour < 18 ? "goodAfternoon" : "goodEvening");
+  const recent = [...pages].sort((a, b) => b.updated_at - a.updated_at).slice(0, 8);
   const courseName = (id: string | null) => pages.find((p) => p.id === id)?.title;
 
   return (
-    <View title={t("welcome")}>
-      <p className="-mt-4 mb-8 text-muted">{t("welcomeSub")}</p>
+    <>
+      <TopBar>
+        <span className="px-1.5">{t("home")}</span>
+      </TopBar>
+      <div className="mx-auto max-w-[900px] px-(--page-pad) pb-24">
+        <h1 className="py-12 text-center text-[30px] font-bold">{greeting}</h1>
 
-      <div className="mb-10 flex flex-wrap items-center gap-6 rounded-xl border border-line p-5">
-        <div>
-          <p className="text-3xl font-bold text-accent">{stats.due}</p>
-          <p className="text-sm text-muted">{t("cardsDue")}</p>
-        </div>
-        <div>
-          <p className="text-3xl font-bold">{stats.total}</p>
-          <p className="text-sm text-muted">{t("cardsTotal")}</p>
-        </div>
-        {stats.due > 0 && (
-          <button
-            onClick={() => navigate({ view: "review" })}
-            className="ml-auto rounded-lg bg-accent px-4 py-2 text-sm font-semibold text-bg"
-          >
-            {t("startReview")}
-          </button>
-        )}
-      </div>
-
-      <h2 className="mb-2 font-semibold">{t("upcoming")}</h2>
-      <div className="mb-10">
-        {tasks.length === 0 && <p className="text-sm text-muted">{t("nothingUpcoming")}</p>}
-        {tasks.map((task) => {
-          const late = daysUntil(task.due_at!) < 0;
-          return (
-            <button
-              key={task.id}
-              onClick={() => navigate({ view: "tasks" })}
-              className="flex w-full items-center gap-3 rounded-md px-2 py-2 text-left text-sm hover:bg-hover"
-            >
-              <span
-                className={`rounded px-1.5 py-0.5 text-xs font-semibold ${
-                  task.kind === "exam" ? "bg-red-100 text-red-700 dark:bg-red-950 dark:text-red-300" : "bg-accent-soft text-accent"
-                }`}
+        <SectionTitle>
+          <Clock size={14} />
+          {t("recent")}
+        </SectionTitle>
+        {recent.length === 0 ? (
+          <p className="mb-10 rounded-xl bg-panel px-4 py-6 text-center text-muted">{t("noRecent")}</p>
+        ) : (
+          <div className="-mx-1 mb-10 flex gap-4 overflow-x-auto px-1 pb-2">
+            {recent.map((p) => (
+              <button
+                key={p.id}
+                onClick={() => navigate({ view: "page", id: p.id })}
+                className="flex h-36 w-36 shrink-0 flex-col overflow-hidden rounded-xl bg-pop text-left shadow-[0_0_0_1px_var(--color-line),0_2px_4px_rgb(0_0_0/0.04)] transition-shadow hover:shadow-[0_0_0_1px_var(--color-line),0_4px_12px_rgb(0_0_0/0.1)]"
               >
-                {t(task.kind)}
-              </span>
-              <span className="min-w-0 flex-1 truncate">{task.title}</span>
-              <span className="truncate text-muted">{courseName(task.course_id)}</span>
-              <span className={late ? "font-medium text-red-600 dark:text-red-400" : "text-muted"}>
-                {late ? t("overdue") : formatDue(task.due_at!, lang)}
-              </span>
-            </button>
-          );
-        })}
-      </div>
+                <span className="h-11 w-full bg-panel" />
+                <span className="-mt-3.5 ml-4">
+                  <PageIcon page={p} size={26} />
+                </span>
+                <span className="mt-2.5 line-clamp-2 px-4 font-medium leading-5">{p.title || t("untitled")}</span>
+                <span className="mt-auto px-4 pb-3 text-xs text-faint">{relativeTime(p.updated_at, lang)}</span>
+              </button>
+            ))}
+          </div>
+        )}
 
-      <h2 className="mb-2 font-semibold">{t("recent")}</h2>
-      {recent.length === 0 && <p className="text-sm text-muted">{t("noRecent")}</p>}
-      <div className="grid gap-2 sm:grid-cols-2">
-        {recent.map((p) => (
-          <button
-            key={p.id}
-            onClick={() => navigate({ view: "page", id: p.id })}
-            className="flex items-center gap-2 rounded-lg border border-line px-3 py-2.5 text-left text-sm hover:bg-hover"
-          >
-            <PageIcon page={p} />
-            <span className="truncate">{p.title || t("untitled")}</span>
-          </button>
-        ))}
+        <div className="grid gap-8 md:grid-cols-[minmax(0,1fr)_260px]">
+          <section>
+            <SectionTitle>
+              <CalendarCheck size={14} />
+              {t("upcoming")}
+            </SectionTitle>
+            <div className="rounded-xl bg-panel p-1.5">
+              {tasks.length === 0 && <p className="px-2.5 py-5 text-center text-muted">{t("nothingUpcoming")}</p>}
+              {tasks.map((task) => {
+                const late = daysUntil(task.due_at!) < 0;
+                return (
+                  <button
+                    key={task.id}
+                    onClick={() => navigate({ view: "tasks" })}
+                    className="flex h-9 w-full items-center gap-2.5 rounded-lg px-2.5 text-left hover:bg-hover"
+                  >
+                    <span className={`tag ${task.kind === "exam" ? "tag-red" : "tag-blue"}`}>{t(task.kind)}</span>
+                    <span className="min-w-0 flex-1 truncate font-medium">{task.title}</span>
+                    <span className="hidden truncate text-muted sm:block">{courseName(task.course_id)}</span>
+                    <span className={late ? "text-danger" : "text-muted"}>
+                      {late ? t("overdue") : formatDue(task.due_at!, lang)}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+          </section>
+
+          <section>
+            <SectionTitle>
+              <Layers size={14} />
+              {t("review")}
+            </SectionTitle>
+            <div className="rounded-xl bg-panel p-4">
+              <p className="text-[32px] font-bold leading-none tabular-nums">{stats.due}</p>
+              <p className="mt-1.5 text-muted">{t("cardsDue")}</p>
+              <p className="text-xs text-faint">
+                {stats.total} {t("cardsTotal")}
+              </p>
+              <button
+                disabled={stats.due === 0}
+                onClick={() => navigate({ view: "review" })}
+                className="mt-4 h-8 w-full rounded-md bg-accent font-medium text-white hover:brightness-95 disabled:cursor-default disabled:bg-active disabled:text-faint"
+              >
+                {t("startReview")}
+              </button>
+            </div>
+          </section>
+        </div>
       </div>
-    </View>
+    </>
   );
 }

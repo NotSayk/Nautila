@@ -11,12 +11,14 @@ export type PageMeta = {
   title: string;
   icon: string | null;
   position: number;
+  favorite: number;
+  full_width: number;
   created_at: number;
   updated_at: number;
   deleted_at: number | null;
 };
 
-const META = "id, parent_id, kind, title, icon, position, created_at, updated_at, deleted_at";
+const META = "id, parent_id, kind, title, icon, position, favorite, full_width, created_at, updated_at, deleted_at";
 
 export const listPages = () =>
   db().all<PageMeta>(`SELECT ${META} FROM pages WHERE deleted_at IS NULL ORDER BY position, created_at`);
@@ -51,6 +53,8 @@ export async function createPage(input: {
     title: input.title ?? "",
     icon: input.icon ?? null,
     position: now,
+    favorite: 0,
+    full_width: 0,
     created_at: now,
     updated_at: now,
     deleted_at: null,
@@ -63,7 +67,14 @@ export async function createPage(input: {
   return page;
 }
 
-export async function updatePageMeta(id: string, patch: { title?: string; icon?: string | null }) {
+export async function updatePageMeta(
+  id: string,
+  patch: { title?: string; icon?: string | null; favorite?: boolean; full_width?: boolean },
+) {
+  if (patch.favorite !== undefined)
+    await db().run("UPDATE pages SET favorite = ? WHERE id = ?", [patch.favorite ? 1 : 0, id]);
+  if (patch.full_width !== undefined)
+    await db().run("UPDATE pages SET full_width = ? WHERE id = ?", [patch.full_width ? 1 : 0, id]);
   if (patch.title !== undefined)
     await db().run("UPDATE pages SET title = ?, updated_at = ? WHERE id = ?", [patch.title, Date.now(), id]);
   if (patch.icon !== undefined) await db().run("UPDATE pages SET icon = ? WHERE id = ?", [patch.icon, id]);

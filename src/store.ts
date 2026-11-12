@@ -32,6 +32,8 @@ const store = (key: string, value: string) => {
   }
 };
 
+const isDesktop = () => matchMedia("(min-width: 768px)").matches;
+
 type State = {
   route: Route;
   pages: PageMeta[];
@@ -39,6 +41,7 @@ type State = {
   lang: Lang;
   dark: boolean;
   searchOpen: boolean;
+  sidebarOpen: boolean;
   navigate: (route: Route) => void;
   refreshPages: () => Promise<void>;
   refreshDue: () => Promise<void>;
@@ -46,6 +49,7 @@ type State = {
   setLang: (lang: Lang) => void;
   toggleDark: () => void;
   setSearchOpen: (open: boolean) => void;
+  setSidebarOpen: (open: boolean) => void;
 };
 
 export const useStore = create<State>((set, get) => ({
@@ -55,10 +59,12 @@ export const useStore = create<State>((set, get) => ({
   lang: stored("nautila.lang") === "en" ? "en" : stored("nautila.lang") === "fr" ? "fr" : navigator.language.startsWith("fr") ? "fr" : "en",
   dark: stored("nautila.dark") ? stored("nautila.dark") === "1" : matchMedia("(prefers-color-scheme: dark)").matches,
   searchOpen: false,
+  sidebarOpen: isDesktop() && stored("nautila.sidebar") !== "0",
 
   navigate: (route) => {
     location.hash = route.view === "page" ? `/page/${route.id}` : route.view === "home" ? "/" : `/${route.view}`;
-    set({ route, searchOpen: false });
+    // Sur mobile la barre latérale recouvre la page : on la referme.
+    set({ route, searchOpen: false, ...(isDesktop() ? {} : { sidebarOpen: false }) });
   },
   refreshPages: async () => set({ pages: await listPages() }),
   refreshDue: async () => set({ dueCount: (await cardStats()).due }),
@@ -77,6 +83,10 @@ export const useStore = create<State>((set, get) => ({
     set({ dark });
   },
   setSearchOpen: (searchOpen) => set({ searchOpen }),
+  setSidebarOpen: (sidebarOpen) => {
+    if (isDesktop()) store("nautila.sidebar", sidebarOpen ? "1" : "0");
+    set({ sidebarOpen });
+  },
 }));
 
 window.addEventListener("hashchange", () => useStore.setState({ route: parseHash() }));

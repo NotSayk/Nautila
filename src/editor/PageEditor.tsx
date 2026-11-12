@@ -55,7 +55,7 @@ export const PageEditor = forwardRef<PageEditorHandle, Props>(function PageEdito
     withCollaboration({
       schema,
       dictionary: lang === "fr" ? fr : en,
-      collaboration: { fragment: doc.getXmlFragment("doc"), user: { name: "local", color: "#0f766e" } },
+      collaboration: { fragment: doc.getXmlFragment("doc"), user: { name: "local", color: "#2383e2" } },
     }),
     [doc, lang],
   );

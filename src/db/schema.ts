@@ -47,6 +47,10 @@ const MIGRATIONS: string[][] = [
     `CREATE INDEX cards_due ON cards(due)`,
     `CREATE INDEX cards_page ON cards(page_id)`,
   ],
+  [
+    `ALTER TABLE pages ADD COLUMN favorite INTEGER NOT NULL DEFAULT 0`,
+    `ALTER TABLE pages ADD COLUMN full_width INTEGER NOT NULL DEFAULT 0`,
+  ],
 ];
 
 export async function migrate(db: Db): Promise<void> {

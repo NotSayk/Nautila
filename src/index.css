@@ -2,27 +2,44 @@
 
 @custom-variant dark (&:where(.dark, .dark *));
 
+/* Palette neutre : l'accent bleu ne sert qu'aux actions principales. */
 @theme {
   --color-bg: #ffffff;
-  --color-panel: #f6f6f4;
-  --color-hover: #ebebe8;
-  --color-line: #e3e3df;
-  --color-ink: #1f1f1c;
-  --color-muted: #77776f;
-  --color-accent: #0f766e;
-  --color-accent-soft: #d5efec;
-  --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
+  --color-panel: #f7f7f5;
+  --color-pop: #ffffff;
+  --color-hover: rgb(55 53 47 / 0.06);
+  --color-active: rgb(55 53 47 / 0.1);
+  --color-line: rgb(55 53 47 / 0.1);
+  --color-ink: #37352f;
+  --color-muted: rgb(55 53 47 / 0.62);
+  --color-faint: rgb(55 53 47 / 0.4);
+  --color-accent: #2383e2;
+  --color-danger: #d44c47;
+  --font-sans: "Inter", ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+  --shadow-pop: 0 0 0 1px rgb(15 15 15 / 0.05), 0 3px 6px rgb(15 15 15 / 0.1), 0 9px 24px rgb(15 15 15 / 0.2);
 }
 
 .dark {
-  --color-bg: #1c1c1a;
-  --color-panel: #232321;
-  --color-hover: #2f2f2c;
-  --color-line: #383834;
-  --color-ink: #ecece8;
-  --color-muted: #9a9a92;
-  --color-accent: #2dd4bf;
-  --color-accent-soft: #134e4a;
+  --color-bg: #191919;
+  --color-panel: #202020;
+  --color-pop: #252525;
+  --color-hover: rgb(255 255 255 / 0.055);
+  --color-active: rgb(255 255 255 / 0.09);
+  --color-line: rgb(255 255 255 / 0.1);
+  --color-ink: rgb(255 255 255 / 0.84);
+  --color-muted: rgb(255 255 255 / 0.5);
+  --color-faint: rgb(255 255 255 / 0.3);
+  --color-danger: #e5665f;
+  --shadow-pop: 0 0 0 1px rgb(255 255 255 / 0.08), 0 9px 24px rgb(0 0 0 / 0.5);
+}
+
+:root {
+  --page-pad: 96px;
+}
+@media (max-width: 767px) {
+  :root {
+    --page-pad: 20px;
+  }
 }
 
 html,
@@ -35,19 +52,80 @@ body {
   background: var(--color-bg);
   color: var(--color-ink);
   font-family: var(--font-sans);
+  font-size: 14px;
+  -webkit-font-smoothing: antialiased;
 }
 
 button {
   cursor: pointer;
 }
 
-/* L'éditeur reprend le fond et la largeur de la page. */
+:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: -1px;
+}
+input:focus-visible,
+textarea:focus-visible,
+.bn-editor:focus-visible {
+  outline: none;
+}
+
+/* Étiquettes de type (devoir, examen). */
+.tag {
+  display: inline-block;
+  border-radius: 3px;
+  padding: 1px 6px;
+  font-size: 12px;
+  line-height: 18px;
+  white-space: nowrap;
+}
+.tag-blue {
+  background: #d3e5ef;
+  color: #183347;
+}
+.tag-red {
+  background: #ffe2dd;
+  color: #5d1715;
+}
+.dark .tag-blue {
+  background: #28456c;
+  color: rgb(255 255 255 / 0.85);
+}
+.dark .tag-red {
+  background: #6e3630;
+  color: rgb(255 255 255 / 0.85);
+}
+
+/* ---------- Éditeur ---------- */
 .bn-container[data-color-scheme] {
   --bn-colors-editor-background: var(--color-bg);
   --bn-colors-editor-text: var(--color-ink);
+  --bn-colors-menu-background: var(--color-pop);
+  --bn-colors-menu-text: var(--color-ink);
+  --bn-colors-hovered-background: var(--color-hover);
+  --bn-colors-selected-background: var(--color-active);
+  --bn-colors-selected-text: var(--color-ink);
+  --bn-colors-border: var(--color-line);
+  --bn-colors-side-menu: var(--color-faint);
+  --bn-border-radius: 6px;
 }
 .bn-editor {
-  padding-inline: 54px;
+  padding-inline: var(--page-pad);
+  line-height: 1.5;
+}
+.bn-editor [data-content-type="heading"] {
+  --level: 1.875em;
+  padding-top: 14px;
+}
+.bn-editor [data-content-type="heading"][data-level="2"] {
+  --level: 1.5em;
+}
+.bn-editor [data-content-type="heading"][data-level="3"] {
+  --level: 1.25em;
+}
+.bn-editor .bn-block-content[data-content-type="heading"] {
+  font-weight: 600;
+  line-height: 1.3;
 }
 
 .math-block {
@@ -55,81 +133,73 @@ button {
 }
 .math-block-preview {
   cursor: pointer;
-  border-radius: 6px;
-  padding: 8px 12px;
+  border-radius: 4px;
+  padding: 10px 12px;
   text-align: center;
   overflow-x: auto;
 }
 .math-block-preview:hover {
-  background: var(--color-panel);
+  background: var(--color-hover);
 }
 .math-empty {
-  color: var(--color-muted);
-  font-size: 0.9em;
+  color: var(--color-faint);
+  font-size: 14px;
 }
 .math-source,
 .math-inline-source {
-  border: 1px solid var(--color-line);
-  border-radius: 6px;
-  background: var(--color-panel);
+  border-radius: 4px;
+  background: var(--color-pop);
+  box-shadow: var(--shadow-pop);
   color: var(--color-ink);
-  font-family: ui-monospace, monospace;
+  font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
   font-size: 13px;
-  padding: 6px 8px;
-  outline: none;
+  padding: 8px 10px;
 }
 .math-source {
   display: block;
   width: 100%;
-  margin-top: 4px;
+  margin-top: 6px;
   resize: none;
-}
-.math-source:focus,
-.math-inline-source:focus {
-  border-color: var(--color-accent);
 }
 .math-inline {
   position: relative;
   cursor: pointer;
-  border-radius: 4px;
+  border-radius: 3px;
   padding: 0 2px;
 }
 .math-inline:hover {
-  background: var(--color-panel);
+  background: var(--color-hover);
 }
 .math-inline-source {
   position: absolute;
   top: 100%;
   left: 0;
   z-index: 20;
-  width: 220px;
-  margin-top: 4px;
+  width: 240px;
+  margin-top: 6px;
 }
 
 .flashcard {
   display: grid;
   grid-template-columns: 1fr 1fr;
   width: 100%;
-  border: 1px solid var(--color-line);
-  border-left: 3px solid var(--color-accent);
-  border-radius: 8px;
-  overflow: hidden;
+  border-radius: 4px;
+  background: var(--color-panel);
+  font-size: 15px;
 }
 .flashcard-field {
   display: flex;
   flex-direction: column;
-  gap: 2px;
-  padding: 8px 12px;
+  gap: 3px;
+  padding: 10px 14px 12px;
 }
 .flashcard-field + .flashcard-field {
   border-left: 1px solid var(--color-line);
 }
 .flashcard-field span {
-  color: var(--color-muted);
-  font-size: 11px;
-  font-weight: 600;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
+  color: var(--color-faint);
+  font-size: 12px;
+  font-weight: 500;
 }
 .flashcard-field textarea {
   width: 100%;
@@ -137,7 +207,6 @@ button {
   background: transparent;
   color: inherit;
   font: inherit;
-  outline: none;
 }
 @media (max-width: 640px) {
   .flashcard {
@@ -147,9 +216,6 @@ button {
     border-left: 0;
     border-top: 1px solid var(--color-line);
   }
-  .bn-editor {
-    padding-inline: 16px;
-  }
 }
 
 .page-link {
@@ -157,15 +223,22 @@ button {
   align-items: center;
   gap: 4px;
   cursor: pointer;
-  border-radius: 4px;
-  padding: 0 4px;
-  background: var(--color-accent-soft);
-  color: var(--color-accent);
+  border-radius: 3px;
+  padding: 0 2px;
   font-weight: 500;
   vertical-align: baseline;
+  text-decoration: underline;
+  text-decoration-color: var(--color-line);
+  text-underline-offset: 3px;
+}
+.page-link:hover {
+  background: var(--color-hover);
+}
+.page-link svg {
+  color: var(--color-muted);
 }
 .page-link-missing {
   cursor: default;
-  background: var(--color-panel);
-  color: var(--color-muted);
+  color: var(--color-faint);
+  text-decoration: none;
 }
