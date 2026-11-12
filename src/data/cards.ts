@@ -21,6 +21,7 @@ function revive(json: string): Card {
 /** Aligne les cartes en base sur les blocs flashcard présents dans la page. */
 export async function syncCards(pageId: string, cards: ExtractedCard[]) {
   const existing = await db().all<{ id: string }>("SELECT id FROM cards WHERE page_id = ?", [pageId]);
+  cards = cards.map((c) => ({ ...c, id: `${pageId}:${c.id}` }));
   const keep = new Set(cards.map((c) => c.id));
   for (const { id } of existing) if (!keep.has(id)) await db().run("DELETE FROM cards WHERE id = ?", [id]);
 
@@ -31,9 +32,8 @@ export async function syncCards(pageId: string, cards: ExtractedCard[]) {
       await db().run("UPDATE cards SET front = ?, back = ? WHERE id = ?", [c.front, c.back, c.id]);
     } else {
       const state = createEmptyCard(new Date(now));
-      // OR IGNORE : un bloc copié depuis une autre page garde son identifiant.
       await db().run(
-        "INSERT OR IGNORE INTO cards (id, page_id, front, back, fsrs, due, created_at) VALUES (?,?,?,?,?,?,?)",
+        "INSERT INTO cards (id, page_id, front, back, fsrs, due, created_at) VALUES (?,?,?,?,?,?,?)",
         [c.id, pageId, c.front, c.back, JSON.stringify(state), state.due.getTime(), now],
       );
     }

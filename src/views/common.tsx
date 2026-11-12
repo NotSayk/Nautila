@@ -1,4 +1,4 @@
-import { BookOpen, Check, FileText, GraduationCap, PanelLeft } from "lucide-react";
+import { ArrowLeft, ArrowRight, BookOpen, Check, FileText, GraduationCap, PanelLeft } from "lucide-react";
 import { useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import type { PageMeta } from "../data/pages";
@@ -100,6 +100,7 @@ export function Popover({
 
 export type MenuItem =
   | { icon?: React.ReactNode; label: string; onClick: () => void; danger?: boolean; checked?: boolean }
+  | { note: string }
   | "separator";
 
 export function Menu({
@@ -132,6 +133,10 @@ export function Menu({
           {items.map((item, i) =>
             item === "separator" ? (
               <div key={i} className="my-1 h-px bg-line" />
+            ) : "note" in item ? (
+              <p key={i} className="px-2 py-1 text-xs text-faint">
+                {item.note}
+              </p>
             ) : (
               <button
                 key={i}
@@ -168,6 +173,12 @@ export function TopBar({ children, right }: { children?: React.ReactNode; right?
           <PanelLeft size={18} strokeWidth={1.75} />
         </IconButton>
       )}
+      <IconButton label={t("back")} onClick={() => history.back()} className="max-sm:hidden">
+        <ArrowLeft size={18} strokeWidth={1.75} />
+      </IconButton>
+      <IconButton label={t("forward")} onClick={() => history.forward()} className="max-sm:hidden">
+        <ArrowRight size={18} strokeWidth={1.75} />
+      </IconButton>
       <div className="flex min-w-0 flex-1 items-center gap-0.5">{children}</div>
       {right && <div className="flex shrink-0 items-center gap-0.5">{right}</div>}
     </header>

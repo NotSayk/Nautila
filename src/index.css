@@ -242,3 +242,62 @@ textarea:focus-visible,
   color: var(--color-faint);
   text-decoration: none;
 }
+
+.callout {
+  display: flex;
+  gap: 8px;
+  width: 100%;
+  border-radius: 4px;
+  background: var(--color-panel);
+  padding: 14px 16px 14px 12px;
+}
+.callout-icon {
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+  width: 26px;
+  height: 26px;
+  border-radius: 4px;
+  font-size: 19px;
+  line-height: 1;
+  user-select: none;
+}
+.callout-icon:hover {
+  background: var(--color-hover);
+}
+.callout-text {
+  flex: 1;
+  min-width: 0;
+  padding-top: 1px;
+}
+
+.toc {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+}
+.toc button {
+  border-radius: 4px;
+  padding: 3px 6px;
+  color: var(--color-muted);
+  text-align: left;
+  text-decoration: underline;
+  text-decoration-color: var(--color-line);
+  text-underline-offset: 3px;
+}
+.toc button:hover {
+  background: var(--color-hover);
+}
+
+/* Polices et taille de texte choisies par page. */
+.page-serif .bn-editor,
+.page-serif .page-title {
+  font-family: Lyon-Text, Georgia, "Times New Roman", serif;
+}
+.page-mono .bn-editor,
+.page-mono .page-title {
+  font-family: iawriter-mono, "SFMono-Regular", Menlo, Consolas, monospace;
+}
+.page-small .bn-editor {
+  font-size: 14px;
+}

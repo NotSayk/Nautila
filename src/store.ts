@@ -42,6 +42,8 @@ type State = {
   dark: boolean;
   searchOpen: boolean;
   sidebarOpen: boolean;
+  /** Page en cours de déplacement (boîte « Déplacer vers »). */
+  moveId: string | null;
   navigate: (route: Route) => void;
   refreshPages: () => Promise<void>;
   refreshDue: () => Promise<void>;
@@ -59,6 +61,7 @@ export const useStore = create<State>((set, get) => ({
   lang: stored("nautila.lang") === "en" ? "en" : stored("nautila.lang") === "fr" ? "fr" : navigator.language.startsWith("fr") ? "fr" : "en",
   dark: stored("nautila.dark") ? stored("nautila.dark") === "1" : matchMedia("(prefers-color-scheme: dark)").matches,
   searchOpen: false,
+  moveId: null,
   sidebarOpen: isDesktop() && stored("nautila.sidebar") !== "0",
 
   navigate: (route) => {

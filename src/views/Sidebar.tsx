@@ -2,6 +2,8 @@ import {
   CalendarCheck,
   ChevronRight,
   ChevronsLeft,
+  Copy,
+  CornerUpRight,
   Download,
   GraduationCap,
   Home,
@@ -9,6 +11,7 @@ import {
   Layers,
   Moon,
   MoreHorizontal,
+  Pencil,
   Plus,
   Search,
   Settings,
@@ -19,7 +22,7 @@ import {
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { download, exportBackup, importBackup } from "../data/backup";
-import { trashPage, updatePageMeta, type PageMeta } from "../data/pages";
+import { duplicatePage, movePage, trashPage, updatePageMeta, type PageMeta } from "../data/pages";
 import { useT } from "../i18n";
 import { useStore, type Route } from "../store";
 import { IconButton, Menu, PageIcon } from "./common";
@@ -62,12 +65,29 @@ async function setFavorite(page: PageMeta, favorite: boolean) {
   await useStore.getState().refreshPages();
 }
 
+async function duplicate(page: PageMeta, suffix: string) {
+  const copyId = await duplicatePage(page.id, suffix);
+  await useStore.getState().refreshPages();
+  await useStore.getState().refreshDue();
+  useStore.getState().navigate({ view: "page", id: copyId });
+}
+
+type Zone = "before" | "inside" | "after";
+type Drag = {
+  dragId: string | null;
+  target: { id: string; zone: Zone } | null;
+  start: (id: string) => void;
+  over: (id: string, zone: Zone) => void;
+  end: (commit: boolean) => void;
+};
+
 function PageRow({
   page,
   depth,
   tree,
   open,
   onToggle,
+  drag,
 }: {
   page: PageMeta;
   depth: number;
@@ -75,23 +95,57 @@ function PageRow({
   tree?: Map<string | null, PageMeta[]>;
   open: Set<string>;
   onToggle: (id: string, force?: boolean) => void;
+  drag?: Drag;
 }) {
   const t = useT();
+  const [renaming, setRenaming] = useState(false);
   const route = useStore((s) => s.route);
   const navigate = useStore((s) => s.navigate);
   const newPage = useStore((s) => s.newPage);
   const kids = tree?.get(page.id) ?? [];
   const active = route.view === "page" && route.id === page.id;
   const expanded = open.has(page.id);
+  const zone = drag?.target?.id === page.id && drag.dragId !== page.id ? drag.target.zone : null;
+
+  const rename = async (title: string) => {
+    setRenaming(false);
+    if (title === page.title) return;
+    await updatePageMeta(page.id, { title });
+    await useStore.getState().refreshPages();
+  };
 
   return (
     <>
       <div
-        className={`group flex h-[30px] items-center rounded-md pr-1.5 font-medium hover:bg-hover ${
+        draggable={!!drag && !renaming}
+        onDragStart={(e) => {
+          e.dataTransfer.effectAllowed = "move";
+          e.dataTransfer.setData("text/plain", page.title);
+          drag?.start(page.id);
+        }}
+        onDragOver={(e) => {
+          if (!drag?.dragId) return;
+          e.preventDefault();
+          const box = e.currentTarget.getBoundingClientRect();
+          const y = (e.clientY - box.top) / box.height;
+          drag.over(page.id, y < 0.25 ? "before" : y > 0.75 ? "after" : "inside");
+        }}
+        onDrop={(e) => {
+          e.preventDefault();
+          drag?.end(true);
+        }}
+        onDragEnd={() => drag?.end(false)}
+        className={`group relative flex h-[30px] items-center rounded-md pr-1.5 font-medium hover:bg-hover ${
           active ? "bg-hover text-ink" : "text-muted"
-        }`}
+        } ${zone === "inside" ? "bg-accent/15" : ""} ${drag?.dragId === page.id ? "opacity-40" : ""}`}
         style={{ paddingLeft: 6 + depth * 12 }}
       >
+        {(zone === "before" || zone === "after") && (
+          <span
+            className={`pointer-events-none absolute right-0 h-0.5 rounded bg-accent ${zone === "before" ? "-top-px" : "-bottom-px"}`}
+            style={{ left: 6 + depth * 12 }}
+          />
+        )}
         {tree && (
           <button
             aria-label="toggle"
@@ -102,13 +156,32 @@ function PageRow({
             <ChevronRight size={14} className={`transition-transform ${expanded ? "rotate-90" : ""}`} />
           </button>
         )}
-        <button
-          onClick={() => navigate({ view: "page", id: page.id })}
-          className="flex h-full min-w-0 flex-1 items-center gap-2 text-left"
-        >
-          <PageIcon page={page} />
-          <span className="truncate">{page.title || t("untitled")}</span>
-        </button>
+        {renaming ? (
+          <span className="flex h-full min-w-0 flex-1 items-center gap-2">
+            <PageIcon page={page} />
+            <input
+              autoFocus
+              defaultValue={page.title}
+              aria-label={t("rename")}
+              onFocus={(e) => e.currentTarget.select()}
+              onBlur={(e) => rename(e.currentTarget.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") e.currentTarget.blur();
+                if (e.key === "Escape") setRenaming(false);
+              }}
+              className="h-6 min-w-0 flex-1 rounded bg-bg px-1 text-ink shadow-[0_0_0_1px_var(--color-accent)]"
+            />
+          </span>
+        ) : (
+          <button
+            onClick={() => navigate({ view: "page", id: page.id })}
+            onDoubleClick={() => setRenaming(true)}
+            className="flex h-full min-w-0 flex-1 items-center gap-2 text-left"
+          >
+            <PageIcon page={page} />
+            <span className="truncate">{page.title || t("untitled")}</span>
+          </button>
+        )}
         <span className="hidden gap-0.5 group-focus-within:flex group-hover:flex">
           <Menu
             label={t("more")}
@@ -118,6 +191,13 @@ function PageRow({
               page.favorite
                 ? { icon: <StarOff size={16} />, label: t("removeFavorite"), onClick: () => setFavorite(page, false) }
                 : { icon: <Star size={16} />, label: t("addFavorite"), onClick: () => setFavorite(page, true) },
+              { icon: <Pencil size={16} />, label: t("rename"), onClick: () => setRenaming(true) },
+              { icon: <Copy size={16} />, label: t("duplicate"), onClick: () => duplicate(page, t("copySuffix")) },
+              {
+                icon: <CornerUpRight size={16} />,
+                label: t("moveTo"),
+                onClick: () => useStore.setState({ moveId: page.id }),
+              },
               "separator",
               { icon: <Trash2 size={16} />, label: t("moveToTrash"), onClick: () => moveToTrash(page) },
             ]}
@@ -138,7 +218,9 @@ function PageRow({
         </span>
       </div>
       {expanded &&
-        kids.map((k) => <PageRow key={k.id} page={k} depth={depth + 1} tree={tree} open={open} onToggle={onToggle} />)}
+        kids.map((k) => (
+          <PageRow key={k.id} page={k} depth={depth + 1} tree={tree} open={open} onToggle={onToggle} drag={drag} />
+        ))}
     </>
   );
 }
@@ -179,6 +261,33 @@ export function Sidebar() {
       else next.delete(id);
       return next;
     });
+
+  const [dragId, setDragId] = useState<string | null>(null);
+  const [target, setTarget] = useState<Drag["target"]>(null);
+  const drag: Drag = {
+    dragId,
+    target,
+    start: setDragId,
+    over: (id, zone) => (target?.id !== id || target.zone !== zone) && setTarget({ id, zone }),
+    end: async (commit) => {
+      setDragId(null);
+      setTarget(null);
+      if (!commit || !dragId || !target || target.id === dragId) return;
+      const dest = pages.find((p) => p.id === target.id);
+      if (!dest) return;
+      if (target.zone === "inside") {
+        if (await movePage(dragId, dest.id)) toggle(dest.id, true);
+      } else {
+        // Position à mi-chemin entre la cible et sa voisine, du côté choisi.
+        const siblings = (tree.get(dest.parent_id) ?? []).filter((p) => p.id !== dragId);
+        const i = siblings.findIndex((p) => p.id === dest.id);
+        const other = siblings[target.zone === "before" ? i - 1 : i + 1];
+        const position = other ? (other.position + dest.position) / 2 : dest.position + (target.zone === "before" ? -1 : 1);
+        await movePage(dragId, dest.parent_id, position);
+      }
+      await useStore.getState().refreshPages();
+    },
+  };
 
   const go = (r: Route) => () => navigate(r);
   const roots = tree.get(null) ?? [];
@@ -267,7 +376,7 @@ export function Sidebar() {
           </SectionHeader>
           {roots.length === 0 && <p className="px-2 py-1 text-[13px] leading-5 text-faint">{t("emptyTree")}</p>}
           {roots.map((p) => (
-            <PageRow key={p.id} page={p} depth={0} tree={tree} open={open} onToggle={toggle} />
+            <PageRow key={p.id} page={p} depth={0} tree={tree} open={open} onToggle={toggle} drag={drag} />
           ))}
         </div>
 

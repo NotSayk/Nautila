@@ -3,6 +3,7 @@ import { initDb } from "./db";
 import { useT } from "./i18n";
 import { useStore } from "./store";
 import { Dashboard } from "./views/Dashboard";
+import { MoveDialog } from "./views/MoveDialog";
 import { PageView } from "./views/PageView";
 import { Review } from "./views/Review";
 import { SearchDialog } from "./views/SearchDialog";
@@ -22,6 +23,7 @@ export function App() {
   const dark = useStore((s) => s.dark);
   const lang = useStore((s) => s.lang);
   const searchOpen = useStore((s) => s.searchOpen);
+  const moveId = useStore((s) => s.moveId);
 
   useEffect(() => {
     (opening ??= initDb()).then(
@@ -76,6 +78,7 @@ export function App() {
         {route.view === "trash" && <Trash />}
       </main>
       {searchOpen && <SearchDialog />}
+      {moveId && <MoveDialog id={moveId} />}
     </div>
   );
 }

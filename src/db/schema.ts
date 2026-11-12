@@ -51,6 +51,21 @@ const MIGRATIONS: string[][] = [
     `ALTER TABLE pages ADD COLUMN favorite INTEGER NOT NULL DEFAULT 0`,
     `ALTER TABLE pages ADD COLUMN full_width INTEGER NOT NULL DEFAULT 0`,
   ],
+  [
+    // L'identifiant d'une carte inclut sa page : une page dupliquée a ses propres cartes.
+    `UPDATE cards SET id = page_id || ':' || id`,
+    `ALTER TABLE pages ADD COLUMN cover TEXT`,
+    `ALTER TABLE pages ADD COLUMN locked INTEGER NOT NULL DEFAULT 0`,
+    `ALTER TABLE pages ADD COLUMN font TEXT NOT NULL DEFAULT 'sans'`,
+    `ALTER TABLE pages ADD COLUMN small_text INTEGER NOT NULL DEFAULT 0`,
+    `CREATE TABLE files (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      mime TEXT NOT NULL,
+      data TEXT NOT NULL,
+      created_at INTEGER NOT NULL
+    )`,
+  ],
 ];
 
 export async function migrate(db: Db): Promise<void> {

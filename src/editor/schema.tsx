@@ -1,4 +1,6 @@
-import { BlockNoteSchema, defaultBlockSpecs, defaultInlineContentSpecs } from "@blocknote/core";
+import { BlockNoteSchema, createCodeBlockSpec, defaultBlockSpecs, defaultInlineContentSpecs } from "@blocknote/core";
+import { codeBlockOptions } from "@blocknote/code-block";
+import { withMultiColumn } from "@blocknote/xl-multi-column";
 import { createReactBlockSpec, createReactInlineContentSpec } from "@blocknote/react";
 import katex from "katex";
 import "katex/dist/katex.min.css";
@@ -6,6 +8,7 @@ import { FileText } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { useT } from "../i18n";
 import { useStore } from "../store";
+import { EmojiPicker } from "../views/EmojiPicker";
 
 function renderLatex(latex: string, displayMode: boolean) {
   return katex.renderToString(latex, { displayMode, throwOnError: false });
@@ -156,10 +159,100 @@ const PageLink = createReactInlineContentSpec(
   },
 );
 
-export const schema = BlockNoteSchema.create({
-  blockSpecs: { ...defaultBlockSpecs, mathBlock: MathBlock(), flashcard: Flashcard() },
-  inlineContentSpecs: { ...defaultInlineContentSpecs, math: InlineMath, pageLink: PageLink },
-});
+const Callout = createReactBlockSpec(
+  { type: "callout", propSchema: { icon: { default: "💡" } }, content: "inline" },
+  {
+    render: ({ block, editor, contentRef }) => {
+      const [anchor, setAnchor] = useState<DOMRect | null>(null);
+      return (
+        <div className="callout">
+          <button
+            contentEditable={false}
+            className="callout-icon"
+            onClick={(e) => editor.isEditable && setAnchor(e.currentTarget.getBoundingClientRect())}
+          >
+            {block.props.icon}
+          </button>
+          {anchor && (
+            <EmojiPicker
+              anchor={anchor}
+              onClose={() => setAnchor(null)}
+              onPick={(icon) => editor.updateBlock(block, { props: { icon } })}
+            />
+          )}
+          <div className="callout-text" ref={contentRef} />
+        </div>
+      );
+    },
+    toExternalHTML: ({ block, contentRef }) => (
+      <blockquote>
+        <p>
+          {block.props.icon} <span ref={contentRef} />
+        </p>
+      </blockquote>
+    ),
+  },
+);
+
+type Heading = { id: string; level: number; text: string };
+
+function collectHeadings(blocks: any[], out: Heading[] = []): Heading[] {
+  for (const b of blocks) {
+    if (b.type === "heading" && Array.isArray(b.content)) {
+      const text = b.content.map((c: any) => (c.type === "text" ? c.text : "")).join("");
+      if (text.trim()) out.push({ id: b.id, level: b.props.level, text });
+    }
+    if (b.children?.length) collectHeadings(b.children, out);
+  }
+  return out;
+}
+
+const TableOfContents = createReactBlockSpec(
+  { type: "toc", propSchema: {}, content: "none" },
+  {
+    render: ({ editor }) => {
+      const t = useT();
+      const [headings, setHeadings] = useState<Heading[]>(() => collectHeadings(editor.document));
+      useEffect(() => {
+        const refresh = () => setHeadings(collectHeadings(editor.document));
+        refresh();
+        return editor.onChange(refresh);
+      }, [editor]);
+      const top = Math.min(3, ...headings.map((h) => h.level));
+      return (
+        <nav className="toc" contentEditable={false}>
+          {headings.length === 0 && <span className="math-empty">{t("tocEmpty")}</span>}
+          {headings.map((h) => (
+            <button
+              key={h.id}
+              style={{ paddingLeft: 6 + (h.level - top) * 20 }}
+              onClick={() =>
+                document.querySelector(`[data-id="${h.id}"]`)?.scrollIntoView({ behavior: "smooth", block: "start" })
+              }
+            >
+              {h.text}
+            </button>
+          ))}
+        </nav>
+      );
+    },
+    toExternalHTML: () => <p />,
+  },
+);
+
+export const schema = withMultiColumn(
+  BlockNoteSchema.create({
+    blockSpecs: {
+      ...defaultBlockSpecs,
+      codeBlock: createCodeBlockSpec(codeBlockOptions),
+      mathBlock: MathBlock(),
+      flashcard: Flashcard(),
+      callout: Callout(),
+      toc: TableOfContents(),
+    },
+    inlineContentSpecs: { ...defaultInlineContentSpecs, math: InlineMath, pageLink: PageLink },
+  }),
+);
 
 export type NautilaEditor = typeof schema.BlockNoteEditor;
 export type NautilaBlock = typeof schema.PartialBlock;

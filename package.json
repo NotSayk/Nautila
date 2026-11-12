@@ -20,9 +20,11 @@
   },
   "homepage": "https://github.com/NotSayk/Nautila#readme",
   "dependencies": {
+    "@blocknote/code-block": "^0.57.0",
     "@blocknote/core": "^0.57.0",
     "@blocknote/mantine": "^0.57.0",
     "@blocknote/react": "^0.57.0",
+    "@blocknote/xl-multi-column": "^0.57.0",
     "@mantine/core": "^9.8.0",
     "@mantine/hooks": "^9.8.0",
     "@sqlite.org/sqlite-wasm": "^3.54.1-build1",

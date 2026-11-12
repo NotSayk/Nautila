@@ -3,6 +3,7 @@ import { syncCards } from "./cards";
 import { toFtsQuery, type Extracted } from "./extract";
 
 export type PageKind = "note" | "course" | "semester";
+export type PageFont = "sans" | "serif" | "mono";
 
 export type PageMeta = {
   id: string;
@@ -13,12 +14,17 @@ export type PageMeta = {
   position: number;
   favorite: number;
   full_width: number;
+  cover: string | null;
+  locked: number;
+  font: PageFont;
+  small_text: number;
   created_at: number;
   updated_at: number;
   deleted_at: number | null;
 };
 
-const META = "id, parent_id, kind, title, icon, position, favorite, full_width, created_at, updated_at, deleted_at";
+const META =
+  "id, parent_id, kind, title, icon, position, favorite, full_width, cover, locked, font, small_text, created_at, updated_at, deleted_at";
 
 export const listPages = () =>
   db().all<PageMeta>(`SELECT ${META} FROM pages WHERE deleted_at IS NULL ORDER BY position, created_at`);
@@ -55,6 +61,10 @@ export async function createPage(input: {
     position: now,
     favorite: 0,
     full_width: 0,
+    cover: null,
+    locked: 0,
+    font: "sans",
+    small_text: 0,
     created_at: now,
     updated_at: now,
     deleted_at: null,
@@ -67,18 +77,61 @@ export async function createPage(input: {
   return page;
 }
 
-export async function updatePageMeta(
-  id: string,
-  patch: { title?: string; icon?: string | null; favorite?: boolean; full_width?: boolean },
-) {
-  if (patch.favorite !== undefined)
-    await db().run("UPDATE pages SET favorite = ? WHERE id = ?", [patch.favorite ? 1 : 0, id]);
-  if (patch.full_width !== undefined)
-    await db().run("UPDATE pages SET full_width = ? WHERE id = ?", [patch.full_width ? 1 : 0, id]);
-  if (patch.title !== undefined)
-    await db().run("UPDATE pages SET title = ?, updated_at = ? WHERE id = ?", [patch.title, Date.now(), id]);
-  if (patch.icon !== undefined) await db().run("UPDATE pages SET icon = ? WHERE id = ?", [patch.icon, id]);
-  await reindex(id);
+export type PagePatch = {
+  title?: string;
+  icon?: string | null;
+  cover?: string | null;
+  font?: PageFont;
+  favorite?: boolean;
+  full_width?: boolean;
+  locked?: boolean;
+  small_text?: boolean;
+};
+
+export async function updatePageMeta(id: string, patch: PagePatch) {
+  for (const [key, value] of Object.entries(patch)) {
+    if (value === undefined) continue;
+    // Les noms de colonnes viennent du type PagePatch, jamais d'une saisie.
+    await db().run(`UPDATE pages SET ${key} = ? WHERE id = ?`, [typeof value === "boolean" ? Number(value) : value, id]);
+  }
+  if (patch.title !== undefined) {
+    await db().run("UPDATE pages SET updated_at = ? WHERE id = ?", [Date.now(), id]);
+    await reindex(id);
+  }
+}
+
+/** Déplace une page ; refuse de la placer dans sa propre descendance. */
+export async function movePage(id: string, parentId: string | null, position?: number): Promise<boolean> {
+  if (parentId && (await subtree(id)).includes(parentId)) return false;
+  await db().run("UPDATE pages SET parent_id = ?, position = ? WHERE id = ?", [parentId, position ?? Date.now(), id]);
+  return true;
+}
+
+/** Copie une page et ses sous-pages ; renvoie l'identifiant de la copie. */
+export async function duplicatePage(id: string, suffix: string): Promise<string> {
+  const copy = async (sourceId: string, parentId: string | null, top: boolean): Promise<string> => {
+    const newId = crypto.randomUUID();
+    const now = Date.now();
+    await db().run(
+      `INSERT INTO pages (id, parent_id, kind, title, icon, position, ydoc, body, cover, font, small_text, full_width, created_at, updated_at)
+       SELECT ?, ?, kind, title || ?, icon, ?, ydoc, body, cover, font, small_text, full_width, ?, ? FROM pages WHERE id = ?`,
+      [newId, parentId, top ? suffix : "", top ? now : null, now, now, sourceId],
+    );
+    if (!top) await db().run("UPDATE pages SET position = (SELECT position FROM pages WHERE id = ?) WHERE id = ?", [sourceId, newId]);
+    await reindex(newId);
+    await db().run("INSERT INTO links (source_id, target_id) SELECT ?, target_id FROM links WHERE source_id = ?", [newId, sourceId]);
+    // Les cartes repartent de zéro : la copie a sa propre progression.
+    const cards = await db().all<{ id: string; front: string; back: string }>(
+      "SELECT id, front, back FROM cards WHERE page_id = ?",
+      [sourceId],
+    );
+    await syncCards(newId, cards.map((c) => ({ ...c, id: c.id.slice(sourceId.length + 1) })));
+    const kids = await db().all<{ id: string }>("SELECT id FROM pages WHERE parent_id = ? AND deleted_at IS NULL", [sourceId]);
+    for (const k of kids) await copy(k.id, newId, false);
+    return newId;
+  };
+  const [src] = await db().all<{ parent_id: string | null }>("SELECT parent_id FROM pages WHERE id = ?", [id]);
+  return copy(id, src?.parent_id ?? null, true);
 }
 
 export async function savePageContent(id: string, ydoc: string, extracted: Extracted) {

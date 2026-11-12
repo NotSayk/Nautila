@@ -1,14 +1,81 @@
-import { Download, FileText, MoreHorizontal, MoveHorizontal, SmilePlus, Star, Trash2 } from "lucide-react";
+import {
+  ALargeSmall,
+  Copy,
+  CornerUpRight,
+  Download,
+  FileText,
+  ImagePlus,
+  Lock,
+  MoreHorizontal,
+  MoveHorizontal,
+  SmilePlus,
+  Star,
+  Trash2,
+  Type,
+} from "lucide-react";
 import { Fragment, useEffect, useRef, useState } from "react";
 import { download } from "../data/backup";
-import { backlinks, getPageDoc, trashPage, updatePageMeta, type PageMeta } from "../data/pages";
+import { resolveFileUrl, saveFile } from "../data/files";
+import {
+  backlinks,
+  duplicatePage,
+  getPageDoc,
+  trashPage,
+  updatePageMeta,
+  type PageFont,
+  type PageMeta,
+  type PagePatch,
+} from "../data/pages";
 import { PageEditor, type PageEditorHandle } from "../editor/PageEditor";
 import { template, type TemplateId } from "../editor/templates";
 import { useT, type Key } from "../i18n";
 import { useStore } from "../store";
-import { IconButton, Menu, PageIcon, Popover, relativeTime, SectionTitle, TopBar } from "./common";
+import {
+  IconButton,
+  Menu,
+  PageIcon,
+  Popover,
+  relativeTime,
+  SectionTitle,
+  TopBar,
+} from "./common";
+import { EmojiPicker } from "./EmojiPicker";
 
-const EMOJIS = "📘 📗 📕 📙 📓 📝 ✏️ 🧮 📐 🧪 🔬 🧬 ⚛️ 💻 🌍 🏛️ ⚖️ 💼 🎨 🎵 🗣️ 🧠 💡 🎯 📅 ⭐ 🔥 📊".split(" ");
+const COVER_COLORS = [
+  "#ebeced",
+  "#e9e5e3",
+  "#faebdd",
+  "#fbf3db",
+  "#ddedea",
+  "#ddebf1",
+  "#eae4f2",
+  "#f4dfeb",
+  "#fbe4e4",
+  "#37352f",
+];
+const FONTS: [PageFont, Key][] = [
+  ["sans", "fontSans"],
+  ["serif", "fontSerif"],
+  ["mono", "fontMono"],
+];
+
+/** Bandeau de couverture : une couleur (`color:#hex`) ou une image stockée. */
+function Cover({ value }: { value: string }) {
+  const [url, setUrl] = useState("");
+  const color = value.startsWith("color:") ? value.slice(6) : null;
+  useEffect(() => {
+    let live = true;
+    if (!color) resolveFileUrl(value).then((u) => live && setUrl(u));
+    return () => {
+      live = false;
+    };
+  }, [value, color]);
+  return color ? (
+    <div className="h-full w-full" style={{ background: color }} />
+  ) : (
+    url && <img src={url} alt="" className="h-full w-full object-cover" />
+  );
+}
 const TEMPLATES: [TemplateId, Key][] = [
   ["lecture", "tplLecture"],
   ["cornell", "tplCornell"],
@@ -53,6 +120,9 @@ export function PageView({ id }: { id: string }) {
   const [pristine, setPristine] = useState(false);
   const [title, setTitle] = useState(page?.title ?? "");
   const [picker, setPicker] = useState<DOMRect | null>(null);
+  const [coverPicker, setCoverPicker] = useState<DOMRect | null>(null);
+  const [words, setWords] = useState(0);
+  const coverInput = useRef<HTMLInputElement>(null);
   const [mentions, setMentions] = useState<PageMeta[]>([]);
   const editor = useRef<PageEditorHandle>(null);
 
@@ -77,17 +147,26 @@ export function PageView({ id }: { id: string }) {
       </>
     );
 
-  const saveMeta = async (patch: Parameters<typeof updatePageMeta>[1]) => {
+  const saveMeta = async (patch: PagePatch) => {
     await updatePageMeta(id, patch);
     await refreshPages();
   };
 
   const trail: PageMeta[] = [];
-  for (let p: PageMeta | undefined = page; p; p = pages.find((x) => x.id === p!.parent_id)) trail.unshift(p);
+  for (
+    let p: PageMeta | undefined = page;
+    p;
+    p = pages.find((x) => x.id === p!.parent_id)
+  )
+    trail.unshift(p);
 
   const exportMarkdown = () => {
     const name = title || t("untitled");
-    download(`${name.replace(/[\\/:*?"<>|]/g, "-")}.md`, `# ${name}\n\n${editor.current?.toMarkdown() ?? ""}`, "text/markdown");
+    download(
+      `${name.replace(/[\\/:*?"<>|]/g, "-")}.md`,
+      `# ${name}\n\n${editor.current?.toMarkdown() ?? ""}`,
+      "text/markdown",
+    );
   };
 
   return (
@@ -95,6 +174,12 @@ export function PageView({ id }: { id: string }) {
       <TopBar
         right={
           <>
+            {!!page.locked && (
+              <span className="mr-1 flex items-center gap-1 text-muted">
+                <Lock size={14} />
+                {t("locked")}
+              </span>
+            )}
             <span className="mr-1 hidden text-faint sm:block">
               {t("edited")} {relativeTime(page.updated_at, lang)}
             </span>
@@ -102,34 +187,82 @@ export function PageView({ id }: { id: string }) {
               label={page.favorite ? t("removeFavorite") : t("addFavorite")}
               onClick={() => saveMeta({ favorite: !page.favorite })}
             >
-              <Star size={18} strokeWidth={1.75} className={page.favorite ? "fill-[#f6c050] text-[#f6c050]" : ""} />
+              <Star
+                size={18}
+                strokeWidth={1.75}
+                className={page.favorite ? "fill-[#f6c050] text-[#f6c050]" : ""}
+              />
             </IconButton>
-            <Menu
-              label={t("more")}
-              align="right"
-              className="grid size-7 place-items-center rounded-md text-muted hover:bg-hover"
-              trigger={<MoreHorizontal size={18} strokeWidth={1.75} />}
-              items={[
-                {
-                  icon: <MoveHorizontal size={16} />,
-                  label: t("fullWidth"),
-                  checked: !!page.full_width,
-                  onClick: () => saveMeta({ full_width: !page.full_width }),
-                },
-                { icon: <Download size={16} />, label: t("exportMd"), onClick: exportMarkdown },
-                "separator",
-                {
-                  icon: <Trash2 size={16} />,
-                  label: t("moveToTrash"),
-                  onClick: async () => {
-                    await trashPage(id);
-                    await refreshPages();
-                    await useStore.getState().refreshDue();
-                    navigate({ view: "home" });
+            <span
+              onPointerDown={() => setWords(editor.current?.wordCount() ?? 0)}
+            >
+              <Menu
+                label={t("more")}
+                align="right"
+                className="grid size-7 place-items-center rounded-md text-muted hover:bg-hover"
+                trigger={<MoreHorizontal size={18} strokeWidth={1.75} />}
+                items={[
+                  ...FONTS.map(([font, key]) => ({
+                    icon: <Type size={16} />,
+                    label: t(key),
+                    checked: page.font === font,
+                    onClick: () => saveMeta({ font }),
+                  })),
+                  "separator" as const,
+                  {
+                    icon: <ALargeSmall size={16} />,
+                    label: t("smallText"),
+                    checked: !!page.small_text,
+                    onClick: () => saveMeta({ small_text: !page.small_text }),
                   },
-                },
-              ]}
-            />
+                  {
+                    icon: <MoveHorizontal size={16} />,
+                    label: t("fullWidth"),
+                    checked: !!page.full_width,
+                    onClick: () => saveMeta({ full_width: !page.full_width }),
+                  },
+                  {
+                    icon: <Lock size={16} />,
+                    label: t("lockPage"),
+                    checked: !!page.locked,
+                    onClick: () => saveMeta({ locked: !page.locked }),
+                  },
+                  "separator",
+                  {
+                    icon: <Copy size={16} />,
+                    label: t("duplicate"),
+                    onClick: async () => {
+                      const copyId = await duplicatePage(id, t("copySuffix"));
+                      await refreshPages();
+                      navigate({ view: "page", id: copyId });
+                    },
+                  },
+                  {
+                    icon: <CornerUpRight size={16} />,
+                    label: t("moveTo"),
+                    onClick: () => useStore.setState({ moveId: id }),
+                  },
+                  {
+                    icon: <Download size={16} />,
+                    label: t("exportMd"),
+                    onClick: exportMarkdown,
+                  },
+                  "separator",
+                  {
+                    icon: <Trash2 size={16} />,
+                    label: t("moveToTrash"),
+                    onClick: async () => {
+                      await trashPage(id);
+                      await refreshPages();
+                      await useStore.getState().refreshDue();
+                      navigate({ view: "home" });
+                    },
+                  },
+                  "separator",
+                  { note: `${words} ${t("words")}` },
+                ]}
+              />
+            </span>
           </>
         }
       >
@@ -143,87 +276,185 @@ export function PageView({ id }: { id: string }) {
               }`}
             >
               <PageIcon page={p} size={16} />
-              <span className="max-w-40 truncate">{p.title || t("untitled")}</span>
+              <span className="max-w-40 truncate">
+                {p.title || t("untitled")}
+              </span>
             </button>
           </Fragment>
         ))}
       </TopBar>
 
-      <div className={`mx-auto pb-40 ${page.full_width ? "" : "max-w-[900px]"}`}>
-        <div className="group px-(--page-pad) pt-16">
-          {page.icon ? (
+      {page.cover && (
+        <div className="group/cover relative h-[26vh] max-h-[280px] min-h-[140px] w-full bg-panel">
+          <Cover value={page.cover} />
+          {!page.locked && (
+            <div className="absolute bottom-3 right-3 flex overflow-hidden rounded-md bg-pop text-xs text-muted opacity-0 shadow-pop focus-within:opacity-100 group-hover/cover:opacity-100 max-md:opacity-100">
+              <button
+                className="h-7 px-2 hover:bg-hover"
+                onClick={(e) =>
+                  setCoverPicker(e.currentTarget.getBoundingClientRect())
+                }
+              >
+                {t("changeCover")}
+              </button>
+              <button
+                className="h-7 px-2 hover:bg-hover"
+                onClick={() => saveMeta({ cover: null })}
+              >
+                {t("removeCover")}
+              </button>
+            </div>
+          )}
+        </div>
+      )}
+      <input
+        ref={coverInput}
+        type="file"
+        accept="image/*"
+        hidden
+        onChange={async (e) => {
+          const file = e.target.files?.[0];
+          e.target.value = "";
+          if (!file) return;
+          try {
+            await saveMeta({ cover: await saveFile(file) });
+          } catch {
+            alert(t("fileTooLarge"));
+          }
+        }}
+      />
+      {coverPicker && (
+        <Popover
+          anchor={coverPicker}
+          onClose={() => setCoverPicker(null)}
+          width={236}
+          align="right"
+        >
+          <div className="grid grid-cols-5 gap-1.5 p-1.5">
+            {COVER_COLORS.map((c) => (
+              <button
+                key={c}
+                aria-label={c}
+                className="h-8 rounded shadow-[inset_0_0_0_1px_var(--color-line)]"
+                style={{ background: c }}
+                onClick={() => {
+                  setCoverPicker(null);
+                  void saveMeta({ cover: `color:${c}` });
+                }}
+              />
+            ))}
+          </div>
+          <button
+            className="flex h-7 w-full items-center gap-2 rounded px-2 hover:bg-hover"
+            onClick={() => {
+              setCoverPicker(null);
+              coverInput.current?.click();
+            }}
+          >
+            <ImagePlus size={16} className="text-muted" />
+            {t("uploadImage")}
+          </button>
+        </Popover>
+      )}
+
+      <div
+        className={`mx-auto pb-40 ${page.full_width ? "" : "max-w-[900px]"} ${
+          page.font === "sans" ? "" : `page-${page.font}`
+        } ${page.small_text ? "page-small" : ""}`}
+      >
+        <div
+          className={`group px-(--page-pad) ${page.cover ? (page.icon ? "" : "pt-6") : "pt-16"}`}
+        >
+          {page.icon && (
             <button
               aria-label={t("addIcon")}
-              onClick={(e) => setPicker(e.currentTarget.getBoundingClientRect())}
-              className="-ml-1 mb-2 grid size-[72px] place-items-center rounded-md text-[60px] leading-none hover:bg-hover"
+              disabled={!!page.locked}
+              onClick={(e) =>
+                setPicker(e.currentTarget.getBoundingClientRect())
+              }
+              className={`relative -ml-1 mb-1 grid size-[72px] place-items-center rounded-md text-[60px] leading-none enabled:hover:bg-hover ${
+                page.cover ? "-mt-9" : ""
+              }`}
             >
               {page.icon}
             </button>
-          ) : (
-            <button
-              onClick={(e) => setPicker(e.currentTarget.getBoundingClientRect())}
-              className="-ml-1.5 mb-1 flex h-7 items-center gap-1.5 rounded px-1.5 text-faint opacity-0 hover:bg-hover focus:opacity-100 group-hover:opacity-100 max-md:opacity-100"
-            >
-              <SmilePlus size={16} />
-              {t("addIcon")}
-            </button>
           )}
-          {picker && (
-            <Popover anchor={picker} onClose={() => setPicker(null)} width={292}>
-              <div className="grid grid-cols-7 gap-0.5 p-1">
-                {EMOJIS.map((e) => (
-                  <button
-                    key={e}
-                    className="grid size-9 place-items-center rounded text-xl hover:bg-hover"
-                    onClick={() => {
-                      setPicker(null);
-                      void saveMeta({ icon: e });
-                    }}
-                  >
-                    {e}
-                  </button>
-                ))}
-              </div>
-              {page.icon && (
+          {!page.locked && (!page.icon || !page.cover) && (
+            <div className="-ml-1.5 mb-1 flex h-7 gap-1 text-faint opacity-0 focus-within:opacity-100 group-hover:opacity-100 max-md:opacity-100">
+              {!page.icon && (
                 <button
-                  className="mt-1 h-7 w-full rounded text-muted hover:bg-hover"
-                  onClick={() => {
-                    setPicker(null);
-                    void saveMeta({ icon: null });
-                  }}
+                  onClick={(e) =>
+                    setPicker(e.currentTarget.getBoundingClientRect())
+                  }
+                  className="flex items-center gap-1.5 rounded px-1.5 hover:bg-hover"
                 >
-                  {t("removeIcon")}
+                  <SmilePlus size={16} />
+                  {t("addIcon")}
                 </button>
               )}
-            </Popover>
+              {!page.cover && (
+                <button
+                  onClick={(e) =>
+                    setCoverPicker(e.currentTarget.getBoundingClientRect())
+                  }
+                  className="flex items-center gap-1.5 rounded px-1.5 hover:bg-hover"
+                >
+                  <ImagePlus size={16} />
+                  {t("addCover")}
+                </button>
+              )}
+            </div>
+          )}
+          {picker && (
+            <EmojiPicker
+              anchor={picker}
+              onClose={() => setPicker(null)}
+              onPick={(icon) => void saveMeta({ icon })}
+              onRemove={
+                page.icon ? () => void saveMeta({ icon: null }) : undefined
+              }
+            />
           )}
 
           {page.kind !== "note" && (
-            <p className="mb-1 text-xs font-medium text-muted">{t(page.kind === "semester" ? "semester" : "course")}</p>
+            <p className="mb-1 text-xs font-medium text-muted">
+              {t(page.kind === "semester" ? "semester" : "course")}
+            </p>
           )}
           <input
             value={title}
             autoFocus={!page.title}
+            readOnly={!!page.locked}
             placeholder={t("untitled")}
             onChange={(e) => setTitle(e.target.value)}
             onBlur={() => title !== page.title && saveMeta({ title })}
             onKeyDown={(e) => e.key === "Enter" && e.currentTarget.blur()}
-            className="w-full bg-transparent text-[40px] font-bold leading-[1.2] placeholder:text-faint"
+            className="page-title w-full bg-transparent text-[40px] font-bold leading-[1.2] placeholder:text-faint"
           />
         </div>
 
         <div className="mt-2">
-          {doc && <PageEditor ref={editor} pageId={id} initialDoc={doc.ydoc} onFirstEdit={() => setPristine(false)} />}
+          {doc && (
+            <PageEditor
+              ref={editor}
+              pageId={id}
+              initialDoc={doc.ydoc}
+              editable={!page.locked}
+              onFirstEdit={() => setPristine(false)}
+            />
+          )}
         </div>
 
-        {pristine && (
+        {pristine && !page.locked && (
           <div className="mt-6 px-(--page-pad) text-muted">
             <p className="mb-1 text-faint">{t("template")}</p>
             <div className="-mx-1.5">
               {TEMPLATES.map(([tid, key]) => (
                 <button
                   key={tid}
-                  onClick={() => editor.current?.applyTemplate(template(tid, lang))}
+                  onClick={() =>
+                    editor.current?.applyTemplate(template(tid, lang))
+                  }
                   className="flex h-8 w-full items-center gap-2 rounded-md px-1.5 text-left text-[15px] hover:bg-hover"
                 >
                   <FileText size={18} strokeWidth={1.75} />
@@ -234,7 +465,10 @@ export function PageView({ id }: { id: string }) {
           </div>
         )}
 
-        <PageList title={t("subpages")} pages={pages.filter((p) => p.parent_id === id)} />
+        <PageList
+          title={t("subpages")}
+          pages={pages.filter((p) => p.parent_id === id)}
+        />
         <PageList title={t("backlinks")} pages={mentions} />
       </div>
     </>
