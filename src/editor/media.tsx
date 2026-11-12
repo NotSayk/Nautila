@@ -1,8 +1,9 @@
 import { createReactBlockSpec } from "@blocknote/react";
 import { Eraser, FileUp, Mic, Square, Undo2 } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { lazy, Suspense, useEffect, useRef, useState } from "react";
 import { resolveFileUrl, saveFile } from "../data/files";
 import { useT } from "../i18n";
+import type { Highlight } from "./PdfViewer";
 
 function useFileUrl(url: string) {
   const [resolved, setResolved] = useState("");
@@ -82,20 +83,45 @@ export const AudioNote = createReactBlockSpec(
   },
 );
 
-/** Document PDF affiché dans la page par le lecteur du navigateur. */
+const PdfViewer = lazy(() => import("./PdfViewer"));
+
+/** Document PDF affiché dans la page, avec surlignage du texte. */
 export const PdfBlock = createReactBlockSpec(
-  { type: "pdf", propSchema: { url: { default: "" }, name: { default: "" } }, content: "none" },
+  {
+    type: "pdf",
+    propSchema: { url: { default: "" }, name: { default: "" }, highlights: { default: "[]" } },
+    content: "none",
+  },
   {
     render: ({ block, editor }) => {
       const t = useT();
       const src = useFileUrl(block.props.url);
       const input = useRef<HTMLInputElement>(null);
+      const highlights: Highlight[] = JSON.parse(block.props.highlights);
       return (
         <div className="media-block" contentEditable={false}>
           {block.props.url ? (
             <>
               <p className="mb-1 truncate text-[13px] text-(--color-muted)">{block.props.name}</p>
-              {src && <iframe title={block.props.name} src={src} className="h-[70vh] w-full rounded" />}
+              {src && (
+                <Suspense fallback={null}>
+                  <PdfViewer
+                    src={src}
+                    highlights={highlights}
+                    editable={editor.isEditable}
+                    onChange={(next) => editor.updateBlock(block.id, { props: { highlights: JSON.stringify(next) } })}
+                    onQuote={(h) =>
+                      // Le type de l'éditeur est restreint à ce bloc ; la citation existe dans le schéma complet.
+                      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                      (editor as any).insertBlocks(
+                        [{ type: "quote", content: `${h.text} (${block.props.name}, p. ${h.page})` }],
+                        block.id,
+                        "after",
+                      )
+                    }
+                  />
+                </Suspense>
+              )}
             </>
           ) : (
             <>
@@ -112,7 +138,7 @@ export const PdfBlock = createReactBlockSpec(
                   const file = e.target.files?.[0];
                   if (!file) return;
                   try {
-                    editor.updateBlock(block, { props: { url: await saveFile(file), name: file.name } });
+                    editor.updateBlock(block.id, { props: { url: await saveFile(file), name: file.name } });
                   } catch {
                     alert(t("fileTooLarge"));
                   }
@@ -123,7 +149,16 @@ export const PdfBlock = createReactBlockSpec(
         </div>
       );
     },
-    toExternalHTML: ({ block }) => <p>{block.props.name}</p>,
+    toExternalHTML: ({ block }) => (
+      <div>
+        <p>{block.props.name}</p>
+        {(JSON.parse(block.props.highlights) as Highlight[]).map((h) => (
+          <blockquote key={h.id}>
+            {h.text} (p. {h.page})
+          </blockquote>
+        ))}
+      </div>
+    ),
   },
 );
 

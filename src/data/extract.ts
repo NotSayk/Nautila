@@ -56,6 +56,14 @@ export function extract(blocks: AnyBlock[]): Extracted {
         const back = String(b.props?.back ?? "").trim();
         if (front && back) cards.push({ id: b.id, front, back });
         lines.push(front, back);
+      } else if (b.type === "pdf") {
+        // Les passages surlignés d'un PDF sont retrouvables par la recherche.
+        lines.push(String(b.props?.name ?? ""));
+        try {
+          for (const h of JSON.parse(String(b.props?.highlights ?? "[]"))) lines.push(String(h.text ?? ""));
+        } catch {
+          /* surlignages illisibles : ignorés pour l'index */
+        }
       } else if (b.type === "mathBlock") {
         lines.push(String(b.props?.latex ?? ""));
       } else {

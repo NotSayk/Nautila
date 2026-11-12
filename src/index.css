@@ -440,3 +440,104 @@ textarea:focus-visible,
 .sketch-tool:hover {
   background: var(--color-hover);
 }
+
+/* ---------- Lecteur PDF ---------- */
+.pdf-box {
+  position: relative;
+  max-height: 75vh;
+  overflow: auto;
+  border-radius: 4px;
+  background: var(--color-panel);
+  padding: 12px;
+  user-select: text;
+}
+.pdf-page {
+  position: relative;
+  margin: 0 auto 12px;
+  background: #fff;
+  box-shadow: 0 0 0 1px var(--color-line);
+}
+.pdf-page:last-of-type {
+  margin-bottom: 0;
+}
+.pdf-highlight {
+  position: absolute;
+  background: rgb(255 212 0 / 0.4);
+  mix-blend-mode: multiply;
+  pointer-events: none;
+}
+.pdf-text {
+  position: absolute;
+  inset: 0;
+  overflow: clip;
+  line-height: 1;
+  text-align: initial;
+  transform-origin: 0 0;
+  --min-font-size: 1;
+  --text-scale-factor: calc(var(--total-scale-factor) * var(--min-font-size));
+}
+.pdf-text :is(span, br) {
+  position: absolute;
+  color: transparent;
+  white-space: pre;
+  cursor: text;
+  transform-origin: 0% 0%;
+  user-select: text;
+}
+.pdf-text > :not(.markedContent),
+.pdf-text .markedContent span:not(.markedContent) {
+  --font-height: 0;
+  --scale-x: 1;
+  --rotate: 0deg;
+  font-size: calc(var(--text-scale-factor) * var(--font-height));
+  transform: rotate(var(--rotate)) scaleX(var(--scale-x));
+}
+.pdf-text .markedContent {
+  display: contents;
+}
+.pdf-text ::selection {
+  background: rgb(35 131 226 / 0.3);
+}
+.pdf-add {
+  position: absolute;
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  border-radius: 6px;
+  background: var(--color-pop);
+  box-shadow: var(--shadow-pop);
+  padding: 5px 10px;
+  color: var(--color-ink);
+  font-size: 13px;
+  font-weight: 500;
+}
+.pdf-notes {
+  margin-top: 6px;
+  font-size: 14px;
+}
+.pdf-notes li {
+  display: flex;
+  align-items: flex-start;
+  gap: 4px;
+  border-radius: 4px;
+  padding: 2px 4px;
+}
+.pdf-notes li:hover {
+  background: var(--color-hover);
+}
+.pdf-note-text {
+  flex: 1;
+  min-width: 0;
+  border-left: 3px solid rgb(255 212 0 / 0.9);
+  padding: 2px 8px;
+  text-align: left;
+}
+.pdf-note-page {
+  margin-right: 8px;
+  color: var(--color-faint);
+  font-size: 12px;
+}
+.pdf-selecting {
+  background: rgb(35 131 226 / 0.3);
+}
