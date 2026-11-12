@@ -16,13 +16,13 @@ import {
   locales as columnLocales,
   multiColumnDropCursor,
 } from "@blocknote/xl-multi-column";
-import { FileText, Layers, ListTree, Mic, PenLine, MessageSquareQuote, Sigma } from "lucide-react";
+import { FileText, Layers, ListTree, Mic, PenLine, MessageSquareQuote, Sigma, Table2 } from "lucide-react";
 import { forwardRef, useEffect, useImperativeHandle, useMemo, useRef } from "react";
 import * as Y from "yjs";
 import { extract } from "../data/extract";
 import { resolveFileUrl, saveFile } from "../data/files";
-import { savePageContent } from "../data/pages";
-import { pendingMarkdown } from "../data/templates";
+import { createPage, savePageContent } from "../data/pages";
+import { pendingHtml, pendingMarkdown } from "../data/templates";
 import { useT } from "../i18n";
 import { useStore } from "../store";
 import { REMOTE_DOC_EVENT } from "../sync/engine";
@@ -148,7 +148,12 @@ export const PageEditor = forwardRef<PageEditorHandle, Props>(function PageEdito
     window.addEventListener(REMOTE_DOC_EVENT, onRemote);
     doc.on("update", onUpdate);
     const markdown = pendingMarkdown.get(pageId);
-    if (markdown !== undefined) {
+    const html = pendingHtml.get(pageId);
+    if (html !== undefined) {
+      pendingHtml.delete(pageId);
+      const current = editorRef.current;
+      current.replaceBlocks(current.document, knownLanguages(current.tryParseHTMLToBlocks(html)));
+    } else if (markdown !== undefined) {
       pendingMarkdown.delete(pageId);
       const current = editorRef.current;
       current.replaceBlocks(current.document, knownLanguages(current.tryParseMarkdownToBlocks(markdown)));
@@ -231,6 +236,18 @@ export const PageEditor = forwardRef<PageEditorHandle, Props>(function PageEdito
       group: t("groupLayout"),
       icon: <Mic size={18} />,
       onItemClick: () => insertOrUpdateBlockForSlashMenu(editor, { type: "audioNote" }),
+    },
+    {
+      title: t("embeddedDb"),
+      subtext: t("embeddedDbSub"),
+      aliases: ["database", "base", "tableau", "kanban", "table", "calendrier"],
+      group: t("groupLayout"),
+      icon: <Table2 size={18} />,
+      onItemClick: async () => {
+        const page = await createPage({ parentId: pageId, kind: "database", title: t("database") });
+        await useStore.getState().refreshPages();
+        insertOrUpdateBlockForSlashMenu(editor, { type: "databaseEmbed", props: { pageId: page.id } });
+      },
     },
     ...getMultiColumnSlashMenuItems(editor).map((item) => ({
       ...item,

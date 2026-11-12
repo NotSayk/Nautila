@@ -8,7 +8,8 @@ Tes notes restent sur ton appareil : pas de compte, pas de télémétrie.
 **Éditeur**
 - Blocs : titres, listes, cases à cocher, citations, tableaux, images, fichiers, blocs repliables.
 - Encadrés, sommaire automatique, colonnes, code avec coloration syntaxique.
-- Formules LaTeX en bloc et dans le texte, croquis à main levée, PDF intégré, enregistrement audio.
+- Formules LaTeX en bloc et dans le texte, croquis à main levée, enregistrement audio.
+- PDF lisible dans la page, avec surlignage et citation des extraits dans la note.
 - Commandes `/`, raccourcis Markdown, couleurs, glisser-déposer des blocs.
 
 **Pages**
@@ -20,8 +21,9 @@ Tes notes restent sur ton appareil : pas de compte, pas de télémétrie.
 
 **Bases de données**
 - Une page peut devenir une base dont chaque ligne est une page.
-- Propriétés : texte, nombre, sélection simple ou multiple, date, case à cocher, lien.
-- Vues tableau, kanban, calendrier, liste et galerie, avec filtres et tri.
+- Propriétés : texte, nombre, sélection simple ou multiple, date, case à cocher, lien, formule, relation.
+- Vues tableau, kanban, calendrier, liste, galerie et chronologie, avec filtres et tri.
+- Une base peut être intégrée dans une page.
 
 **Études**
 - Flashcards à répétition espacée (FSRS) créées depuis les notes.
@@ -30,17 +32,18 @@ Tes notes restent sur ton appareil : pas de compte, pas de télémétrie.
 
 **Données**
 - Tout est stocké sur l'appareil. Export Markdown, HTML et PDF par page.
-- Import Markdown, sauvegarde et restauration complètes en JSON.
+- Import Markdown, Word (.docx) et export Notion (.zip) ; sauvegarde et restauration complètes en JSON.
 - Synchronisation entre appareils via un serveur auto-hébergé, avec comptes.
 - Interface en français et en anglais, thème clair et sombre.
 
 ## Pas encore fait
 
-- Annotation des PDF (surlignage lié aux notes) ; le PDF est pour l'instant seulement affiché.
 - Applications Android et iOS ; l'application de bureau Tauri est prête mais n'a pas encore été compilée.
-- Bases de données : relations, formules, vue chronologie, bases intégrées dans une page.
-- Blocs synchronisés, commentaires, étiquettes de pages, filtres de recherche.
-- Import depuis Notion ou Word, citations BibTeX/Zotero.
+- Blocs synchronisés, commentaires, étiquettes de pages, onglets, équations numérotées.
+- Bases de données : regroupements dans le tableau, formules sur du texte ou des dates.
+- Import Notion : le texte et l'arborescence sont repris, pas les images ni les bases de données.
+- Citations BibTeX/Zotero.
+- Les rappels d'échéances ne se déclenchent que lorsque Nautila est ouvert.
 
 ## Développement
 

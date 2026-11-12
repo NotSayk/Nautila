@@ -1,6 +1,7 @@
 import { Search } from "lucide-react";
 import { useEffect, useState } from "react";
-import { searchPages, type SearchHit } from "../data/pages";
+import { searchPages, type PageKind, type SearchHit } from "../data/pages";
+import type { Key } from "../i18n";
 import { useT } from "../i18n";
 import { useStore } from "../store";
 import { PageIcon } from "./common";
@@ -23,13 +24,22 @@ function Snippet({ text }: { text: string }) {
   );
 }
 
+const KINDS: [PageKind | null, Key][] = [
+  [null, "allKinds"],
+  ["note", "pages"],
+  ["course", "course"],
+  ["database", "database"],
+];
+
 export function SearchDialog() {
   const t = useT();
   const navigate = useStore((s) => s.navigate);
   const close = () => useStore.getState().setSearchOpen(false);
   const [query, setQuery] = useState("");
-  const [hits, setHits] = useState<SearchHit[]>([]);
+  const [allHits, setHits] = useState<SearchHit[]>([]);
   const [index, setIndex] = useState(0);
+  const [kind, setKind] = useState<PageKind | null>(null);
+  const hits = kind ? allHits.filter((h) => h.kind === kind) : allHits;
 
   useEffect(() => {
     let live = true;
@@ -76,6 +86,20 @@ export function SearchDialog() {
             className="h-12 w-full bg-transparent text-lg placeholder:text-faint"
           />
         </div>
+        <div className="flex gap-1 px-3 pt-2 text-xs">
+          {KINDS.map(([value, key]) => (
+            <button
+              key={key}
+              onClick={() => {
+                setKind(value);
+                setIndex(0);
+              }}
+              className={`h-6 rounded-full px-2.5 ${kind === value ? "bg-active font-medium text-ink" : "text-muted hover:bg-hover"}`}
+            >
+              {t(key)}
+            </button>
+          ))}
+        </div>
         <div className="max-h-[50vh] min-h-16 overflow-y-auto p-1.5">
           {query.trim() && hits.length === 0 && <p className="px-2.5 py-3 text-muted">{t("noResults")}</p>}
           {hits.map((h, i) => (
@@ -86,7 +110,7 @@ export function SearchDialog() {
               className={`flex w-full items-start gap-2.5 rounded-md px-2.5 py-1.5 text-left ${i === index ? "bg-hover" : ""}`}
             >
               <span className="mt-0.5">
-                <PageIcon page={{ icon: h.icon, kind: "note" }} />
+                <PageIcon page={h} />
               </span>
               <span className="min-w-0">
                 <span className="block truncate font-medium">{h.title || t("untitled")}</span>

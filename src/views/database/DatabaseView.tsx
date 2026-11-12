@@ -4,6 +4,7 @@ import {
   ChevronLeft,
   ChevronRight,
   Columns3,
+  GanttChart,
   LayoutGrid,
   List,
   ListFilter,
@@ -16,6 +17,8 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { createRow, getDatabase, listRows, newView, saveDatabase, setRowProps } from "../../data/databases";
 import {
   applyView,
+  evalFormula,
+  withFormulas,
   opsFor,
   type DbConfig,
   type DbView,
@@ -42,6 +45,7 @@ const VIEW_TYPES: [ViewType, Key, typeof Table2][] = [
   ["calendar", "viewCalendar", CalendarDays],
   ["list", "viewList", List],
   ["gallery", "viewGallery", LayoutGrid],
+  ["timeline", "viewTimeline", GanttChart],
 ];
 const PROP_TYPES: [PropType, Key][] = [
   ["text", "propText"],
@@ -51,6 +55,8 @@ const PROP_TYPES: [PropType, Key][] = [
   ["date", "propDate"],
   ["checkbox", "propCheckbox"],
   ["url", "propUrl"],
+  ["formula", "propFormula"],
+  ["relation", "propRelation"],
 ];
 const OP_LABELS: Record<FilterOp, Key> = {
   contains: "opContains",
@@ -78,6 +84,7 @@ type Api = {
   setValue: (row: Row, propId: string, value: Value) => Promise<void>;
   setOptions: (propId: string, options: Option[]) => void;
   setConfig: (update: (config: DbConfig) => DbConfig) => void;
+  databaseId: string;
   /** Ligne tout juste créée, dont le nom doit recevoir le curseur. */
   fresh: string | null;
 };
@@ -267,6 +274,7 @@ function AddRow({ onClick }: { onClick: () => void }) {
 
 function PropHeader({ prop, api }: { prop: Prop; api: Api }) {
   const t = useT();
+  const databases = useStore((s) => s.pages).filter((p) => p.kind === "database");
   const [anchor, setAnchor] = useState<DOMRect | null>(null);
   const update = (patch: Partial<Prop>) =>
     api.setConfig((c) => ({ ...c, props: c.props.map((p) => (p.id === prop.id ? { ...p, ...patch } : p)) }));
@@ -291,6 +299,31 @@ function PropHeader({ prop, api }: { prop: Prop; api: Api }) {
             className="mb-1 h-7 w-full rounded bg-hover px-2"
           />
           <p className="px-2 py-1 text-xs text-faint">{t(PROP_TYPES.find(([type]) => type === prop.type)![1])}</p>
+          {prop.type === "formula" && (
+            <input
+              aria-label={t("propFormula")}
+              defaultValue={prop.formula ?? ""}
+              placeholder={t("formulaHint")}
+              spellCheck={false}
+              onBlur={(e) => e.target.value !== (prop.formula ?? "") && update({ formula: e.target.value })}
+              onKeyDown={(e) => e.key === "Enter" && e.currentTarget.blur()}
+              className="mb-1 h-7 w-full rounded bg-hover px-2 font-mono text-[13px] placeholder:text-faint"
+            />
+          )}
+          {prop.type === "relation" && (
+            <select
+              aria-label={t("relatedDb")}
+              value={prop.target ?? ""}
+              onChange={(e) => update({ target: e.target.value })}
+              className="mb-1 h-7 w-full rounded bg-hover px-1.5"
+            >
+              {databases.map((d) => (
+                <option key={d.id} value={d.id}>
+                  {d.title || t("untitled")}
+                </option>
+              ))}
+            </select>
+          )}
           <button
             className="flex h-7 w-full items-center gap-2 rounded px-2 text-left text-danger hover:bg-hover"
             onClick={() => {
@@ -332,7 +365,14 @@ function TableLayout({ api }: { api: Api }) {
             trigger={<Plus size={15} />}
             items={PROP_TYPES.map(([type, key]) => ({
               label: t(key),
-              onClick: () => api.setConfig((c) => ({ ...c, props: [...c.props, { id: uid(), name: t(key), type }] })),
+              onClick: () =>
+                api.setConfig((c) => ({
+                  ...c,
+                  props: [
+                    ...c.props,
+                    { id: uid(), name: t(key), type, ...(type === "relation" ? { target: api.databaseId } : {}) },
+                  ],
+                })),
             }))}
           />
         </div>
@@ -615,7 +655,91 @@ function GalleryLayout({ api }: { api: Api }) {
   );
 }
 
-export function DatabaseView({ page }: { page: PageMeta }) {
+const DAY_MS = 86_400_000;
+const DAY_W = 30;
+const noon = (isoDate: string) => new Date(`${isoDate}T12:00:00`).getTime();
+
+function TimelineLayout({ api }: { api: Api }) {
+  const t = useT();
+  const lang = useStore((s) => s.lang);
+  const startProp = api.props.find((p) => p.id === api.view.dateProp && p.type === "date");
+  const endProp = api.props.find((p) => p.id === api.view.endProp && p.type === "date");
+  if (!startProp) return null;
+
+  const items = api.rows.flatMap((row) => {
+    const start = row.props[startProp.id];
+    if (typeof start !== "string" || !start) return [];
+    const end = endProp && typeof row.props[endProp.id] === "string" ? (row.props[endProp.id] as string) : start;
+    return [{ row, start: noon(start), end: Math.max(noon(end || start), noon(start)) }];
+  });
+  const undated = api.rows.length - items.length;
+  // La frise couvre toutes les lignes, avec une marge, et au moins cinq semaines.
+  const today = new Date().setHours(12, 0, 0, 0);
+  const from = Math.min(today, ...items.map((i) => i.start)) - 3 * DAY_MS;
+  const to = Math.max(from + 35 * DAY_MS, ...items.map((i) => i.end + 7 * DAY_MS));
+  const days = Array.from({ length: Math.round((to - from) / DAY_MS) + 1 }, (_, i) => new Date(from + i * DAY_MS));
+  const month = new Intl.DateTimeFormat(lang, { month: "long", year: "numeric" });
+
+  return (
+    <div>
+      <div className="overflow-x-auto pb-2">
+        <div className="relative" style={{ width: days.length * DAY_W }}>
+          <div className="flex h-6 text-xs text-muted">
+            {days.map((d, i) => (
+              <span key={i} className="shrink-0 whitespace-nowrap first-letter:uppercase" style={{ width: DAY_W }}>
+                {(i === 0 || d.getDate() === 1) && month.format(d)}
+              </span>
+            ))}
+          </div>
+          <div className={`flex h-6 text-xs text-faint ${LINE}`}>
+            {days.map((d, i) => (
+              <span
+                key={i}
+                className={`shrink-0 text-center ${d.getTime() === today ? "font-semibold text-danger" : ""}`}
+                style={{ width: DAY_W }}
+              >
+                {d.getDate()}
+              </span>
+            ))}
+          </div>
+          <div
+            className="relative"
+            style={{
+              height: Math.max(items.length, 1) * 40 + 8,
+              backgroundImage: "linear-gradient(90deg, var(--color-line) 1px, transparent 1px)",
+              backgroundSize: `${DAY_W * 7}px 100%`,
+              backgroundPositionX: -(((new Date(from).getDay() + 6) % 7) * DAY_W),
+            }}
+          >
+            {items.map(({ row, start, end }, i) => (
+              <button
+                key={row.id}
+                onClick={() => api.open(row.id)}
+                className="absolute flex h-8 items-center gap-1.5 overflow-hidden rounded-md bg-pop px-2 text-left text-[13px] font-medium shadow-[0_0_0_1px_var(--color-line),0_1px_2px_rgb(0_0_0/0.06)] hover:bg-hover"
+                style={{
+                  top: 8 + i * 40,
+                  left: Math.round((start - from) / DAY_MS) * DAY_W + 2,
+                  minWidth: (Math.round((end - start) / DAY_MS) + 1) * DAY_W - 4,
+                }}
+              >
+                {row.icon && <span>{row.icon}</span>}
+                <span className="whitespace-nowrap">{row.title || t("untitled")}</span>
+              </button>
+            ))}
+          </div>
+        </div>
+      </div>
+      {undated > 0 && (
+        <p className="mt-2 text-xs text-faint">
+          {undated} {t("noDate")}
+        </p>
+      )}
+      <AddRow onClick={() => api.add({ [startProp.id]: iso(new Date()) })} />
+    </div>
+  );
+}
+
+export function DatabaseView({ page, embedded }: { page: PageMeta; embedded?: boolean }) {
   const t = useT();
   const navigate = useStore((s) => s.navigate);
   const [config, setConfigState] = useState<DbConfig | null>(null);
@@ -658,11 +782,15 @@ export function DatabaseView({ page }: { page: PageMeta }) {
   );
 
   const view = config?.views.find((v) => v.id === viewId) ?? config?.views[0];
-  const visible = useMemo(() => (config && view ? applyView([...rows], view, config.props) : []), [rows, view, config]);
+  const visible = useMemo(
+    () => (config && view ? applyView(withFormulas(rows, config.props), view, config.props) : []),
+    [rows, view, config],
+  );
   if (!config || !view) return null;
 
   const refreshPages = () => useStore.getState().refreshPages();
   const api: Api = {
+    databaseId: page.id,
     props: config.props,
     rows: visible,
     view,
@@ -719,7 +847,7 @@ export function DatabaseView({ page }: { page: PageMeta }) {
         }
         next.groupBy = group.id;
       }
-      if (type === "calendar") {
+      if (type === "calendar" || type === "timeline") {
         let date = props.find((p) => p.type === "date");
         if (!date) {
           date = { id: uid(), name: t("propDate"), type: "date" };
@@ -735,11 +863,12 @@ export function DatabaseView({ page }: { page: PageMeta }) {
     setConfig((c) => ({ ...c, views: c.views.map((v) => (v.id === view.id ? { ...v, ...patch } : v)) }));
   const pickers: [keyof DbView, PropType, boolean][] = [
     ["groupBy", "select", view.type === "board"],
-    ["dateProp", "date", view.type === "calendar"],
+    ["dateProp", "date", view.type === "calendar" || view.type === "timeline"],
+    ["endProp", "date", view.type === "timeline"],
   ];
 
   return (
-    <div className="px-(--page-pad) pb-32 pt-4">
+    <div className={embedded ? "" : "px-(--page-pad) pb-32 pt-4"}>
       <div className={`mb-3 flex flex-wrap items-center gap-x-1 gap-y-2 ${LINE}`}>
         <div className="flex min-w-0 flex-1 items-center gap-0.5 overflow-x-auto">
           {config.views.map((v) => {
@@ -805,11 +934,16 @@ export function DatabaseView({ page }: { page: PageMeta }) {
               shown && (
                 <select
                   key={key}
-                  aria-label={t(key === "groupBy" ? "groupBy" : "propDate")}
+                  aria-label={t(key === "groupBy" ? "groupBy" : key === "endProp" ? "endDate" : "propDate")}
                   value={(view[key] as string) ?? ""}
                   onChange={(e) => patchView({ [key]: e.target.value })}
                   className="h-7 max-w-36 rounded-md bg-transparent px-1 text-muted hover:bg-hover"
                 >
+                  {key === "endProp" && (
+                    <option value="">
+                      {t("endDate")} : {t("none").toLowerCase()}
+                    </option>
+                  )}
                   {config.props
                     .filter((p) => p.type === type)
                     .map((p) => (
@@ -845,6 +979,7 @@ export function DatabaseView({ page }: { page: PageMeta }) {
       {view.type === "calendar" && <CalendarLayout api={api} />}
       {view.type === "list" && <ListLayout api={api} />}
       {view.type === "gallery" && <GalleryLayout api={api} />}
+      {view.type === "timeline" && <TimelineLayout api={api} />}
       {visible.length === 0 && rows.length > 0 && <p className="py-6 text-center text-muted">{t("emptyDb")}</p>}
     </div>
   );
@@ -876,7 +1011,7 @@ export function RowProperties({ page, databaseId }: { page: PageMeta; databaseId
           <span className="min-w-0 flex-1 rounded hover:bg-hover">
             <PropEditor
               prop={p}
-              value={values[p.id]}
+              value={p.type === "formula" ? evalFormula(p.formula ?? "", values, config.props) : values[p.id]}
               onChange={(v) => {
                 const next = { ...values, [p.id]: v };
                 setValues(next);

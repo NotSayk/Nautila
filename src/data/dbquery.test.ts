@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { applyView, type DbView, type Prop, type Row } from "./dbquery";
+import { applyView, evalFormula, withFormulas, type DbView, type Prop, type Row } from "./dbquery";
 
 const props: Prop[] = [
   {
@@ -64,5 +64,34 @@ describe("applyView", () => {
     expect(ids({ sort: { prop: "n", dir: "asc" } })).toBe("abc");
     expect(ids({ sort: { prop: "st", dir: "asc" } })).toBe("bac");
     expect(ids({ sort: { prop: "title", dir: "desc" } })).toBe("cba");
+  });
+});
+
+describe("formules", () => {
+  it("calcule avec priorités, parenthèses et propriétés", () => {
+    expect(evalFormula("{Note} * 2 + 1", { n: 12 }, props)).toBe(25);
+    expect(evalFormula("({note} + 3) / 2", { n: 12 }, props)).toBe(7.5);
+    expect(evalFormula("-{Note} + 1,5", { n: 2 }, props)).toBe(-0.5);
+    expect(evalFormula("{Rendu} * 10", { ok: true }, props)).toBe(10);
+  });
+
+  it("renvoie null si une valeur manque ou si la formule est invalide", () => {
+    expect(evalFormula("{Note} + 1", {}, props)).toBeNull();
+    expect(evalFormula("{Inconnue} + 1", { n: 1 }, props)).toBeNull();
+    expect(evalFormula("2 +", {}, props)).toBeNull();
+    expect(evalFormula("2 / 0", {}, props)).toBeNull();
+    expect(evalFormula("alert(1)", {}, props)).toBeNull();
+    expect(evalFormula("", {}, props)).toBeNull();
+  });
+
+  it("ajoute les valeurs calculées aux lignes, utilisables pour le tri", () => {
+    const all: Prop[] = [...props, { id: "f", name: "Double", type: "formula", formula: "{Note} * 2" }];
+    const computed = withFormulas(rows, all);
+    expect(computed.map((r) => r.props.f)).toEqual([24, 30, null]);
+    expect(
+      applyView(computed, view({ sort: { prop: "f", dir: "desc" } }), all)
+        .map((r) => r.id)
+        .join(""),
+    ).toBe("bac");
   });
 });

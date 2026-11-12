@@ -541,3 +541,14 @@ textarea:focus-visible,
 .pdf-selecting {
   background: rgb(35 131 226 / 0.3);
 }
+
+.db-embed-title {
+  margin-bottom: 4px;
+  border-radius: 4px;
+  padding: 2px 4px;
+  font-size: 1.25em;
+  font-weight: 600;
+}
+.db-embed-title:hover {
+  background: var(--color-hover);
+}

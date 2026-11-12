@@ -23,3 +23,5 @@ export async function deleteTemplate(id: string) {
 
 /** Contenu Markdown en attente d'être posé dans une page tout juste importée. */
 export const pendingMarkdown = new Map<string, string>();
+/** Idem pour un contenu HTML (import Word). */
+export const pendingHtml = new Map<string, string>();

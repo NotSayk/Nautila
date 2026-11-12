@@ -232,17 +232,17 @@ export async function deletePageForever(id: string) {
   await collectFiles();
 }
 
-export type SearchHit = { id: string; title: string; icon: string | null; snippet: string };
+export type SearchHit = { id: string; title: string; icon: string | null; kind: PageKind; snippet: string };
 
 /** Les correspondances sont encadrées par \u0001 et \u0002 dans `snippet`. */
 export async function searchPages(query: string): Promise<SearchHit[]> {
   const fts = toFtsQuery(query);
   if (!fts) return [];
   return db().all<SearchHit>(
-    `SELECT p.id, p.title, p.icon,
+    `SELECT p.id, p.title, p.icon, p.kind,
             snippet(pages_fts, 2, char(1), char(2), '…', 14) AS snippet
      FROM pages_fts JOIN pages p ON p.id = pages_fts.page_id
-     WHERE pages_fts MATCH ? ORDER BY bm25(pages_fts, 0, 8, 1) LIMIT 30`,
+     WHERE pages_fts MATCH ? ORDER BY bm25(pages_fts, 0, 8, 1) LIMIT 60`,
     [fts],
   );
 }

@@ -9,6 +9,7 @@ import { useEffect, useRef, useState } from "react";
 import { useT } from "../i18n";
 import { useStore } from "../store";
 import { EmojiPicker } from "../views/EmojiPicker";
+import { DatabaseView } from "../views/database/DatabaseView";
 import { AudioNote, PdfBlock, Sketch } from "./media";
 
 function renderLatex(latex: string, displayMode: boolean) {
@@ -260,6 +261,28 @@ const TableOfContents = createReactBlockSpec(
   },
 );
 
+/** Base de données affichée dans une page ; elle reste une page à part entière. */
+const DatabaseEmbed = createReactBlockSpec(
+  { type: "databaseEmbed", propSchema: { pageId: { default: "" } }, content: "none" },
+  {
+    render: ({ block }) => {
+      const t = useT();
+      const page = useStore((s) => s.pages.find((p) => p.id === block.props.pageId));
+      const navigate = useStore((s) => s.navigate);
+      if (!page) return <p className="math-empty">{t("pageMissing")}</p>;
+      return (
+        <div className="media-block" contentEditable={false}>
+          <button className="db-embed-title" onClick={() => navigate({ view: "page", id: page.id })}>
+            {page.icon} {page.title || t("untitled")}
+          </button>
+          <DatabaseView page={page} embedded />
+        </div>
+      );
+    },
+    toExternalHTML: ({ block }) => <p>{useStore.getState().pages.find((p) => p.id === block.props.pageId)?.title}</p>,
+  },
+);
+
 export const schema = withMultiColumn(
   BlockNoteSchema.create({
     blockSpecs: {
@@ -272,6 +295,7 @@ export const schema = withMultiColumn(
       audioNote: AudioNote(),
       pdf: PdfBlock(),
       sketch: Sketch(),
+      databaseEmbed: DatabaseEmbed(),
     },
     inlineContentSpecs: { ...defaultInlineContentSpecs, math: InlineMath, pageLink: PageLink },
   }),

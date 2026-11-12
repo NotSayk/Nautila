@@ -48,9 +48,98 @@ export function PropValue({ prop, value }: { prop: Prop; value: Value }) {
       return <span className="text-muted">✓ {prop.name}</span>;
     case "date":
       return <span className="text-muted">{formatDate(String(value), lang)}</span>;
+    case "relation":
+      return (
+        <span className="flex flex-wrap gap-1">
+          <Related ids={value as string[]} />
+        </span>
+      );
     default:
       return <span className="truncate text-muted">{String(value)}</span>;
   }
+}
+
+/** Lignes liées, affichées comme des liens vers leur page. */
+function Related({ ids }: { ids: string[] }) {
+  const t = useT();
+  const pages = useStore((s) => s.pages);
+  const navigate = useStore((s) => s.navigate);
+  return (
+    <>
+      {ids.map((id) => {
+        const page = pages.find((p) => p.id === id);
+        return (
+          page && (
+            <span
+              key={id}
+              role="link"
+              tabIndex={0}
+              onClick={(e) => {
+                e.stopPropagation();
+                navigate({ view: "page", id });
+              }}
+              className="max-w-full cursor-pointer truncate rounded px-1 font-medium underline decoration-line underline-offset-4 hover:bg-hover"
+            >
+              {page.icon} {page.title || t("untitled")}
+            </span>
+          )
+        );
+      })}
+    </>
+  );
+}
+
+function RelationEditor({ prop, value, onChange }: { prop: Prop; value: Value; onChange: (v: Value) => void }) {
+  const t = useT();
+  const pages = useStore((s) => s.pages);
+  const [anchor, setAnchor] = useState<DOMRect | null>(null);
+  const [query, setQuery] = useState("");
+  const selected = Array.isArray(value) ? value : [];
+  const rows = pages.filter(
+    (p) => p.parent_id === prop.target && (p.title || t("untitled")).toLowerCase().includes(query.trim().toLowerCase()),
+  );
+  return (
+    <>
+      <div
+        role="button"
+        tabIndex={0}
+        aria-label={prop.name}
+        className="flex h-full min-h-8 w-full cursor-pointer flex-wrap items-center gap-1 px-2 py-1"
+        onClick={(e) => setAnchor(e.currentTarget.getBoundingClientRect())}
+        onKeyDown={(e) => e.key === "Enter" && setAnchor(e.currentTarget.getBoundingClientRect())}
+      >
+        <Related ids={selected} />
+      </div>
+      {anchor && (
+        <Popover anchor={anchor} onClose={() => setAnchor(null)} width={260}>
+          <input
+            autoFocus
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder={t("relationSearch")}
+            className="mb-1 h-7 w-full rounded bg-hover px-2 placeholder:text-faint"
+          />
+          <div className="max-h-56 overflow-y-auto">
+            {rows.length === 0 && <p className="px-2 py-1 text-muted">{t("noResults")}</p>}
+            {rows.map((r) => (
+              <button
+                key={r.id}
+                className="flex h-7 w-full items-center gap-2 rounded px-2 text-left hover:bg-hover"
+                onClick={() =>
+                  onChange(selected.includes(r.id) ? selected.filter((x) => x !== r.id) : [...selected, r.id])
+                }
+              >
+                <span className="min-w-0 flex-1 truncate">
+                  {r.icon} {r.title || t("untitled")}
+                </span>
+                {selected.includes(r.id) && <span className="text-muted">✓</span>}
+              </button>
+            ))}
+          </div>
+        </Popover>
+      )}
+    </>
+  );
 }
 
 function SelectEditor({
@@ -165,6 +254,14 @@ export function PropEditor({
   onOptions: (options: Option[]) => void;
 }) {
   switch (prop.type) {
+    case "formula":
+      return (
+        <span className="flex h-full min-h-8 items-center px-2 tabular-nums text-muted">
+          {typeof value === "number" ? value : ""}
+        </span>
+      );
+    case "relation":
+      return <RelationEditor prop={prop} value={value} onChange={onChange} />;
     case "select":
     case "multi_select":
       return <SelectEditor prop={prop} value={value} onChange={onChange} onOptions={onOptions} />;

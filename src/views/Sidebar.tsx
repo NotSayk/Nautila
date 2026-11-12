@@ -30,8 +30,8 @@ import {
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { download, exportBackup, importBackup } from "../data/backup";
-import { createPage, duplicatePage, movePage, trashPage, updatePageMeta, type PageMeta } from "../data/pages";
-import { pendingMarkdown } from "../data/templates";
+import { duplicatePage, movePage, trashPage, updatePageMeta, type PageMeta } from "../data/pages";
+import { importFiles } from "../data/importer";
 import { enableReminders } from "../reminders";
 import { useT } from "../i18n";
 import { useStore, type Route } from "../store";
@@ -319,17 +319,10 @@ export function Sidebar() {
   const onImportMarkdown = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = [...(e.target.files ?? [])];
     e.target.value = "";
-    let last: string | undefined;
-    for (const file of files) {
-      const text = await file.text();
-      // Un titre de niveau 1 en première ligne devient le titre de la page.
-      const heading = text.match(/^\s*# (.+)\n?/);
-      const page = await createPage({ title: heading?.[1].trim() ?? file.name.replace(/\.[^.]+$/, "") });
-      pendingMarkdown.set(page.id, heading ? text.slice(heading[0].length) : text);
-      last = page.id;
-    }
+    const { open, failed } = await importFiles(files);
     await useStore.getState().refreshPages();
-    if (last) navigate({ view: "page", id: last });
+    if (failed.length > 0) alert(`${t("importFailedFile")} ${failed.join(", ")}`);
+    if (open) navigate({ view: "page", id: open });
   };
 
   const onImport = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -481,7 +474,7 @@ export function Sidebar() {
                   ),
               },
               { icon: <Upload size={16} />, label: t("importBackup"), onClick: () => fileInput.current?.click() },
-              { icon: <FileDown size={16} />, label: t("importMd"), onClick: () => mdInput.current?.click() },
+              { icon: <FileDown size={16} />, label: t("importDocs"), onClick: () => mdInput.current?.click() },
               "separator",
               {
                 icon: <Bell size={16} />,
@@ -500,7 +493,7 @@ export function Sidebar() {
           <input
             ref={mdInput}
             type="file"
-            accept=".md,.markdown,.txt,text/markdown,text/plain"
+            accept=".md,.markdown,.txt,.docx,.zip,text/markdown,text/plain"
             multiple
             hidden
             onChange={onImportMarkdown}
