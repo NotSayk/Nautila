@@ -20,7 +20,7 @@ describe("migrations", () => {
     const db = memoryDb();
     await migrate(db);
     const [{ user_version }] = await db.all<{ user_version: number }>("PRAGMA user_version");
-    expect(user_version).toBe(8);
+    expect(user_version).toBe(9);
     await db.run("INSERT INTO pages (id, title, created_at, updated_at) VALUES ('p', 'Titre', 1, 1)");
     expect(await db.all("SELECT tbl, id FROM sync_log")).toEqual([{ tbl: "pages", id: "p" }]);
   });
@@ -35,7 +35,7 @@ describe("migrations", () => {
     await db.run("PRAGMA user_version = 2");
     await migrate(db);
     const [{ user_version }] = await db.all<{ user_version: number }>("PRAGMA user_version");
-    expect(user_version).toBe(8);
+    expect(user_version).toBe(9);
     expect(await db.all("SELECT id FROM cards")).toEqual([{ id: "p:b" }]);
     expect(await db.all("SELECT COUNT(*) AS n FROM sync_state")).toEqual([{ n: 1 }]);
   });

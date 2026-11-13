@@ -33,15 +33,6 @@ export async function saveSlot(slot: Omit<Slot, "id"> & { id?: string }) {
   );
 }
 
-/** Ajoute plusieurs créneaux d'un coup (tout ou rien). */
-export const addSlots = (slots: Omit<Slot, "id">[]) =>
-  db().batch(
-    slots.map((s) => ({
-      sql: "INSERT INTO slots (id, course_id, title, day, start, end, room) VALUES (?,?,?,?,?,?,?)",
-      params: [crypto.randomUUID(), s.course_id, s.title, s.day, s.start, s.end, s.room],
-    })),
-  );
-
 export const deleteSlot = (id: string) => db().run("DELETE FROM slots WHERE id = ?", [id]);
 
 export const listGrades = () => db().all<Grade>("SELECT * FROM grades ORDER BY created_at");

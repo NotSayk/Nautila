@@ -1,7 +1,9 @@
 import { CalendarCheck, CalendarDays, Clock, Layers } from "lucide-react";
 import { useEffect, useState } from "react";
 import { cardStats } from "../data/cards";
-import { listSlots, type Slot } from "../data/school";
+import { listEvents } from "../data/events";
+import { clock } from "../data/ical";
+import { listSlots } from "../data/school";
 import { listTasks, type Task } from "../data/tasks";
 import { useT } from "../i18n";
 import { useStore } from "../store";
@@ -14,12 +16,35 @@ export function Dashboard() {
   const navigate = useStore((s) => s.navigate);
   const [stats, setStats] = useState({ due: 0, total: 0 });
   const [tasks, setTasks] = useState<Task[]>([]);
-  const [classes, setClasses] = useState<Slot[]>([]);
+  const [classes, setClasses] = useState<
+    { id: string; start: string; end: string; title: string; room: string; cancelled: boolean }[]
+  >([]);
 
   useEffect(() => {
     cardStats().then(setStats);
     const today = (new Date().getDay() + 6) % 7;
-    listSlots().then((all) => setClasses(all.filter((x) => x.day === today)));
+    const dayStart = new Date().setHours(0, 0, 0, 0);
+    const dayEnd = new Date(dayStart).setDate(new Date(dayStart).getDate() + 1);
+    // Créneaux de la semaine type et séances datées des calendriers importés.
+    Promise.all([listSlots(), listEvents(dayStart, dayEnd)]).then(([slots, events]) =>
+      setClasses(
+        [
+          ...slots
+            .filter((x) => x.day === today)
+            .map((x) => ({ id: x.id, start: x.start, end: x.end, title: x.title, room: x.room, cancelled: false })),
+          ...events
+            .filter((e) => !e.all_day)
+            .map((e) => ({
+              id: e.id,
+              start: e.start < dayStart ? "00:00" : clock(e.start),
+              end: e.end > dayEnd ? "23:59" : clock(e.end),
+              title: e.title,
+              room: e.room,
+              cancelled: !!e.cancelled,
+            })),
+        ].sort((a, b) => a.start.localeCompare(b.start)),
+      ),
+    );
     listTasks().then((all) => setTasks(all.filter((x) => !x.done && x.due_at !== null && daysUntil(x.due_at) <= 14)));
   }, []);
 
@@ -79,7 +104,9 @@ export function Dashboard() {
                       <span className="w-24 shrink-0 tabular-nums text-muted">
                         {c.start} – {c.end}
                       </span>
-                      <span className="min-w-0 flex-1 truncate font-medium">{c.title}</span>
+                      <span className={`min-w-0 flex-1 truncate font-medium ${c.cancelled ? "text-muted line-through" : ""}`}>
+                        {c.title}
+                      </span>
                       <span className="truncate text-muted">{c.room}</span>
                     </button>
                   ))}

@@ -11,6 +11,7 @@ const TABLES = [
   "files",
   "databases",
   "slots",
+  "events",
   "grades",
   "templates",
   "versions",

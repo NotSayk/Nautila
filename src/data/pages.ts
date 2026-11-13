@@ -244,6 +244,7 @@ export async function deletePageForever(id: string) {
     await db().run("DELETE FROM page_files WHERE page_id = ?", [pid]);
     await db().run("DELETE FROM grades WHERE course_id = ?", [pid]);
     await db().run("UPDATE slots SET course_id = NULL WHERE course_id = ?", [pid]);
+    await db().run("UPDATE events SET course_id = NULL WHERE course_id = ?", [pid]);
     await db().run("UPDATE tasks SET course_id = NULL WHERE course_id = ?", [pid]);
   }
   await collectFiles();

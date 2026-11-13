@@ -14,6 +14,7 @@ export const SYNC_TABLES: Record<string, string[]> = {
   page_files: ["page_id", "file_id"],
   quizzes: ["id"],
   refs: ["key"],
+  events: ["id"],
 };
 
 /** Chaque écriture locale note la ligne dans sync_log, sauf pendant l'application de changements distants. */
@@ -191,6 +192,26 @@ const MIGRATIONS: string[][] = [
       created_at INTEGER NOT NULL
     )`,
     ...syncTriggers(["refs"]),
+  ],
+  [
+    // Séances datées d'un calendrier importé (.ics). `calendar` regroupe les séances
+    // d'un même fichier : le réimporter met à jour ce calendrier. Heures en millisecondes.
+    `CREATE TABLE events (
+      id TEXT PRIMARY KEY,
+      calendar TEXT NOT NULL,
+      title TEXT NOT NULL,
+      start INTEGER NOT NULL,
+      end INTEGER NOT NULL,
+      all_day INTEGER NOT NULL DEFAULT 0,
+      room TEXT NOT NULL DEFAULT '',
+      teacher TEXT NOT NULL DEFAULT '',
+      kind TEXT NOT NULL DEFAULT '',
+      note TEXT NOT NULL DEFAULT '',
+      cancelled INTEGER NOT NULL DEFAULT 0,
+      course_id TEXT
+    )`,
+    `CREATE INDEX events_start ON events (start)`,
+    ...syncTriggers(["events"]),
   ],
 ];
 

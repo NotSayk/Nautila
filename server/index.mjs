@@ -32,6 +32,7 @@ const TABLES = new Set([
   "page_files",
   "quizzes",
   "refs",
+  "events",
 ]);
 
 const db = new DatabaseSync(DATA_FILE);
