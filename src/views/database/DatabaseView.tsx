@@ -106,7 +106,7 @@ function PopButton({
   return (
     <>
       <button
-        className={`flex h-7 items-center gap-1.5 rounded-md px-2 hover:bg-hover ${active ? "text-accent" : "text-muted"}`}
+        className={`flex h-7 items-center gap-1.5 rounded-md px-2 hover:bg-hover ${active ? "text-accent-text" : "text-muted"}`}
         onClick={(e) => setAnchor(e.currentTarget.getBoundingClientRect())}
       >
         {icon}

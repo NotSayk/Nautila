@@ -65,6 +65,30 @@ export function IconButton({
   );
 }
 
+/**
+ * Pour une fenêtre ou un menu : Échap le ferme, et le focus revient à l'élément
+ * qui l'avait ouvert, pour ne pas perdre sa place en naviguant au clavier.
+ */
+export function useOverlay(onClose: () => void) {
+  const close = useRef(onClose);
+  close.current = onClose;
+  // Relevé dès le premier rendu, avant que le contenu de la fenêtre ne prenne le focus.
+  const opener = useRef(document.activeElement as HTMLElement | null).current;
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "Escape") return;
+      e.stopPropagation();
+      close.current();
+    };
+    // En capture : Échap ferme la fenêtre du dessus avant que l'éditeur ne le reçoive.
+    window.addEventListener("keydown", onKey, true);
+    return () => {
+      window.removeEventListener("keydown", onKey, true);
+      if (opener?.isConnected) opener.focus({ preventScroll: true });
+    };
+  }, []);
+}
+
 /** Panneau flottant ancré sous un élément, fermé par un clic à l'extérieur. */
 export function Popover({
   anchor,
@@ -80,6 +104,7 @@ export function Popover({
   children: React.ReactNode;
 }) {
   const ref = useRef<HTMLDivElement>(null);
+  useOverlay(onClose);
   const [pos, setPos] = useState<{ top: number; left: number } | null>(null);
 
   useLayoutEffect(() => {
@@ -95,7 +120,7 @@ export function Popover({
   }, [anchor, width, align]);
 
   return createPortal(
-    <div className="fixed inset-0 z-50" onClick={onClose} onKeyDown={(e) => e.key === "Escape" && onClose()}>
+    <div className="fixed inset-0 z-50" onClick={onClose}>
       <div
         ref={ref}
         role="menu"
@@ -114,6 +139,36 @@ export type MenuItem =
   | { icon?: React.ReactNode; label: string; onClick: () => void; danger?: boolean; checked?: boolean }
   | { note: string }
   | "separator";
+
+/** Liste d'entrées de menu : le focus arrive sur la première, les flèches le déplacent. */
+function MenuList({ children }: { children: React.ReactNode }) {
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => ref.current?.querySelector<HTMLElement>("[role=menuitem]")?.focus(), []);
+  return (
+    <div
+      ref={ref}
+      onKeyDown={(e) => {
+        const items = [...e.currentTarget.querySelectorAll<HTMLElement>("[role=menuitem]")];
+        const at = items.indexOf(document.activeElement as HTMLElement);
+        const next =
+          e.key === "ArrowDown"
+            ? (at + 1) % items.length
+            : e.key === "ArrowUp"
+              ? (at - 1 + items.length) % items.length
+              : e.key === "Home"
+                ? 0
+                : e.key === "End"
+                  ? items.length - 1
+                  : -1;
+        if (next < 0) return;
+        e.preventDefault();
+        items[next]?.focus();
+      }}
+    >
+      {children}
+    </div>
+  );
+}
 
 export function Menu({
   label,
@@ -142,31 +197,33 @@ export function Menu({
       </button>
       {anchor && (
         <Popover anchor={anchor} onClose={() => setAnchor(null)} width={230} align={align}>
-          {items.map((item, i) =>
-            item === "separator" ? (
-              <div key={i} className="my-1 h-px bg-line" />
-            ) : "note" in item ? (
-              <p key={i} className="px-2 py-1 text-xs text-faint">
-                {item.note}
-              </p>
-            ) : (
-              <button
-                key={i}
-                role="menuitem"
-                onClick={() => {
-                  setAnchor(null);
-                  item.onClick();
-                }}
-                className={`flex h-7 w-full items-center gap-2 rounded px-2 text-left hover:bg-hover ${
-                  item.danger ? "text-danger" : ""
-                }`}
-              >
-                {item.icon && <span className={item.danger ? "" : "text-muted"}>{item.icon}</span>}
-                <span className="flex-1 truncate">{item.label}</span>
-                {item.checked && <Check size={14} />}
-              </button>
-            ),
-          )}
+          <MenuList>
+            {items.map((item, i) =>
+              item === "separator" ? (
+                <div key={i} className="my-1 h-px bg-line" />
+              ) : "note" in item ? (
+                <p key={i} className="px-2 py-1 text-xs text-faint">
+                  {item.note}
+                </p>
+              ) : (
+                <button
+                  key={i}
+                  role="menuitem"
+                  onClick={() => {
+                    setAnchor(null);
+                    item.onClick();
+                  }}
+                  className={`flex h-7 w-full items-center gap-2 rounded px-2 text-left hover:bg-hover ${
+                    item.danger ? "text-danger" : ""
+                  }`}
+                >
+                  {item.icon && <span className={item.danger ? "" : "text-muted"}>{item.icon}</span>}
+                  <span className="flex-1 truncate">{item.label}</span>
+                  {item.checked && <Check size={14} />}
+                </button>
+              ),
+            )}
+          </MenuList>
         </Popover>
       )}
     </>

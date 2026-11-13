@@ -11,9 +11,11 @@
   --color-active: rgb(55 53 47 / 0.1);
   --color-line: rgb(55 53 47 / 0.1);
   --color-ink: #37352f;
-  --color-muted: rgb(55 53 47 / 0.62);
-  --color-faint: rgb(55 53 47 / 0.4);
-  --color-accent: #2383e2;
+  /* Gris choisis pour garder un contraste d'au moins 4,5 sur les fonds de l'application. */
+  --color-muted: rgb(55 53 47 / 0.8);
+  --color-faint: rgb(55 53 47 / 0.72);
+  --color-accent: #0b6bcb;
+  --color-accent-text: #0b6bcb;
   --color-danger: #d44c47;
   --font-sans: "Inter", ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
   --shadow-pop: 0 0 0 1px rgb(15 15 15 / 0.05), 0 3px 6px rgb(15 15 15 / 0.1), 0 9px 24px rgb(15 15 15 / 0.2);
@@ -27,8 +29,9 @@
   --color-active: rgb(255 255 255 / 0.09);
   --color-line: rgb(255 255 255 / 0.1);
   --color-ink: rgb(255 255 255 / 0.84);
-  --color-muted: rgb(255 255 255 / 0.5);
-  --color-faint: rgb(255 255 255 / 0.3);
+  --color-muted: rgb(255 255 255 / 0.64);
+  --color-faint: rgb(255 255 255 / 0.54);
+  --color-accent-text: #6cb1f5;
   --color-danger: #e5665f;
   --shadow-pop: 0 0 0 1px rgb(255 255 255 / 0.08), 0 9px 24px rgb(0 0 0 / 0.5);
 }
@@ -580,4 +583,15 @@ textarea:focus-visible,
 .bn-editor [data-content-type="codeBlock"] > div > select > option {
   background: var(--color-pop);
   color: var(--color-ink);
+}
+
+/* Respecte le réglage système « réduire les animations ». */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
 }

@@ -11,6 +11,7 @@ Tes notes restent sur ton appareil : pas de compte, pas de télémétrie.
 - Formules LaTeX en bloc et dans le texte, croquis à main levée, enregistrement audio.
 - PDF lisible dans la page, avec surlignage et citation des extraits dans la note.
 - Commandes `/`, raccourcis Markdown, couleurs, glisser-déposer des blocs.
+- Code coloré dans 81 langages.
 
 **Pages**
 - Semestres, matières et pages imbriqués ; favoris, fil d'Ariane, sous-pages.
@@ -26,7 +27,8 @@ Tes notes restent sur ton appareil : pas de compte, pas de télémétrie.
 - Une base peut être intégrée dans une page.
 
 **Études**
-- Flashcards à répétition espacée (FSRS) créées depuis les notes.
+- Flashcards à répétition espacée (FSRS) créées depuis les notes, rangées en paquets par page.
+- Modes d'étude : cartes, QCM, écriture, association ; quiz à choix multiples.
 - Devoirs et examens avec rappels, emploi du temps, notes et moyennes pondérées.
 - Minuteur Pomodoro, tableau de bord du jour.
 
@@ -34,6 +36,8 @@ Tes notes restent sur ton appareil : pas de compte, pas de télémétrie.
 - Tout est stocké sur l'appareil. Export Markdown, HTML et PDF par page.
 - Import Markdown, Word (.docx) et export Notion (.zip) ; sauvegarde et restauration complètes en JSON.
 - Synchronisation entre appareils via un serveur auto-hébergé, avec comptes.
+- Partage en direct : plusieurs comptes modifient la même page, avec curseurs nommés.
+- Connecteur MCP : Claude ou Codex lisent les notes et créent flashcards, quiz et fiches.
 - Interface en français et en anglais, thème clair et sombre.
 
 ## Pas encore fait
@@ -89,6 +93,23 @@ donc deux appareils peuvent modifier la même page. Pour le reste (titres, devoi
 modification la plus récente l'emporte, d'après l'horloge des appareils.
 Le serveur stocke les notes en clair : il n'y a pas de chiffrement de bout en bout.
 Pour sauvegarder le serveur, copie le volume `nautila-data`.
+
+## Partage en direct et connecteur IA
+
+Les deux passent par le serveur de synchronisation, donc demandent un compte.
+
+- **Partager une page** : bouton « Partager » en haut de la page, puis envoie le lien. Toute personne
+  connectée au même serveur qui possède le lien peut lire et modifier la page.
+- **Connecteur MCP** : icône nuage, « Créer un jeton d'accès ». L'application affiche les réglages à
+  copier pour Claude Code, Codex et claude.ai. Le jeton donne accès à tout le compte.
+
+Outils exposés : `search_notes`, `list_pages`, `read_page`, `create_flashcards`, `create_quiz`,
+`create_page`, `list_tasks`, `list_files`, `get_file`.
+
+## Raccourcis
+
+`Ctrl K` rechercher ou changer de page · `Ctrl Alt N` nouvelle page · `Ctrl \` barre latérale ·
+`Ctrl Maj L` thème · `Ctrl /` liste complète des raccourcis.
 
 ## Architecture
 

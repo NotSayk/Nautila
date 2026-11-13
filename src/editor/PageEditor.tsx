@@ -53,6 +53,8 @@ export type PageEditorHandle = {
   applyTemplate: (blocks: NautilaBlock[]) => void;
   wordCount: () => number;
   toHTML: () => string;
+  /** Place le curseur au début du contenu. */
+  focus: () => void;
   /** Texte brut de la page. */
   bodyText: () => string;
   /** État Yjs courant, en base64. */
@@ -111,6 +113,7 @@ export const PageEditor = forwardRef<PageEditorHandle, Props>(function PageEdito
   const editor: NautilaEditor = useCreateBlockNote(
     withCollaboration({
       schema,
+      domAttributes: { editor: { "aria-label": t("editorLabel") } },
       dictionary: {
         ...(lang === "fr" ? fr : en),
         multi_column: columnLocales[lang],
@@ -141,6 +144,10 @@ export const PageEditor = forwardRef<PageEditorHandle, Props>(function PageEdito
       toMarkdown: () => editor.blocksToMarkdownLossy(),
       applyTemplate: (blocks) => void editor.replaceBlocks(editor.document, blocks),
       toHTML: () => editor.blocksToHTMLLossy(),
+      focus: () => {
+        editor.setTextCursorPosition(editor.document[0], "start");
+        editor.focus();
+      },
       bodyText: () => extract(editor.document as never).body,
       docState: () => toBase64(Y.encodeStateAsUpdate(doc)),
       wordCount: () =>

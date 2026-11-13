@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { listVersions, type Version } from "../data/versions";
 import { useT } from "../i18n";
 import { useStore } from "../store";
+import { useOverlay } from "./common";
 
 export function HistoryDialog({
   pageId,
@@ -14,6 +15,7 @@ export function HistoryDialog({
 }) {
   const t = useT();
   const lang = useStore((s) => s.lang);
+  useOverlay(onClose);
   const [versions, setVersions] = useState<Version[]>();
   const [selected, setSelected] = useState<Version>();
 
@@ -30,6 +32,7 @@ export function HistoryDialog({
     <div className="fixed inset-0 z-50 grid place-items-center bg-black/40 p-4" onClick={onClose}>
       <div
         role="dialog"
+        aria-modal="true"
         aria-label={t("history")}
         className="flex h-[70vh] w-full max-w-3xl overflow-hidden rounded-xl bg-pop shadow-pop max-sm:flex-col"
         onClick={(e) => e.stopPropagation()}

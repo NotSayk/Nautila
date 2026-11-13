@@ -3,12 +3,13 @@ import { useMemo, useState } from "react";
 import { movePage } from "../data/pages";
 import { useT } from "../i18n";
 import { useStore } from "../store";
-import { PageIcon } from "./common";
+import { PageIcon, useOverlay } from "./common";
 
 export function MoveDialog({ id }: { id: string }) {
   const t = useT();
   const pages = useStore((s) => s.pages);
   const close = () => useStore.setState({ moveId: null });
+  useOverlay(close);
   const [query, setQuery] = useState("");
 
   // Une page ne peut pas être déplacée dans elle-même ni dans sa descendance.
@@ -37,6 +38,7 @@ export function MoveDialog({ id }: { id: string }) {
     <div className="fixed inset-0 z-50 flex items-start justify-center bg-black/40 p-4 pt-[14vh]" onClick={close}>
       <div
         role="dialog"
+        aria-modal="true"
         aria-label={t("moveSearch")}
         className="w-full max-w-[480px] overflow-hidden rounded-xl bg-pop shadow-pop"
         onClick={(e) => e.stopPropagation()}

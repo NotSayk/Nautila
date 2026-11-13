@@ -29,7 +29,6 @@ import {
   duplicatePage,
   getPageDoc,
   replacePageDoc,
-  trashPage,
   updatePageMeta,
   type PageFont,
   type PageMeta,
@@ -42,6 +41,7 @@ import { useStore } from "../store";
 import { Cover, IconButton, Menu, PageIcon, Popover, relativeTime, SectionTitle, TopBar } from "./common";
 import { DatabaseView, RowProperties } from "./database/DatabaseView";
 import { EmojiPicker } from "./EmojiPicker";
+import { moveToTrash } from "./actions";
 import { HistoryDialog } from "./HistoryDialog";
 import { ShareDialog } from "./ShareDialog";
 
@@ -190,7 +190,7 @@ export function PageView({ id }: { id: string }) {
               <button
                 onClick={() => setShareOpen(true)}
                 className={`mr-1 flex h-7 items-center gap-1.5 rounded-md px-2 hover:bg-hover ${
-                  page.share_id ? (share.online ? "text-accent" : "text-muted") : "text-muted"
+                  page.share_id ? (share.online ? "text-accent-text" : "text-muted") : "text-muted"
                 }`}
               >
                 <Users size={16} strokeWidth={1.75} />
@@ -278,12 +278,7 @@ export function PageView({ id }: { id: string }) {
                   {
                     icon: <Trash2 size={16} />,
                     label: t("moveToTrash"),
-                    onClick: async () => {
-                      await trashPage(id);
-                      await refreshPages();
-                      await useStore.getState().refreshDue();
-                      navigate({ view: "home" });
-                    },
+                    onClick: () => moveToTrash(page),
                   },
                   "separator",
                   { note: `${words} ${t("words")}` },
@@ -431,7 +426,13 @@ export function PageView({ id }: { id: string }) {
             placeholder={t("untitled")}
             onChange={(e) => setTitle(e.target.value)}
             onBlur={() => title !== page.title && saveMeta({ title })}
-            onKeyDown={(e) => e.key === "Enter" && e.currentTarget.blur()}
+            onKeyDown={(e) => {
+              // Entrée ou flèche bas : on passe du titre au contenu, comme dans un document.
+              if (e.key !== "Enter" && e.key !== "ArrowDown") return;
+              e.preventDefault();
+              e.currentTarget.blur();
+              editor.current?.focus();
+            }}
             className="page-title w-full bg-transparent text-[40px] font-bold leading-[1.2] placeholder:text-faint"
           />
           {parent?.kind === "database" && <RowProperties page={page} databaseId={parent.id} />}

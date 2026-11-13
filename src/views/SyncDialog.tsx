@@ -3,7 +3,7 @@ import { isTauri } from "../db";
 import { useT, type Key } from "../i18n";
 import { useStore } from "../store";
 import { connect, createAccessToken, disconnect, getSyncState, SyncError, syncNow } from "../sync/engine";
-import { relativeTime } from "./common";
+import { relativeTime, useOverlay } from "./common";
 
 const FIELD = "mt-1 h-8 w-full rounded-md bg-hover px-2 text-sm text-ink placeholder:text-faint";
 
@@ -29,6 +29,7 @@ export function SyncDialog() {
   const lang = useStore((s) => s.lang);
   const sync = useStore((s) => s.sync);
   const close = () => useStore.setState({ syncOpen: false });
+  useOverlay(close);
   // Hébergée, l'application propose par défaut son propre serveur.
   const [server, setServer] = useState(isTauri() || location.hostname === "localhost" ? "" : location.origin);
   const [username, setUsername] = useState("");
@@ -65,6 +66,7 @@ export function SyncDialog() {
     <div className="fixed inset-0 z-50 grid place-items-center bg-black/40 p-4" onClick={close}>
       <div
         role="dialog"
+        aria-modal="true"
         aria-label={t("syncTitle")}
         className="max-h-[90vh] w-full max-w-md overflow-y-auto rounded-xl bg-pop p-5 shadow-pop"
         onClick={(e) => e.stopPropagation()}

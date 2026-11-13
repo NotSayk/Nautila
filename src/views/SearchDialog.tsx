@@ -4,7 +4,7 @@ import { searchPages, type PageKind, type SearchHit } from "../data/pages";
 import type { Key } from "../i18n";
 import { useT } from "../i18n";
 import { useStore } from "../store";
-import { PageIcon } from "./common";
+import { PageIcon, useOverlay } from "./common";
 
 /** Affiche un extrait dont les correspondances sont encadrées par \u0001…\u0002. */
 function Snippet({ text }: { text: string }) {
@@ -35,11 +35,19 @@ export function SearchDialog() {
   const t = useT();
   const navigate = useStore((s) => s.navigate);
   const close = () => useStore.getState().setSearchOpen(false);
+  useOverlay(close);
   const [query, setQuery] = useState("");
   const [allHits, setHits] = useState<SearchHit[]>([]);
   const [index, setIndex] = useState(0);
   const [kind, setKind] = useState<PageKind | null>(null);
-  const hits = kind ? allHits.filter((h) => h.kind === kind) : allHits;
+  const pages = useStore((s) => s.pages);
+  // Sans saisie, la palette propose les pages récentes : on change de page en deux touches.
+  const recent: SearchHit[] = [...pages]
+    .sort((a, b) => b.updated_at - a.updated_at)
+    .slice(0, 8)
+    .map((p) => ({ id: p.id, title: p.title, icon: p.icon, kind: p.kind, snippet: "" }));
+  const source = query.trim() ? allHits : recent;
+  const hits = kind ? source.filter((h) => h.kind === kind) : source;
 
   useEffect(() => {
     let live = true;
@@ -71,6 +79,7 @@ export function SearchDialog() {
     <div className="fixed inset-0 z-50 flex items-start justify-center bg-black/40 p-4 pt-[14vh]" onClick={close}>
       <div
         role="dialog"
+        aria-modal="true"
         aria-label={t("search")}
         className="w-full max-w-[620px] overflow-hidden rounded-xl bg-pop shadow-pop"
         onClick={(e) => e.stopPropagation()}
@@ -101,6 +110,9 @@ export function SearchDialog() {
           ))}
         </div>
         <div className="max-h-[50vh] min-h-16 overflow-y-auto p-1.5">
+          {!query.trim() && hits.length > 0 && (
+            <p className="px-2.5 pb-1 pt-1.5 text-xs text-muted">{t("recentPages")}</p>
+          )}
           {query.trim() && hits.length === 0 && <p className="px-2.5 py-3 text-muted">{t("noResults")}</p>}
           {hits.map((h, i) => (
             <button

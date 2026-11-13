@@ -1,5 +1,6 @@
 import {
   Bell,
+  Keyboard,
   Users,
   Cloud,
   CloudAlert,
@@ -31,11 +32,12 @@ import {
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { download, exportBackup, importBackup } from "../data/backup";
-import { duplicatePage, movePage, trashPage, updatePageMeta, type PageMeta } from "../data/pages";
+import { duplicatePage, movePage, updatePageMeta, type PageMeta } from "../data/pages";
 import { importFiles } from "../data/importer";
 import { enableReminders } from "../reminders";
 import { useT } from "../i18n";
 import { useStore, type Route } from "../store";
+import { moveToTrash } from "./actions";
 import { IconButton, Menu, PageIcon } from "./common";
 import { Pomodoro } from "./Pomodoro";
 import { JoinDialog } from "./ShareDialog";
@@ -64,19 +66,9 @@ function SectionHeader({ label, children }: { label: string; children?: React.Re
   return (
     <div className="group mt-4 flex h-7 items-center justify-between px-2 text-xs font-medium text-faint">
       {label}
-      <span className="flex gap-0.5 opacity-0 focus-within:opacity-100 group-hover:opacity-100 max-md:opacity-100">
-        {children}
-      </span>
+      <span className="flex gap-0.5">{children}</span>
     </div>
   );
-}
-
-async function moveToTrash(page: PageMeta) {
-  const { route, navigate, refreshPages, refreshDue } = useStore.getState();
-  await trashPage(page.id);
-  await refreshPages();
-  await refreshDue();
-  if (route.view === "page" && route.id === page.id) navigate({ view: "home" });
 }
 
 async function setFavorite(page: PageMeta, favorite: boolean) {
@@ -248,7 +240,21 @@ export function Sidebar() {
   const t = useT();
   const { route, pages, dueCount, dark, lang, sidebarOpen, sync } = useStore();
   const { navigate, newPage, toggleDark, setLang, setSearchOpen, setSidebarOpen } = useStore();
-  const [open, setOpen] = useState<Set<string>>(new Set());
+  // L'état déplié de l'arbre est mémorisé d'une session à l'autre.
+  const [open, setOpen] = useState<Set<string>>(() => {
+    try {
+      return new Set(JSON.parse(localStorage.getItem("nautila.tree") ?? "[]"));
+    } catch {
+      return new Set();
+    }
+  });
+  useEffect(() => {
+    try {
+      localStorage.setItem("nautila.tree", JSON.stringify([...open]));
+    } catch {
+      /* préférence non mémorisée, sans gravité */
+    }
+  }, [open]);
   const fileInput = useRef<HTMLInputElement>(null);
   const [joinOpen, setJoinOpen] = useState(false);
 
@@ -480,6 +486,11 @@ export function Sidebar() {
               { icon: <Users size={16} />, label: t("joinShared"), onClick: () => setJoinOpen(true) },
               { icon: <FileDown size={16} />, label: t("importDocs"), onClick: () => mdInput.current?.click() },
               "separator",
+              {
+                icon: <Keyboard size={16} />,
+                label: t("shortcuts"),
+                onClick: () => useStore.setState({ shortcutsOpen: true }),
+              },
               {
                 icon: <Bell size={16} />,
                 label: t("enableReminders"),

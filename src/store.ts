@@ -51,6 +51,9 @@ type State = {
   /** Minuteur Pomodoro : `endsAt` défini quand il tourne, `left` (ms) quand il est en pause. */
   sync: { status: "off" | "idle" | "syncing" | "error"; username?: string; error?: string; lastSync?: number };
   syncOpen: boolean;
+  shortcutsOpen: boolean;
+  /** Message bref en bas de l'écran, avec une action facultative (ex. « Annuler »). */
+  toast: { message: string; action?: { label: string; run: () => void } } | null;
   pomodoro: { mode: "focus" | "break"; endsAt: number | null; left: number };
   navigate: (route: Route) => void;
   refreshPages: () => Promise<void>;
@@ -79,6 +82,8 @@ export const useStore = create<State>((set, get) => ({
   moveId: null,
   sync: { status: "off" },
   syncOpen: false,
+  shortcutsOpen: false,
+  toast: null,
   pomodoro: { mode: "focus", endsAt: null, left: 25 * 60_000 },
   sidebarOpen: isDesktop() && stored("nautila.sidebar") !== "0",
 

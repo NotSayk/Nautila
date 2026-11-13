@@ -4,7 +4,7 @@ import { deleteSlot, listSlots, saveSlot, toMinutes, type Slot } from "../data/s
 import { OPTION_COLORS } from "../data/dbquery";
 import { useT } from "../i18n";
 import { useStore } from "../store";
-import { View } from "./common";
+import { useOverlay, View } from "./common";
 
 const HOUR = 52;
 const FIELD = "h-8 w-full rounded-md bg-hover px-2";
@@ -21,6 +21,7 @@ function SlotDialog({ draft, onClose }: { draft: Draft; onClose: (changed: boole
   const lang = useStore((s) => s.lang);
   const courses = useStore((s) => s.pages).filter((p) => p.kind === "course");
   const [slot, setSlot] = useState(draft);
+  useOverlay(() => onClose(false));
   const set = (patch: Partial<Draft>) => setSlot((s) => ({ ...s, ...patch }));
   const course = courses.find((c) => c.id === slot.course_id);
   const valid = (slot.title.trim() || course) && toMinutes(slot.end) > toMinutes(slot.start);

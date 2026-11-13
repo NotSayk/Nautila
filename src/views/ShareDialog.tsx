@@ -2,12 +2,14 @@ import { useEffect, useState } from "react";
 import type { PageMeta } from "../data/pages";
 import { useT } from "../i18n";
 import { useStore } from "../store";
+import { useOverlay } from "./common";
 import { createShare, joinShare, leaveShare, parseShareId, shareLink } from "../sync/share";
 
 const BUTTON = "h-8 rounded-md px-3 font-medium disabled:opacity-40";
 const FIELD = "h-8 w-full rounded-md bg-hover px-2 text-sm placeholder:text-faint";
 
 function Shell({ label, onClose, children }: { label: string; onClose: () => void; children: React.ReactNode }) {
+  useOverlay(onClose);
   return (
     <div className="fixed inset-0 z-50 grid place-items-center bg-black/40 p-4" onClick={onClose}>
       <div

@@ -8,6 +8,7 @@ import { Timetable } from "./views/Timetable";
 import { notifyDueTasks } from "./reminders";
 import { startSync } from "./sync/engine";
 import { JoinView } from "./views/ShareDialog";
+import { ShortcutsDialog, Toast, useGlobalShortcuts } from "./views/Overlays";
 import { SyncDialog } from "./views/SyncDialog";
 import { MoveDialog } from "./views/MoveDialog";
 import { PageView } from "./views/PageView";
@@ -31,6 +32,7 @@ export function App() {
   const searchOpen = useStore((s) => s.searchOpen);
   const moveId = useStore((s) => s.moveId);
   const syncOpen = useStore((s) => s.syncOpen);
+  const shortcutsOpen = useStore((s) => s.shortcutsOpen);
 
   useEffect(() => {
     (opening ??= initDb()).then(
@@ -49,16 +51,7 @@ export function App() {
     document.documentElement.lang = lang;
   }, [dark, lang]);
 
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "k") {
-        e.preventDefault();
-        useStore.getState().setSearchOpen(true);
-      }
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, []);
+  useGlobalShortcuts();
 
   if (status.state === "loading") return <div className="grid h-full place-items-center text-faint">Nautila</div>;
   if (status.state === "error")
@@ -92,6 +85,8 @@ export function App() {
       {searchOpen && <SearchDialog />}
       {moveId && <MoveDialog id={moveId} />}
       {syncOpen && <SyncDialog />}
+      {shortcutsOpen && <ShortcutsDialog />}
+      <Toast />
     </div>
   );
 }
