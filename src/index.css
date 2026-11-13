@@ -524,6 +524,29 @@ textarea:focus-visible,
   font-size: 13px;
   font-weight: 500;
 }
+.pdf-highlight-on {
+  background: rgb(255 170 0 / 0.55);
+  outline: 2px solid rgb(230 150 0);
+  outline-offset: 1px;
+}
+.pdf-menu {
+  gap: 2px;
+  padding: 4px;
+}
+.pdf-menu button {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  border-radius: 4px;
+  padding: 4px 8px;
+  white-space: nowrap;
+}
+.pdf-menu button:hover {
+  background: var(--color-hover);
+}
+.pdf-menu button:first-child {
+  color: var(--color-danger);
+}
 .pdf-notes {
   margin-top: 6px;
   font-size: 14px;

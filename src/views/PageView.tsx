@@ -24,10 +24,11 @@ import {
 import { Fragment, useEffect, useRef, useState } from "react";
 import { download } from "../data/backup";
 import { saveFile } from "../data/files";
-import { HTML_MARK } from "../data/importer";
+import { BLOCKS_MARK, HTML_MARK } from "../data/importer";
 import {
   deleteTemplate,
   listTemplates,
+  pendingBlocks,
   pendingHtml,
   pendingMarkdown,
   saveTemplate,
@@ -145,7 +146,14 @@ export function PageView({ id }: { id: string }) {
     getPageDoc(id).then(({ ydoc, markdown }) => {
       if (!live) return;
       // Page créée hors de l'application (connecteur IA) : son Markdown est mis en forme à l'ouverture.
-      if (ydoc === null && markdown?.startsWith(HTML_MARK)) pendingHtml.set(id, markdown.slice(HTML_MARK.length));
+      if (ydoc === null && markdown?.startsWith(BLOCKS_MARK)) {
+        try {
+          pendingBlocks.set(id, JSON.parse(markdown.slice(BLOCKS_MARK.length)));
+        } catch {
+          /* contenu illisible : la page s'ouvre vide */
+        }
+      } else if (ydoc === null && markdown?.startsWith(HTML_MARK))
+        pendingHtml.set(id, markdown.slice(HTML_MARK.length));
       else if (ydoc === null && markdown) pendingMarkdown.set(id, markdown);
       setDoc({ ydoc, rev: 0 });
       if (ydoc === null) void listTemplates().then((list) => live && setCustom(list));

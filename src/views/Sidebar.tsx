@@ -589,7 +589,7 @@ export function Sidebar() {
           <input
             ref={mdInput}
             type="file"
-            accept=".md,.markdown,.txt,.docx,.zip,text/markdown,text/plain"
+            accept=".md,.markdown,.txt,.docx,.zip,.pdf,text/markdown,text/plain,application/pdf"
             multiple
             hidden
             onChange={onImportMarkdown}

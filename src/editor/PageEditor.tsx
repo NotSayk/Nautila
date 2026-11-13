@@ -37,7 +37,7 @@ import { Comments } from "./Comments";
 import { resolveFileUrl, saveFile, watchSharedFiles } from "../data/files";
 import { createPage, savePageContent } from "../data/pages";
 import { PAGE_LINK } from "../data/importer";
-import { pendingHtml, pendingMarkdown } from "../data/templates";
+import { pendingBlocks, pendingHtml, pendingMarkdown } from "../data/templates";
 import { useT } from "../i18n";
 import { useStore } from "../store";
 import { REMOTE_DOC_EVENT } from "../sync/engine";
@@ -260,7 +260,13 @@ export const PageEditor = forwardRef<PageEditorHandle, Props>(function PageEdito
     doc.on("update", onUpdate);
     const markdown = pendingMarkdown.get(pageId);
     const html = pendingHtml.get(pageId);
-    if (html !== undefined) {
+    const blocks = pendingBlocks.get(pageId);
+    if (blocks !== undefined) {
+      pendingBlocks.delete(pageId);
+      const current = editorRef.current;
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      current.replaceBlocks(current.document, blocks as any);
+    } else if (html !== undefined) {
       pendingHtml.delete(pageId);
       const current = editorRef.current;
       current.replaceBlocks(current.document, knownLanguages(current.tryParseHTMLToBlocks(html)));

@@ -3,6 +3,7 @@ import * as pdfjs from "pdfjs-dist";
 import workerUrl from "pdfjs-dist/build/pdf.worker.min.mjs?url";
 import { useEffect, useRef, useState } from "react";
 import { useT } from "../i18n";
+import { useStore } from "../store";
 
 pdfjs.GlobalWorkerOptions.workerSrc = workerUrl;
 
@@ -25,6 +26,7 @@ type Props = {
 
 function Page({
   preview,
+  active,
   doc,
   number,
   width,
@@ -35,6 +37,7 @@ function Page({
   width: number;
   highlights: Highlight[];
   preview?: Highlight;
+  active?: string;
 }) {
   const canvas = useRef<HTMLCanvasElement>(null);
   const text = useRef<HTMLDivElement>(null);
@@ -87,7 +90,9 @@ function Page({
         h.rects.map((r, i) => (
           <span
             key={h.id + i}
-            className={h === preview ? "pdf-highlight pdf-selecting" : "pdf-highlight"}
+            className={
+              h === preview ? "pdf-highlight pdf-selecting" : h.id === active ? "pdf-highlight pdf-highlight-on" : "pdf-highlight"
+            }
             style={{ left: `${r.x * 100}%`, top: `${r.y * 100}%`, width: `${r.w * 100}%`, height: `${r.h * 100}%` }}
           />
         )),
@@ -104,6 +109,60 @@ export default function PdfViewer({ src, highlights, editable, onChange, onQuote
   const [width, setWidth] = useState(0);
   const [failed, setFailed] = useState(false);
   const [pending, setPending] = useState<{ highlight: Highlight; left: number; top: number } | null>(null);
+  // Surlignage cliqué : on peut le retirer ou le citer.
+  const [active, setActive] = useState<{ id: string; left: number; top: number } | null>(null);
+  // Historique des surlignages de ce document, pour Ctrl+Z / Ctrl+Maj+Z.
+  const past = useRef<Highlight[][]>([]);
+  const future = useRef<Highlight[][]>([]);
+  const setToast = (message: string, undo: () => void) =>
+    useStore.setState({ toast: { message, action: { label: t("undoAction"), run: undo } } });
+
+  const commit = (next: Highlight[]) => {
+    past.current = [...past.current.slice(-49), highlights];
+    future.current = [];
+    onChange(next);
+  };
+  const undo = () => {
+    const previous = past.current.pop();
+    if (!previous) return;
+    future.current.push(highlights);
+    setActive(null);
+    onChange(previous);
+  };
+  const redo = () => {
+    const next = future.current.pop();
+    if (!next) return;
+    past.current.push(highlights);
+    setActive(null);
+    onChange(next);
+  };
+  const remove = (id: string) => {
+    commit(highlights.filter((h) => h.id !== id));
+    setActive(null);
+    setToast(t("highlightRemoved"), undo);
+  };
+
+  // Raccourcis, quand le document a le focus (après un clic dedans).
+  const onKeyDown = (e: KeyboardEvent) => {
+    if (!editable) return;
+    const mod = e.ctrlKey || e.metaKey;
+    const key = e.key.toLowerCase();
+    let handled = true;
+    if (mod && key === "z" && !e.shiftKey) undo();
+    else if (mod && ((key === "z" && e.shiftKey) || key === "y")) redo();
+    else if ((e.key === "Delete" || e.key === "Backspace") && active) remove(active.id);
+    else if (e.key === "Escape" && (active || pending)) {
+      setActive(null);
+      setPending(null);
+    } else handled = false;
+    // L'éditeur ne doit pas annuler, lui, la dernière modification du texte de la page.
+    if (handled) {
+      e.preventDefault();
+      e.stopPropagation();
+    }
+  };
+  const keyRef = useRef(onKeyDown);
+  keyRef.current = onKeyDown;
 
   useEffect(() => {
     const task = pdfjs.getDocument({ url: src });
@@ -124,10 +183,19 @@ export default function PdfViewer({ src, highlights, editable, onChange, onQuote
       e.stopPropagation();
       downRef.current(e);
     };
+    // Les raccourcis valent tant que ce document est le dernier endroit cliqué : l'éditeur
+    // garde le focus du clavier, on les intercepte donc avant lui.
+    let current = false;
+    const track = (e: MouseEvent) => (current = el.contains(e.target as Node));
+    const key = (e: KeyboardEvent) => current && keyRef.current(e);
     el.addEventListener("mousedown", stop);
+    document.addEventListener("mousedown", track, true);
+    window.addEventListener("keydown", key, true);
     return () => {
       observer.disconnect();
       el.removeEventListener("mousedown", stop);
+      document.removeEventListener("mousedown", track, true);
+      window.removeEventListener("keydown", key, true);
     };
   }, []);
 
@@ -149,11 +217,15 @@ export default function PdfViewer({ src, highlights, editable, onChange, onQuote
     if (!editable || !container || !(down.target as Element).closest(".pdf-text")) return;
     down.preventDefault();
     setPending(null);
+    setActive(null);
     const start = caretAt(down.clientX, down.clientY);
     const page = (down.target as Element).closest<HTMLElement>("[data-page]");
     if (!start || !page) return;
+    let moved = false;
 
     const select = (e: MouseEvent) => {
+      if (Math.hypot(e.clientX - down.clientX, e.clientY - down.clientY) > 3) moved = true;
+      if (!moved) return;
       const end = caretAt(e.clientX, e.clientY);
       if (!end || !page.contains(end[0])) return;
       const range = document.createRange();
@@ -183,7 +255,26 @@ export default function PdfViewer({ src, highlights, editable, onChange, onQuote
         top: last.bottom - outer.top + container.scrollTop + 6,
       });
     };
-    const stop = () => window.removeEventListener("mousemove", select);
+    const stop = (up: MouseEvent) => {
+      window.removeEventListener("mousemove", select);
+      if (moved) return;
+      // Simple clic : sur un surlignage, on le sélectionne.
+      const frame = page.getBoundingClientRect();
+      const x = (up.clientX - frame.left) / frame.width;
+      const y = (up.clientY - frame.top) / frame.height;
+      const hit = highlights.find(
+        (h) =>
+          h.page === Number(page.dataset.page) &&
+          h.rects.some((r) => x >= r.x && x <= r.x + r.w && y >= r.y - 0.003 && y <= r.y + r.h + 0.003),
+      );
+      if (!hit) return;
+      const outer = container.getBoundingClientRect();
+      setActive({
+        id: hit.id,
+        left: Math.min(Math.max(up.clientX - outer.left + container.scrollLeft - 60, 8), Math.max(8, outer.width - 200)),
+        top: up.clientY - outer.top + container.scrollTop + 14,
+      });
+    };
     window.addEventListener("mousemove", select);
     window.addEventListener("mouseup", stop, { once: true });
   };
@@ -193,9 +284,10 @@ export default function PdfViewer({ src, highlights, editable, onChange, onQuote
 
   const add = () => {
     if (!pending) return;
-    onChange([...highlights, pending.highlight]);
+    commit([...highlights, pending.highlight]);
     setPending(null);
   };
+  const activeHighlight = active && highlights.find((h) => h.id === active.id);
 
   return (
     <div>
@@ -211,6 +303,7 @@ export default function PdfViewer({ src, highlights, editable, onChange, onQuote
               width={width}
               highlights={highlights.filter((h) => h.page === i + 1)}
               preview={pending?.highlight.page === i + 1 ? pending.highlight : undefined}
+              active={active?.id}
             />
           ))}
         {pending && (
@@ -223,6 +316,25 @@ export default function PdfViewer({ src, highlights, editable, onChange, onQuote
             <Highlighter size={14} />
             {t("highlight")}
           </button>
+        )}
+        {active && activeHighlight && (
+          <div className="pdf-add pdf-menu" style={{ left: active.left, top: active.top }} role="menu">
+            <button role="menuitem" onMouseDown={(e) => e.preventDefault()} onClick={() => remove(active.id)}>
+              <Trash2 size={14} />
+              {t("removeHighlight")}
+            </button>
+            <button
+              role="menuitem"
+              onMouseDown={(e) => e.preventDefault()}
+              onClick={() => {
+                onQuote(activeHighlight);
+                setActive(null);
+              }}
+            >
+              <Quote size={14} />
+              {t("quoteInNote")}
+            </button>
+          </div>
         )}
       </div>
       {highlights.length > 0 && (
@@ -254,7 +366,7 @@ export default function PdfViewer({ src, highlights, editable, onChange, onQuote
                     className="sketch-tool"
                     title={t("delete")}
                     aria-label={t("delete")}
-                    onClick={() => onChange(highlights.filter((x) => x.id !== h.id))}
+                    onClick={() => remove(h.id)}
                   >
                     <Trash2 size={14} />
                   </button>

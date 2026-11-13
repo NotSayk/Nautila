@@ -11,6 +11,8 @@ export const PAGE_LINK = "https://page.nautila.invalid/";
 
 /** Préfixe d'un contenu HTML en attente de mise en forme (import Word). */
 export const HTML_MARK = "<!--html-->";
+/** Préfixe de blocs (JSON) en attente d'être posés dans la page (import PDF). */
+export const BLOCKS_MARK = "<!--blocks-->";
 
 /** Titre et corps d'un fichier Markdown : un titre de niveau 1 en tête devient le titre de la page. */
 export function splitMarkdown(text: string, fallbackTitle: string): { title: string; body: string } {
@@ -257,7 +259,21 @@ async function importDocx(file: File): Promise<string> {
   return importPage(file.name.replace(/\.[^.]+$/, ""), HTML_MARK + value);
 }
 
-/** Importe des fichiers Markdown, Word ou des archives ; renvoie la page à ouvrir et les fichiers refusés. */
+/** Un PDF devient une page à son nom, qui affiche le document (surlignable) ; le fichier est gardé tel quel. */
+async function importPdf(file: File): Promise<string> {
+  const url = await saveFile(file);
+  const title = file.name.replace(/\.[^.]+$/, "");
+  const page = await createPage({ title, icon: "📄" });
+  const blocks = [{ type: "pdf", props: { url, name: file.name } }, { type: "paragraph" }];
+  await db().run("UPDATE pages SET import_md = ?, body = ? WHERE id = ?", [
+    BLOCKS_MARK + JSON.stringify(blocks),
+    title,
+    page.id,
+  ]);
+  return page.id;
+}
+
+/** Importe des fichiers Markdown, Word, PDF ou des archives ; renvoie la page à ouvrir et les fichiers refusés. */
 export async function importFiles(files: File[]): Promise<{ open?: string; failed: string[] }> {
   const failed: string[] = [];
   let open: string | undefined;
@@ -265,6 +281,7 @@ export async function importFiles(files: File[]): Promise<{ open?: string; faile
     try {
       if (/\.zip$/i.test(file.name)) open = await importZip(file);
       else if (/\.docx$/i.test(file.name)) open = await importDocx(file);
+      else if (/\.pdf$/i.test(file.name) || file.type === "application/pdf") open = await importPdf(file);
       else {
         const { title, body } = splitMarkdown(await file.text(), file.name.replace(/\.[^.]+$/, ""));
         open = await importPage(title, body);

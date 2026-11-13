@@ -9,7 +9,7 @@ Tes notes restent sur ton appareil : pas de compte, pas de télémétrie.
 - Blocs : titres, listes, cases à cocher, citations, tableaux, images, fichiers, blocs repliables.
 - Encadrés, sommaire automatique, colonnes, code avec coloration syntaxique.
 - Formules LaTeX en bloc et dans le texte, croquis à main levée, enregistrement audio.
-- PDF lisible dans la page, avec surlignage et citation des extraits dans la note.
+- PDF lisible dans la page, avec surlignage (un clic pour retirer, Ctrl+Z pour annuler) et citation des extraits dans la note.
 - Commandes `/`, raccourcis Markdown, couleurs, glisser-déposer des blocs.
 - Code coloré dans 81 langages.
 - Blocs synchronisés, citations BibTeX et bibliographie, équations numérotées.
@@ -42,7 +42,7 @@ Tes notes restent sur ton appareil : pas de compte, pas de télémétrie.
 
 **Données**
 - Tout est stocké sur l'appareil. Export Markdown, HTML et PDF par page.
-- Import Markdown, Word (.docx) et export Notion (.zip : pages, images, bases de données, relations
+- Import Markdown, Word (.docx), PDF (une page par document) et export Notion (.zip : pages, images, bases de données, relations
   entre bases, choix multiples et liens entre pages) ; sauvegarde et restauration complètes en JSON.
 - Synchronisation entre appareils via un serveur auto-hébergé, avec comptes.
 - Partage en direct : plusieurs comptes modifient la même page, avec curseurs nommés. Le propriétaire
