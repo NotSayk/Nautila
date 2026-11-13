@@ -190,14 +190,22 @@ export const Sketch = createReactBlockSpec(
         return () => window.removeEventListener(DRAFT_EVENT, onDraft);
       }, []);
 
-      // Sans cela, l'éditeur sélectionne le bloc au clic au lieu de laisser dessiner.
+      // Dans la zone de dessin, un tracé n'est jamais un clic ni un glisser-déposer pour l'éditeur :
+      // sans cela, il sélectionne le bloc, ou le navigateur commence à déplacer tout le bloc
+      // (le trait est alors interrompu, et le bloc déposé ailleurs en double).
+      // Le bloc se déplace avec sa poignée, à gauche, comme les autres.
       const svg = useRef<SVGSVGElement>(null);
       useEffect(() => {
-        const stop = (e: Event) => e.stopPropagation();
         const el = svg.current;
-        el?.addEventListener("mousedown", stop);
-        return () => el?.removeEventListener("mousedown", stop);
-      }, []);
+        if (!el) return;
+        const stop = (e: Event) => {
+          e.stopPropagation();
+          if (e.type !== "mousedown" || editor.isEditable) e.preventDefault();
+        };
+        const events = ["mousedown", "dragstart", "drop", "dragover"];
+        for (const type of events) el.addEventListener(type, stop);
+        return () => events.forEach((type) => el.removeEventListener(type, stop));
+      }, [editor]);
 
       const begin = (e: React.PointerEvent<SVGSVGElement>) => {
         if (!editor.isEditable) return;
@@ -216,15 +224,23 @@ export const Sketch = createReactBlockSpec(
         };
         const end = () => {
           window.removeEventListener("pointermove", move);
+          window.removeEventListener("pointerup", end);
+          window.removeEventListener("pointercancel", end);
           const draft = drafts.get(id);
           drafts.delete(id);
           const latest = editor.getBlock(id);
           if (draft && latest) save([...JSON.parse((latest.props as { strokes: string }).strokes), draft]);
           notify();
         };
+        // Un seul tracé à la fois ; le doigt ou le stylet ne fait pas défiler la page pendant le dessin.
+        if (drafts.has(id) || (e.pointerType === "mouse" && e.button !== 0)) return;
+        e.preventDefault();
+        e.currentTarget.setPointerCapture?.(e.pointerId);
         drafts.set(id, { d: `M${point(e)}`, color });
         window.addEventListener("pointermove", move);
-        window.addEventListener("pointerup", end, { once: true });
+        window.addEventListener("pointerup", end);
+        // Tracé interrompu par le système (geste, changement de fenêtre) : il est gardé tel quel.
+        window.addEventListener("pointercancel", end);
         notify();
       };
 
