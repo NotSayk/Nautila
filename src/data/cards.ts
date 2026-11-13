@@ -86,6 +86,41 @@ export async function addCard(pageId: string, front: string, back: string) {
   ]);
 }
 
+/** Ajoute plusieurs cartes d'un coup au paquet d'une page (tout ou rien). */
+export async function addCards(pageId: string, cards: { front: string; back: string }[]) {
+  const now = Date.now();
+  const state = JSON.stringify(createEmptyCard(new Date(now)));
+  await db().batch(
+    cards.map((c, i) => ({
+      sql: "INSERT INTO cards (id, page_id, front, back, fsrs, due, created_at) VALUES (?,?,?,?,?,?,?)",
+      // L'ordre de la liste est gardé dans le paquet.
+      params: [`extra:${crypto.randomUUID()}`, pageId, c.front, c.back, state, now, now + i],
+    })),
+  );
+}
+
+/** Modifie une carte ajoutée à la main (les cartes d'un bloc se modifient dans la page). */
+export const updateCard = (id: string, front: string, back: string) =>
+  db().run("UPDATE cards SET front = ?, back = ? WHERE id = ?", [front, back, id]);
+
+/**
+ * Lit une liste de cartes collée d'un tableur ou d'un document : une carte par ligne,
+ * question et réponse séparées par une tabulation, « ; », « | », « : » ou un tiret entouré d'espaces.
+ */
+export function parseCardList(text: string): { front: string; back: string }[] {
+  const out: { front: string; back: string }[] = [];
+  for (const line of text.split(/\r?\n/)) {
+    if (!line.trim()) continue;
+    const sep = ["\t", ";", "|", " — ", " – ", " - ", " : ", ":"].find((s) => line.includes(s));
+    if (!sep) continue;
+    const at = line.indexOf(sep);
+    const front = line.slice(0, at).trim();
+    const back = line.slice(at + sep.length).trim();
+    if (front && back) out.push({ front, back });
+  }
+  return out;
+}
+
 export const isExtraCard = (id: string) => id.startsWith("extra:");
 export const deleteCard = (id: string) => db().run("DELETE FROM cards WHERE id = ?", [id]);
 

@@ -1,8 +1,21 @@
-import { ArrowLeft, BookOpenCheck, Keyboard, Layers, ListChecks, Puzzle, RefreshCcw, Trash2 } from "lucide-react";
-import { useCallback, useEffect, useState } from "react";
+import {
+  ArrowLeft,
+  BookOpenCheck,
+  Keyboard,
+  Layers,
+  ListChecks,
+  Pencil,
+  Plus,
+  Puzzle,
+  RefreshCcw,
+  Trash2,
+  X,
+} from "lucide-react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { Grade } from "ts-fsrs";
 import {
   addCard,
+  addCards,
   cardStats,
   deckCards,
   deleteCard,
@@ -10,14 +23,17 @@ import {
   gradeCard,
   isExtraCard,
   listDecks,
+  parseCardList,
   previewIntervals,
+  updateCard,
   type CardRow,
   type Deck,
 } from "../data/cards";
-import { deleteQuiz, listQuizzes, type Question, type Quiz } from "../data/quizzes";
+import { createPage } from "../data/pages";
+import { cleanQuestions, deleteQuiz, listQuizzes, saveQuiz, type Question, type Quiz } from "../data/quizzes";
 import { useT, type Key } from "../i18n";
 import { useStore } from "../store";
-import { IconButton, PageIcon, SectionTitle, TopBar } from "./common";
+import { IconButton, PageIcon, SectionTitle, TopBar, useOverlay } from "./common";
 import { ChoiceMode, FlipMode, MatchMode, questionsFromCards, WriteMode } from "./study/modes";
 
 const GRADES: [Grade, Key][] = [
@@ -37,6 +53,236 @@ const MODES: [Mode, Key, Key, typeof Layers][] = [
 const PRIMARY =
   "h-9 rounded-md bg-accent px-4 font-medium text-white hover:brightness-95 disabled:cursor-default disabled:bg-active disabled:text-faint";
 const SHELL = "mx-auto max-w-[760px] px-6 pb-24 pt-8";
+const SECONDARY = "flex h-8 items-center gap-1.5 rounded-md px-3 shadow-[0_0_0_1px_var(--color-line)] hover:bg-hover";
+const area = "min-w-0 resize-y rounded-md bg-hover px-2 py-1.5 placeholder:text-faint";
+const input = "h-8 w-full min-w-0 rounded-md bg-hover px-2 placeholder:text-faint";
+
+/** Ctrl+Entrée (ou ⌘+Entrée) valide le formulaire depuis une zone de texte. */
+function submitOnCtrlEnter(e: React.KeyboardEvent<HTMLTextAreaElement>) {
+  if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
+    e.preventDefault();
+    e.currentTarget.form?.requestSubmit();
+  }
+}
+
+/** Choix de la page qui portera un nouveau paquet : une page existante, ou une page créée pour l'occasion. */
+function NewDeckDialog({ onClose, onPick }: { onClose: () => void; onPick: (pageId: string) => void }) {
+  const t = useT();
+  const pages = useStore((s) => s.pages);
+  const [query, setQuery] = useState("");
+  useOverlay(onClose);
+  const q = query.trim().toLowerCase();
+  const list = pages
+    .filter((p) => p.kind !== "database" && (!q || (p.title || "").toLowerCase().includes(q)))
+    .slice(0, 50);
+
+  return (
+    <div className="fixed inset-0 z-50 grid place-items-center bg-black/40 p-4" onClick={onClose}>
+      <form
+        role="dialog"
+        aria-label={t("newDeck")}
+        className="flex max-h-[80vh] w-full max-w-md flex-col gap-3 rounded-xl bg-pop p-4 shadow-pop"
+        onClick={(e) => e.stopPropagation()}
+        onSubmit={async (e) => {
+          e.preventDefault();
+          if (!query.trim()) return;
+          const page = await createPage({ title: query.trim(), icon: "🗂️" });
+          await useStore.getState().refreshPages();
+          onPick(page.id);
+        }}
+      >
+        <div>
+          <p className="font-semibold">{t("newDeck")}</p>
+          <p className="text-sm text-muted">{t("newDeckHint")}</p>
+        </div>
+        <input
+          autoFocus
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          placeholder={t("newDeckPlaceholder")}
+          aria-label={t("newDeckPlaceholder")}
+          className={input}
+        />
+        <div className="-mx-1 min-h-0 flex-1 overflow-y-auto">
+          {query.trim() && (
+            <button className="flex h-9 w-full items-center gap-2 rounded-md px-2 text-left hover:bg-hover">
+              <Plus size={16} className="text-muted" />
+              <span className="truncate">
+                {t("newDeckCreate")} « <span className="font-medium">{query.trim()}</span> »
+              </span>
+            </button>
+          )}
+          {list.map((p) => (
+            <button
+              type="button"
+              key={p.id}
+              onClick={() => onPick(p.id)}
+              className="flex h-9 w-full items-center gap-2 rounded-md px-2 text-left hover:bg-hover"
+            >
+              <PageIcon page={p} size={16} />
+              <span className="truncate">{p.title || t("untitled")}</span>
+            </button>
+          ))}
+        </div>
+      </form>
+    </div>
+  );
+}
+
+const blankQuestion = (): Question => ({ question: "", choices: ["", "", "", ""], answer: 0, explanation: "" });
+
+/** Création et modification d'un quiz à choix multiples. */
+function QuizEditor({ quiz, onDone }: { quiz: Quiz | null; onDone: () => void }) {
+  const t = useT();
+  const pages = useStore((s) => s.pages);
+  const [title, setTitle] = useState(quiz?.title ?? "");
+  const [pageId, setPageId] = useState(quiz?.page_id ?? "");
+  const [questions, setQuestions] = useState<Question[]>(() =>
+    quiz ? quiz.questions.map((q) => ({ ...q, choices: [...q.choices], explanation: q.explanation ?? "" })) : [blankQuestion()],
+  );
+  const [tried, setTried] = useState(false);
+  const clean = cleanQuestions(questions);
+  const set = (i: number, patch: Partial<Question>) =>
+    setQuestions((list) => list.map((q, j) => (j === i ? { ...q, ...patch } : q)));
+
+  return (
+    <form
+      onSubmit={async (e) => {
+        e.preventDefault();
+        setTried(true);
+        if (!title.trim() || !clean) return;
+        await saveQuiz({
+          id: quiz?.id ?? crypto.randomUUID(),
+          page_id: pageId || null,
+          title: title.trim(),
+          questions: clean,
+          created_at: quiz?.created_at ?? Date.now(),
+        });
+        onDone();
+      }}
+    >
+      <h1 className="mb-6 text-[26px] font-bold leading-tight">{t(quiz ? "editQuiz" : "newQuiz")}</h1>
+      <div className="mb-6 grid gap-3 sm:grid-cols-[1fr_220px]">
+        <label className="block text-xs text-muted">
+          {t("quizTitle")}
+          <input
+            autoFocus={!quiz}
+            value={title}
+            onChange={(e) => setTitle(e.target.value)}
+            className={`${input} mt-1 text-sm text-ink`}
+          />
+        </label>
+        <label className="block text-xs text-muted">
+          {t("quizPage")}
+          <select
+            value={pageId}
+            onChange={(e) => setPageId(e.target.value)}
+            className={`${input} mt-1 text-sm text-ink`}
+          >
+            <option value="">—</option>
+            {pages.map((p) => (
+              <option key={p.id} value={p.id}>
+                {p.title || t("untitled")}
+              </option>
+            ))}
+          </select>
+        </label>
+      </div>
+
+      {questions.map((q, i) => {
+        const incomplete = tried && !cleanQuestions([q]);
+        return (
+          <fieldset
+            key={i}
+            className={`mb-4 rounded-lg p-3 shadow-[0_0_0_1px_var(--color-line)] ${incomplete ? "shadow-[0_0_0_1px_var(--color-danger)]" : ""}`}
+          >
+            <div className="mb-2 flex items-center gap-2">
+              <legend className="flex-1 text-xs font-medium text-muted">
+                {t("question")} {i + 1}
+              </legend>
+              {questions.length > 1 && (
+                <IconButton
+                  label={t("removeQuestion")}
+                  onClick={() => setQuestions((list) => list.filter((_, j) => j !== i))}
+                >
+                  <Trash2 size={14} />
+                </IconButton>
+              )}
+            </div>
+            <textarea
+              value={q.question}
+              onChange={(e) => set(i, { question: e.target.value })}
+              rows={2}
+              placeholder={t("question")}
+              aria-label={`${t("question")} ${i + 1}`}
+              className={`${area} w-full`}
+            />
+            <p className="mb-1 mt-2 text-xs text-muted">{t("quizChoicesHint")}</p>
+            {q.choices.map((choice, c) => (
+              <div key={c} className="mb-1.5 flex items-center gap-2">
+                <input
+                  type="radio"
+                  name={`answer-${i}`}
+                  checked={q.answer === c}
+                  onChange={() => set(i, { answer: c })}
+                  aria-label={`${t("correctAnswer")} ${c + 1}`}
+                />
+                <input
+                  value={choice}
+                  onChange={(e) => set(i, { choices: q.choices.map((x, k) => (k === c ? e.target.value : x)) })}
+                  placeholder={`${t("choice")} ${c + 1}`}
+                  aria-label={`${t("choice")} ${c + 1}`}
+                  className={`${input} ${q.answer === c ? "ring-1 ring-accent" : ""}`}
+                />
+                {q.choices.length > 2 && (
+                  <IconButton
+                    label={t("removeChoice")}
+                    onClick={() =>
+                      set(i, {
+                        choices: q.choices.filter((_, k) => k !== c),
+                        answer: q.answer === c ? 0 : q.answer > c ? q.answer - 1 : q.answer,
+                      })
+                    }
+                  >
+                    <X size={14} />
+                  </IconButton>
+                )}
+              </div>
+            ))}
+            {q.choices.length < 6 && (
+              <button
+                type="button"
+                className="mb-2 h-7 rounded-md px-2 text-muted hover:bg-hover"
+                onClick={() => set(i, { choices: [...q.choices, ""] })}
+              >
+                + {t("addChoice")}
+              </button>
+            )}
+            <input
+              value={q.explanation ?? ""}
+              onChange={(e) => set(i, { explanation: e.target.value })}
+              placeholder={t("explanationOptional")}
+              aria-label={t("explanationOptional")}
+              className={input}
+            />
+          </fieldset>
+        );
+      })}
+      <button type="button" className={SECONDARY} onClick={() => setQuestions((list) => [...list, blankQuestion()])}>
+        <Plus size={15} />
+        {t("addQuestion")}
+      </button>
+
+      <div className="mt-8 flex items-center justify-end gap-2">
+        {tried && (!title.trim() || !clean) && <p className="mr-auto text-sm text-danger">{t("quizIncomplete")}</p>}
+        <button type="button" className="h-9 rounded-md px-4 hover:bg-hover" onClick={onDone}>
+          {t("cancel")}
+        </button>
+        <button className={PRIMARY}>{t("save")}</button>
+      </div>
+    </form>
+  );
+}
 
 function interval(due: Date, now: Date, lang: string): string {
   const min = Math.max(1, Math.round((due.getTime() - now.getTime()) / 60_000));
@@ -155,10 +401,13 @@ function DeckView({ pageId, onStart }: { pageId: string; onStart: (mode: Mode, c
   const [cards, setCards] = useState<CardRow[]>([]);
   const [front, setFront] = useState("");
   const [back, setBack] = useState("");
+  const [bulk, setBulk] = useState(false);
+  const [bulkText, setBulkText] = useState("");
+  const [editing, setEditing] = useState<{ id: string; front: string; back: string } | null>(null);
+  const frontRef = useRef<HTMLTextAreaElement>(null);
   const reload = useCallback(() => deckCards(pageId).then(setCards), [pageId]);
   useEffect(() => void reload(), [reload]);
   const due = cards.filter((c) => c.due <= Date.now()).length;
-  const field = "h-8 min-w-0 flex-1 rounded-md bg-hover px-2 placeholder:text-faint";
 
   return (
     <>
@@ -200,61 +449,156 @@ function DeckView({ pageId, onStart }: { pageId: string; onStart: (mode: Mode, c
 
       <SectionTitle>{t("allCards")}</SectionTitle>
       <form
-        className="mb-2 flex flex-wrap gap-2"
+        className="mb-2 rounded-lg p-2 shadow-[0_0_0_1px_var(--color-line)]"
         onSubmit={async (e) => {
           e.preventDefault();
-          if (!front.trim() || !back.trim()) return;
-          await addCard(pageId, front.trim(), back.trim());
-          setFront("");
-          setBack("");
+          if (bulk) {
+            const list = parseCardList(bulkText);
+            if (!list.length) return;
+            await addCards(pageId, list);
+            setBulkText("");
+            setBulk(false);
+          } else {
+            if (!front.trim() || !back.trim()) return;
+            await addCard(pageId, front.trim(), back.trim());
+            setFront("");
+            setBack("");
+            frontRef.current?.focus();
+          }
           await reload();
           void useStore.getState().refreshDue();
         }}
       >
-        <input
-          value={front}
-          onChange={(e) => setFront(e.target.value)}
-          placeholder={t("question")}
-          aria-label={t("question")}
-          className={field}
-        />
-        <input
-          value={back}
-          onChange={(e) => setBack(e.target.value)}
-          placeholder={t("answer")}
-          aria-label={t("answer")}
-          className={field}
-        />
-        <button className="h-8 rounded-md px-3 font-medium shadow-[0_0_0_1px_var(--color-line)] hover:bg-hover">
-          {t("addCard")}
-        </button>
-      </form>
-      {cards.map((c) => (
-        <div
-          key={c.id}
-          className="group grid grid-cols-[1fr_1fr_28px] items-start gap-3 py-2 shadow-[inset_0_-1px_0_var(--color-line)]"
-        >
-          <span className="whitespace-pre-wrap font-medium">{c.front}</span>
-          <span className="whitespace-pre-wrap text-muted">{c.back}</span>
-          {isExtraCard(c.id) ? (
-            <IconButton
-              label={t("delete")}
-              className="opacity-0 focus:opacity-100 group-hover:opacity-100 max-md:opacity-100"
-              onClick={async () => {
-                await deleteCard(c.id);
-                await reload();
-                void useStore.getState().refreshDue();
-              }}
-            >
-              <Trash2 size={14} />
-            </IconButton>
-          ) : (
-            <span title={t("fromNote")} className="pt-0.5 text-center text-xs text-faint">
-              ↗
-            </span>
-          )}
+        {bulk ? (
+          <>
+            <textarea
+              autoFocus
+              value={bulkText}
+              onChange={(e) => setBulkText(e.target.value)}
+              rows={6}
+              placeholder={t("bulkPlaceholder")}
+              aria-label={t("bulkImport")}
+              className={`${area} w-full`}
+            />
+            <p className="mt-1 text-xs text-muted">
+              {t("bulkHint")} · {parseCardList(bulkText).length} {t("cardsCount")}
+            </p>
+          </>
+        ) : (
+          <div className="grid gap-2 sm:grid-cols-2">
+            <textarea
+              ref={frontRef}
+              value={front}
+              onChange={(e) => setFront(e.target.value)}
+              onKeyDown={submitOnCtrlEnter}
+              rows={2}
+              placeholder={t("question")}
+              aria-label={t("question")}
+              className={area}
+            />
+            <textarea
+              value={back}
+              onChange={(e) => setBack(e.target.value)}
+              onKeyDown={submitOnCtrlEnter}
+              rows={2}
+              placeholder={t("answer")}
+              aria-label={t("answer")}
+              className={area}
+            />
+          </div>
+        )}
+        <div className="mt-2 flex items-center gap-2">
+          <button
+            type="button"
+            className="h-8 rounded-md px-2 text-muted hover:bg-hover"
+            onClick={() => setBulk(!bulk)}
+          >
+            {t(bulk ? "addOneCard" : "bulkImport")}
+          </button>
+          <span className="flex-1" />
+          <button
+            disabled={bulk ? parseCardList(bulkText).length === 0 : !front.trim() || !back.trim()}
+            className="h-8 rounded-md bg-accent px-3 font-medium text-white hover:brightness-95 disabled:opacity-40"
+          >
+            {t(bulk ? "addCards" : "addCard")}
+          </button>
         </div>
-      ))}
+      </form>
+      {cards.length === 0 && <p className="py-4 text-muted">{t("deckEmpty")}</p>}
+      {cards.map((c) =>
+        editing?.id === c.id ? (
+          <form
+            key={c.id}
+            className="grid gap-2 py-2 shadow-[inset_0_-1px_0_var(--color-line)] sm:grid-cols-2"
+            onSubmit={async (e) => {
+              e.preventDefault();
+              if (!editing.front.trim() || !editing.back.trim()) return;
+              await updateCard(c.id, editing.front.trim(), editing.back.trim());
+              setEditing(null);
+              await reload();
+            }}
+          >
+            <textarea
+              autoFocus
+              value={editing.front}
+              onChange={(e) => setEditing({ ...editing, front: e.target.value })}
+              onKeyDown={submitOnCtrlEnter}
+              rows={2}
+              aria-label={t("question")}
+              className={area}
+            />
+            <textarea
+              value={editing.back}
+              onChange={(e) => setEditing({ ...editing, back: e.target.value })}
+              onKeyDown={submitOnCtrlEnter}
+              rows={2}
+              aria-label={t("answer")}
+              className={area}
+            />
+            <div className="flex justify-end gap-2 sm:col-span-2">
+              <button type="button" className="h-8 rounded-md px-3 hover:bg-hover" onClick={() => setEditing(null)}>
+                {t("cancel")}
+              </button>
+              <button className="h-8 rounded-md bg-accent px-3 font-medium text-white hover:brightness-95">
+                {t("save")}
+              </button>
+            </div>
+          </form>
+        ) : (
+          <div
+            key={c.id}
+            className="group grid grid-cols-[1fr_1fr_auto] items-start gap-3 py-2 shadow-[inset_0_-1px_0_var(--color-line)]"
+          >
+            <span className="whitespace-pre-wrap font-medium">{c.front}</span>
+            <span className="whitespace-pre-wrap text-muted">{c.back}</span>
+            {isExtraCard(c.id) ? (
+              <span className="flex opacity-0 focus-within:opacity-100 group-hover:opacity-100 max-md:opacity-100">
+                <IconButton label={t("edit")} onClick={() => setEditing({ id: c.id, front: c.front, back: c.back })}>
+                  <Pencil size={14} />
+                </IconButton>
+                <IconButton
+                  label={t("delete")}
+                  onClick={async () => {
+                    await deleteCard(c.id);
+                    await reload();
+                    void useStore.getState().refreshDue();
+                  }}
+                >
+                  <Trash2 size={14} />
+                </IconButton>
+              </span>
+            ) : (
+              <button
+                title={t("fromNote")}
+                onClick={() => navigate({ view: "page", id: pageId })}
+                className="grid h-7 w-14 place-items-center rounded text-xs text-faint hover:bg-hover"
+              >
+                ↗
+              </button>
+            )}
+          </div>
+        ),
+      )}
     </>
   );
 }
@@ -263,7 +607,8 @@ type Screen =
   | { name: "home" }
   | { name: "deck"; pageId: string }
   | { name: "study"; mode: Mode; cards: CardRow[]; pageId?: string; questions?: Question[] }
-  | { name: "quiz"; quiz: Quiz };
+  | { name: "quiz"; quiz: Quiz }
+  | { name: "editQuiz"; quiz: Quiz | null };
 
 export function Review() {
   const t = useT();
@@ -272,6 +617,7 @@ export function Review() {
   const [decks, setDecks] = useState<Deck[]>([]);
   const [quizzes, setQuizzes] = useState<Quiz[]>([]);
   const [stats, setStats] = useState({ due: 0, total: 0 });
+  const [newDeck, setNewDeck] = useState(false);
 
   const reload = useCallback(() => {
     void listDecks().then(setDecks);
@@ -317,6 +663,17 @@ export function Review() {
               </button>
             </div>
 
+            <div className="mb-8 flex flex-wrap gap-2">
+              <button className={SECONDARY} onClick={() => setNewDeck(true)}>
+                <Plus size={15} />
+                {t("newDeck")}
+              </button>
+              <button className={SECONDARY} onClick={() => setScreen({ name: "editQuiz", quiz: null })}>
+                <Plus size={15} />
+                {t("newQuiz")}
+              </button>
+            </div>
+
             <SectionTitle>
               <Layers size={14} />
               {t("decks")}
@@ -348,12 +705,13 @@ export function Review() {
               })}
             </div>
 
+            <SectionTitle>
+              <BookOpenCheck size={14} />
+              {t("quizzes")}
+            </SectionTitle>
+            {quizzes.length === 0 && <p className="text-muted">{t("noQuizzes")}</p>}
             {quizzes.length > 0 && (
               <>
-                <SectionTitle>
-                  <BookOpenCheck size={14} />
-                  {t("quizzes")}
-                </SectionTitle>
                 {quizzes.map((quiz) => (
                   <div
                     key={quiz.id}
@@ -370,16 +728,21 @@ export function Review() {
                         {quiz.questions.length} {t("questionsCount")}
                       </span>
                     </button>
-                    <IconButton
-                      label={t("delete")}
-                      className="opacity-0 focus:opacity-100 group-hover:opacity-100 max-md:opacity-100"
-                      onClick={async () => {
-                        await deleteQuiz(quiz.id);
-                        reload();
-                      }}
-                    >
-                      <Trash2 size={14} />
-                    </IconButton>
+                    <span className="flex opacity-0 focus-within:opacity-100 group-hover:opacity-100 max-md:opacity-100">
+                      <IconButton label={t("edit")} onClick={() => setScreen({ name: "editQuiz", quiz })}>
+                        <Pencil size={14} />
+                      </IconButton>
+                      <IconButton
+                        label={t("delete")}
+                        onClick={async () => {
+                          if (!confirm(t("confirmDeleteQuiz"))) return;
+                          await deleteQuiz(quiz.id);
+                          reload();
+                        }}
+                      >
+                        <Trash2 size={14} />
+                      </IconButton>
+                    </span>
                   </div>
                 ))}
               </>
@@ -410,7 +773,17 @@ export function Review() {
         {screen.name === "study" && screen.mode === "write" && <WriteMode cards={screen.cards} onExit={back} />}
         {screen.name === "study" && screen.mode === "match" && <MatchMode cards={screen.cards} onExit={back} />}
         {screen.name === "quiz" && <ChoiceMode questions={screen.quiz.questions} onExit={back} />}
+        {screen.name === "editQuiz" && <QuizEditor quiz={screen.quiz} onDone={() => setScreen({ name: "home" })} />}
       </div>
+      {newDeck && (
+        <NewDeckDialog
+          onClose={() => setNewDeck(false)}
+          onPick={(pageId) => {
+            setNewDeck(false);
+            setScreen({ name: "deck", pageId });
+          }}
+        />
+      )}
     </>
   );
 }

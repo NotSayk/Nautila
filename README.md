@@ -30,7 +30,9 @@ Tes notes restent sur ton appareil : pas de compte, pas de télémétrie.
 - Une base peut être intégrée dans une page.
 
 **Études**
-- Flashcards à répétition espacée (FSRS) créées depuis les notes, rangées en paquets par page.
+- Flashcards à répétition espacée (FSRS), rangées en paquets par page : créées dans les notes (`/flashcard`)
+  ou directement dans Révisions, une par une ou en collant une liste (tableur, « question ; réponse »).
+- Quiz à choix multiples créés et modifiés dans Révisions (ou par le connecteur MCP).
 - Modes d'étude : cartes, QCM, écriture, association ; quiz à choix multiples.
 - Devoirs et examens avec rappels, emploi du temps, notes et moyennes pondérées.
 - Emploi du temps semaine par semaine, comme un agenda : import d'un fichier iCal (.ics) exporté d'ADE,
