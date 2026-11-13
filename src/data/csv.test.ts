@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { inferColumn, parseCsv } from "./csv";
+import { inferColumn, parseCsv, parseNotionRefs } from "./csv";
 
 describe("csv", () => {
   it("lit guillemets, virgules et retours à la ligne dans un champ", () => {
@@ -26,5 +26,28 @@ describe("csv", () => {
     const select = inferColumn("s", ["A", "B", "A"], "x");
     expect(select.convert("B")).toBe(select.prop.options![1].id);
     expect(inferColumn("n", ["1"], "x").convert("")).toBeNull();
+  });
+});
+
+describe("export Notion", () => {
+  it("lit une cellule de relation, titres avec virgules et parenthèses compris", () => {
+    expect(parseNotionRefs("Maths (Cours%20ab/Maths%20cd.md), Physique, chimie (Cours%20ab/Physique%20ef.md)")).toEqual(
+      [
+        { title: "Maths", target: "Cours%20ab/Maths%20cd.md" },
+        { title: "Physique, chimie", target: "Cours%20ab/Physique%20ef.md" },
+      ],
+    );
+    expect(parseNotionRefs("Algo (S1) (https://www.notion.so/Algo-S1-0123456789abcdef0123456789abcdef)")).toEqual([
+      { title: "Algo (S1)", target: "https://www.notion.so/Algo-S1-0123456789abcdef0123456789abcdef" },
+    ]);
+    expect(parseNotionRefs("Un texte (avec parenthèses)")).toBeNull();
+    expect(parseNotionRefs("simple")).toBeNull();
+  });
+
+  it("reconnaît une colonne à choix multiples", () => {
+    const { prop, convert } = inferColumn("Tags", ["exam, oral", "oral", "exam, tp", ""], "c");
+    expect(prop.type).toBe("multi_select");
+    expect(prop.options!.map((o) => o.name)).toEqual(["exam", "oral", "tp"]);
+    expect(convert("oral, tp")).toEqual(["c-1", "c-2"]);
   });
 });

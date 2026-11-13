@@ -37,10 +37,12 @@ Tes notes restent sur ton appareil : pas de compte, pas de télémétrie.
 
 **Données**
 - Tout est stocké sur l'appareil. Export Markdown, HTML et PDF par page.
-- Import Markdown, Word (.docx) et export Notion (.zip, avec images et bases de données) ;
-  sauvegarde et restauration complètes en JSON.
+- Import Markdown, Word (.docx) et export Notion (.zip : pages, images, bases de données, relations
+  entre bases, choix multiples et liens entre pages) ; sauvegarde et restauration complètes en JSON.
 - Synchronisation entre appareils via un serveur auto-hébergé, avec comptes.
-- Partage en direct : plusieurs comptes modifient la même page, avec curseurs nommés.
+- Partage en direct : plusieurs comptes modifient la même page, avec curseurs nommés. Le propriétaire
+  choisit qui peut modifier, qui ne fait que lire, et peut retirer un participant.
+- Onglets : plusieurs pages ouvertes côte à côte, rouvertes au lancement.
 - Lien public en lecture seule, consultable sans compte.
 - Connecteur MCP : Claude ou Codex lisent les notes et créent flashcards, quiz et fiches.
 - Interface en français et en anglais, thème clair et sombre.
@@ -48,11 +50,22 @@ Tes notes restent sur ton appareil : pas de compte, pas de télémétrie.
 ## Pas encore fait
 
 - Applications Android et iOS.
-- Application de bureau : elle se compile et démarre (testé sous Linux), mais n'a pas encore
-  d'installateur ni été essayée à la main sous Windows et macOS.
-- Onglets, et droits fins sur une page partagée (tout participant peut modifier).
+- Application de bureau : les installateurs sont construits automatiquement, mais ils ne sont pas
+  signés et n'ont pas été essayés à la main sous Windows et macOS.
 - Les rappels d'échéances ne se déclenchent que lorsque Nautila est ouvert.
-- Import Notion : les relations entre bases et les formules ne sont pas reprises.
+- Import Notion : l'export de Notion ne contient que le résultat des formules, pas leur expression ;
+  elles arrivent donc comme des valeurs fixes.
+
+## Télécharger l'application de bureau
+
+Les installateurs Windows (`.exe`, `.msi`), macOS (`.dmg`, Intel et Apple Silicon) et Linux (`.AppImage`,
+`.deb`, `.rpm`) sont sur la page [Releases](https://github.com/NotSayk/Nautila/releases). Ils ne sont pas
+signés : Windows demande « Informations complémentaires → Exécuter quand même », et macOS un clic droit
+sur l'application puis « Ouvrir » la première fois.
+
+Pour publier une nouvelle version : change le numéro dans `package.json`, `src-tauri/tauri.conf.json` et
+`src-tauri/Cargo.toml`, puis lance « Publier les applications de bureau » dans l'onglet Actions (ou pousse
+une étiquette `v…`).
 
 ## Développement
 
@@ -104,7 +117,8 @@ Pour sauvegarder le serveur, copie le volume `nautila-data`.
 Les deux passent par le serveur de synchronisation, donc demandent un compte.
 
 - **Partager une page** : bouton « Partager » en haut de la page, puis envoie le lien. Toute personne
-  connectée au même serveur qui possède le lien peut lire et modifier la page.
+  connectée au même serveur qui possède le lien peut rejoindre la page. Dans la même boîte, le
+  propriétaire règle ce que permet le lien (modifier ou lire seulement) et le droit de chaque participant.
 - **Connecteur MCP** : icône nuage, « Créer un jeton d'accès ». L'application affiche les réglages à
   copier pour Claude Code, Codex et claude.ai. Le jeton donne accès à tout le compte.
 

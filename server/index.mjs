@@ -19,7 +19,20 @@ const INVITE_CODE = process.env.INVITE_CODE ?? "";
 const MAX_USER_BYTES = Number(process.env.MAX_USER_MB ?? 1024) * 1024 * 1024;
 const MAX_BODY = 48 * 1024 * 1024;
 const PULL_BYTES = 4 * 1024 * 1024;
-const TABLES = new Set(["pages", "tasks", "cards", "files", "databases", "slots", "grades", "templates", "links", "page_files", "quizzes", "refs"]);
+const TABLES = new Set([
+  "pages",
+  "tasks",
+  "cards",
+  "files",
+  "databases",
+  "slots",
+  "grades",
+  "templates",
+  "links",
+  "page_files",
+  "quizzes",
+  "refs",
+]);
 
 const db = new DatabaseSync(DATA_FILE);
 db.exec(`
@@ -41,11 +54,17 @@ db.exec(`
   );
 `);
 
-try {
-  db.exec("ALTER TABLE shares ADD COLUMN public INTEGER NOT NULL DEFAULT 0");
-} catch {
-  /* colonne déjà présente */
-}
+for (const column of ["public INTEGER NOT NULL DEFAULT 0", "access TEXT NOT NULL DEFAULT 'edit'"])
+  try {
+    db.exec(`ALTER TABLE shares ADD COLUMN ${column}`);
+  } catch {
+    /* colonne déjà présente */
+  }
+// Participants d'une page partagée. `role` vide : le participant suit le réglage général de la page.
+db.exec(`CREATE TABLE IF NOT EXISTS share_members (
+  share_id TEXT NOT NULL, user_id INTEGER NOT NULL, role TEXT, joined_at INTEGER NOT NULL,
+  PRIMARY KEY (share_id, user_id)
+)`);
 
 const q = {
   user: db.prepare("SELECT * FROM users WHERE username = ?"),
@@ -61,10 +80,23 @@ const q = {
   setSeq: db.prepare("UPDATE users SET seq = ? WHERE id = ?"),
   since: db.prepare("SELECT tbl, id, data, at, seq FROM records WHERE user_id = ? AND seq > ? ORDER BY seq LIMIT 500"),
   share: db.prepare("SELECT * FROM shares WHERE id = ?"),
-  addShare: db.prepare("INSERT INTO shares (id, owner_id, title, ydoc, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)"),
+  addShare: db.prepare(
+    "INSERT INTO shares (id, owner_id, title, ydoc, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)",
+  ),
   saveShare: db.prepare("UPDATE shares SET ydoc = ?, updated_at = ? WHERE id = ?"),
   dropShare: db.prepare("DELETE FROM shares WHERE id = ?"),
   setPublic: db.prepare("UPDATE shares SET public = ? WHERE id = ?"),
+  setAccess: db.prepare("UPDATE shares SET access = ? WHERE id = ?"),
+  member: db.prepare("SELECT role FROM share_members WHERE share_id = ? AND user_id = ?"),
+  addMember: db.prepare(
+    "INSERT OR IGNORE INTO share_members (share_id, user_id, role, joined_at) VALUES (?, ?, NULL, ?)",
+  ),
+  setMember: db.prepare("UPDATE share_members SET role = ? WHERE share_id = ? AND user_id = ?"),
+  members: db.prepare(
+    `SELECT m.user_id AS id, u.username, m.role FROM share_members m JOIN users u ON u.id = m.user_id
+     WHERE m.share_id = ? ORDER BY m.joined_at`,
+  ),
+  dropMembers: db.prepare("DELETE FROM share_members WHERE share_id = ?"),
   fileOf: db.prepare("SELECT data FROM records WHERE user_id = ? AND tbl = 'files' AND id = ? AND data IS NOT NULL"),
   records: db.prepare("SELECT id, data FROM records WHERE user_id = ? AND tbl = ? AND data IS NOT NULL"),
   usage: db.prepare("SELECT COALESCE(SUM(LENGTH(data)), 0) AS bytes FROM records WHERE user_id = ?"),
@@ -96,7 +128,9 @@ function throttle(ip) {
 }
 
 function credentials(body) {
-  const username = String(body.username ?? "").trim().toLowerCase();
+  const username = String(body.username ?? "")
+    .trim()
+    .toLowerCase();
   const password = String(body.password ?? "");
   if (!/^[a-z0-9._-]{3,32}$/.test(username)) throw new HttpError(400, "invalid username");
   if (password.length < 8 || password.length > 200) throw new HttpError(400, "invalid password");
@@ -148,8 +182,10 @@ function sync(user, body) {
   try {
     let added = 0;
     for (const c of changes) {
-      if (!TABLES.has(c?.tbl) || typeof c.id !== "string" || !c.id || c.id.length > 300) throw new HttpError(400, "invalid change");
-      if (c.data !== null && (typeof c.data !== "object" || Array.isArray(c.data))) throw new HttpError(400, "invalid change");
+      if (!TABLES.has(c?.tbl) || typeof c.id !== "string" || !c.id || c.id.length > 300)
+        throw new HttpError(400, "invalid change");
+      if (c.data !== null && (typeof c.data !== "object" || Array.isArray(c.data)))
+        throw new HttpError(400, "invalid change");
       // Une horloge en avance ne doit pas verrouiller une ligne dans le futur.
       const at = Math.min(Number(c.at) || 0, now + 5 * 60_000);
       const existing = q.record.get(user.id, c.tbl, c.id);
@@ -195,12 +231,46 @@ function sync(user, body) {
   return { seq: cursor, changes: out, more };
 }
 
-
 // ---------- Pages partagées en direct ----------
 // Une page partagée est un document Yjs tenu en mémoire tant que quelqu'un
 // l'a ouverte. Toute personne connectée qui possède son identifiant (128 bits
-// aléatoires) peut la lire et la modifier.
+// aléatoires) peut la rejoindre ; le propriétaire décide qui peut modifier.
 const rooms = new Map();
+
+/**
+ * Droit d'un compte sur une page partagée : "owner", "edit", "view" ou "none" (retiré).
+ * Le réglage propre au participant l'emporte sur le réglage général de la page.
+ * Avec `join`, le compte est inscrit parmi les participants s'il n'y est pas déjà.
+ */
+function roleOf(share, user, join = false) {
+  if (share.owner_id === user.id) return "owner";
+  if (join) q.addMember.run(share.id, user.id, Date.now());
+  return q.member.get(share.id, user.id)?.role ?? share.access;
+}
+
+/** Vérifie le droit d'un compte ; refuse s'il a été retiré, ou s'il ne peut que lire quand `write` est demandé. */
+function shareAccess(id, user, { write = false, join = false } = {}) {
+  const share = q.share.get(id);
+  if (!share) throw new HttpError(404, "share not found");
+  const role = roleOf(share, user, join);
+  if (role === "none" || (write && role === "view")) throw new HttpError(403, "forbidden");
+  return { share, role };
+}
+
+/** Annonce à chaque participant connecté son droit actuel, et coupe ceux qui ont été retirés. */
+function refreshRoles(id) {
+  const room = rooms.get(id);
+  const share = q.share.get(id);
+  if (!room || !share) return;
+  for (const [conn, client] of room.clients) {
+    const role = roleOf(share, client.user);
+    client.res.write(`data: ${JSON.stringify({ type: "role", role })}\n\n`);
+    if (role === "none") {
+      room.clients.delete(conn);
+      client.res.end();
+    }
+  }
+}
 
 function openRoom(id) {
   let room = rooms.get(id);
@@ -224,17 +294,24 @@ function persistRoom(room) {
 
 function broadcast(room, except, event) {
   const frame = `data: ${JSON.stringify(event)}\n\n`;
-  for (const [conn, res] of room.clients) if (conn !== except) res.write(frame);
+  for (const [conn, client] of room.clients) if (conn !== except) client.res.write(frame);
 }
 
 function createShare(user, body) {
   const id = randomBytes(16).toString("base64url");
   const now = Date.now();
-  q.addShare.run(id, user.id, String(body.title ?? "").slice(0, 300), typeof body.ydoc === "string" ? body.ydoc : null, now, now);
+  q.addShare.run(
+    id,
+    user.id,
+    String(body.title ?? "").slice(0, 300),
+    typeof body.ydoc === "string" ? body.ydoc : null,
+    now,
+    now,
+  );
   return { id };
 }
 
-function shareStream(room, req, res) {
+function shareStream(room, req, res, user, role) {
   const conn = randomBytes(8).toString("hex");
   res.writeHead(200, {
     "Content-Type": "text/event-stream",
@@ -243,15 +320,15 @@ function shareStream(room, req, res) {
     "Access-Control-Allow-Origin": "*",
   });
   const state = Buffer.from(Y.encodeStateAsUpdate(room.doc)).toString("base64");
-  res.write(`data: ${JSON.stringify({ type: "sync", conn, update: state, peers: room.clients.size })}\n\n`);
-  room.clients.set(conn, res);
+  res.write(`data: ${JSON.stringify({ type: "sync", conn, update: state, peers: room.clients.size, role })}\n\n`);
+  room.clients.set(conn, { res, user });
   broadcast(room, conn, { type: "peers", peers: room.clients.size });
   const beat = setInterval(() => res.write(": ping\n\n"), 25_000);
   req.on("close", () => {
     clearInterval(beat);
     room.clients.delete(conn);
     broadcast(room, null, { type: "peers", peers: room.clients.size });
-    if (room.clients.size === 0) {
+    if (room.clients.size === 0 && rooms.get(room.id) === room) {
       persistRoom(room);
       rooms.delete(room.id);
     }
@@ -269,7 +346,10 @@ function shareUpdate(room, body) {
 
 // ---------- Connecteur MCP (Claude, Codex…) ----------
 // Protocole « Streamable HTTP » sans état : chaque requête JSON-RPC reçoit une réponse JSON.
-const uuid = () => randomBytes(16).toString("hex").replace(/^(.{8})(.{4})(.{4})(.{4})(.{12})$/, "$1-$2-$3-$4-$5");
+const uuid = () =>
+  randomBytes(16)
+    .toString("hex")
+    .replace(/^(.{8})(.{4})(.{4})(.{4})(.{12})$/, "$1-$2-$3-$4-$5");
 
 /** Écrit une ligne dans les données du compte ; les appareils la recevront à leur prochaine synchronisation. */
 function putRecord(user, tbl, id, data) {
@@ -291,8 +371,13 @@ function findPage(user, id) {
 const TOOLS = [
   {
     name: "search_notes",
-    description: "Cherche un texte dans le titre et le contenu de toutes les notes de l'utilisateur. Renvoie les pages correspondantes avec un extrait.",
-    inputSchema: { type: "object", properties: { query: str({ description: "Mots à chercher" }) }, required: ["query"] },
+    description:
+      "Cherche un texte dans le titre et le contenu de toutes les notes de l'utilisateur. Renvoie les pages correspondantes avec un extrait.",
+    inputSchema: {
+      type: "object",
+      properties: { query: str({ description: "Mots à chercher" }) },
+      required: ["query"],
+    },
     run(user, { query }) {
       const words = String(query).toLowerCase().split(/\s+/).filter(Boolean);
       return livePages(user)
@@ -310,9 +395,17 @@ const TOOLS = [
   },
   {
     name: "list_pages",
-    description: "Liste toutes les pages (semestres, matières, notes, bases de données) avec leur parent, pour comprendre l'organisation des cours.",
+    description:
+      "Liste toutes les pages (semestres, matières, notes, bases de données) avec leur parent, pour comprendre l'organisation des cours.",
     inputSchema: { type: "object", properties: {} },
-    run: (user) => livePages(user).map((p) => ({ id: p.id, title: p.title, kind: p.kind, parent_id: p.parent_id, updated_at: new Date(p.updated_at).toISOString() })),
+    run: (user) =>
+      livePages(user).map((p) => ({
+        id: p.id,
+        title: p.title,
+        kind: p.kind,
+        parent_id: p.parent_id,
+        updated_at: new Date(p.updated_at).toISOString(),
+      })),
   },
   {
     name: "read_page",
@@ -320,18 +413,31 @@ const TOOLS = [
     inputSchema: { type: "object", properties: { page_id: str() }, required: ["page_id"] },
     run(user, { page_id }) {
       const page = findPage(user, page_id);
-      const cards = rowsOf(user, "cards").filter((c) => c.page_id === page_id).map((c) => ({ front: c.front, back: c.back }));
-      return { id: page.id, title: page.title, kind: page.kind, text: page.body ?? page.import_md ?? "", flashcards: cards };
+      const cards = rowsOf(user, "cards")
+        .filter((c) => c.page_id === page_id)
+        .map((c) => ({ front: c.front, back: c.back }));
+      return {
+        id: page.id,
+        title: page.title,
+        kind: page.kind,
+        text: page.body ?? page.import_md ?? "",
+        flashcards: cards,
+      };
     },
   },
   {
     name: "create_flashcards",
-    description: "Ajoute des flashcards (question / réponse) au paquet d'une page. Elles apparaissent dans les révisions de l'application.",
+    description:
+      "Ajoute des flashcards (question / réponse) au paquet d'une page. Elles apparaissent dans les révisions de l'application.",
     inputSchema: {
       type: "object",
       properties: {
         page_id: str({ description: "Page (cours) à laquelle rattacher les cartes" }),
-        cards: { type: "array", minItems: 1, items: { type: "object", properties: { front: str(), back: str() }, required: ["front", "back"] } },
+        cards: {
+          type: "array",
+          minItems: 1,
+          items: { type: "object", properties: { front: str(), back: str() }, required: ["front", "back"] },
+        },
       },
       required: ["page_id", "cards"],
     },
@@ -339,7 +445,17 @@ const TOOLS = [
       findPage(user, page_id);
       const now = Date.now();
       const due = new Date(now).toISOString();
-      const fsrs = JSON.stringify({ due, stability: 0, difficulty: 0, elapsed_days: 0, scheduled_days: 0, reps: 0, lapses: 0, learning_steps: 0, state: 0 });
+      const fsrs = JSON.stringify({
+        due,
+        stability: 0,
+        difficulty: 0,
+        elapsed_days: 0,
+        scheduled_days: 0,
+        reps: 0,
+        lapses: 0,
+        learning_steps: 0,
+        state: 0,
+      });
       let created = 0;
       for (const c of Array.isArray(cards) ? cards : []) {
         const front = String(c?.front ?? "").trim();
@@ -386,16 +502,30 @@ const TOOLS = [
           answer: Number(x?.answer),
           explanation: x?.explanation ? String(x.explanation) : "",
         }))
-        .filter((x) => x.question && x.choices.length >= 2 && Number.isInteger(x.answer) && x.answer >= 0 && x.answer < x.choices.length);
+        .filter(
+          (x) =>
+            x.question &&
+            x.choices.length >= 2 &&
+            Number.isInteger(x.answer) &&
+            x.answer >= 0 &&
+            x.answer < x.choices.length,
+        );
       if (clean.length === 0) throw new HttpError(400, "Aucune question valide");
       const id = uuid();
-      putRecord(user, "quizzes", id, { id, page_id: page_id ?? null, title: String(title).slice(0, 200), questions: JSON.stringify(clean), created_at: Date.now() });
+      putRecord(user, "quizzes", id, {
+        id,
+        page_id: page_id ?? null,
+        title: String(title).slice(0, 200),
+        questions: JSON.stringify(clean),
+        created_at: Date.now(),
+      });
       return { id, questions: clean.length };
     },
   },
   {
     name: "create_page",
-    description: "Crée une nouvelle page de notes à partir de Markdown (fiche de révision, résumé…). Le contenu est mis en forme à la première ouverture dans l'application.",
+    description:
+      "Crée une nouvelle page de notes à partir de Markdown (fiche de révision, résumé…). Le contenu est mis en forme à la première ouverture dans l'application.",
     inputSchema: {
       type: "object",
       properties: { title: str(), markdown: str(), parent_id: str({ description: "Page parente, facultatif" }) },
@@ -406,9 +536,26 @@ const TOOLS = [
       const id = uuid();
       const now = Date.now();
       putRecord(user, "pages", id, {
-        id, parent_id: parent_id ?? null, kind: "note", title: String(title).slice(0, 300), icon: null, position: now,
-        ydoc: null, body: String(markdown), import_md: String(markdown), created_at: now, updated_at: now, deleted_at: null,
-        favorite: 0, full_width: 0, cover: null, locked: 0, font: "sans", small_text: 0, props: null, share_id: null,
+        id,
+        parent_id: parent_id ?? null,
+        kind: "note",
+        title: String(title).slice(0, 300),
+        icon: null,
+        position: now,
+        ydoc: null,
+        body: String(markdown),
+        import_md: String(markdown),
+        created_at: now,
+        updated_at: now,
+        deleted_at: null,
+        favorite: 0,
+        full_width: 0,
+        cover: null,
+        locked: 0,
+        font: "sans",
+        small_text: 0,
+        props: null,
+        share_id: null,
       });
       return { id };
     },
@@ -417,13 +564,26 @@ const TOOLS = [
     name: "list_tasks",
     description: "Liste les devoirs et examens avec leur échéance.",
     inputSchema: { type: "object", properties: {} },
-    run: (user) => rowsOf(user, "tasks").map((t) => ({ title: t.title, kind: t.kind, done: !!t.done, due: t.due_at ? new Date(t.due_at).toISOString().slice(0, 10) : null, course_id: t.course_id })),
+    run: (user) =>
+      rowsOf(user, "tasks").map((t) => ({
+        title: t.title,
+        kind: t.kind,
+        done: !!t.done,
+        due: t.due_at ? new Date(t.due_at).toISOString().slice(0, 10) : null,
+        course_id: t.course_id,
+      })),
   },
   {
     name: "list_files",
     description: "Liste les fichiers joints aux notes (images, PDF, audio).",
     inputSchema: { type: "object", properties: {} },
-    run: (user) => rowsOf(user, "files").map((f) => ({ id: f.id, name: f.name, mime: f.mime, bytes: Math.round((f.data.length * 3) / 4) })),
+    run: (user) =>
+      rowsOf(user, "files").map((f) => ({
+        id: f.id,
+        name: f.name,
+        mime: f.mime,
+        bytes: Math.round((f.data.length * 3) / 4),
+      })),
   },
   {
     name: "get_file",
@@ -435,7 +595,14 @@ const TOOLS = [
       if (file.data.length > 7_000_000) throw new HttpError(413, "Fichier trop volumineux pour être transmis");
       return file.mime.startsWith("image/")
         ? { content: [{ type: "image", data: file.data, mimeType: file.mime }] }
-        : { content: [{ type: "resource", resource: { uri: `nautila://file/${file.id}`, mimeType: file.mime, blob: file.data } }] };
+        : {
+            content: [
+              {
+                type: "resource",
+                resource: { uri: `nautila://file/${file.id}`, mimeType: file.mime, blob: file.data },
+              },
+            ],
+          };
     },
   },
 ];
@@ -451,7 +618,8 @@ function mcpMessage(user, msg) {
         protocolVersion: msg.params?.protocolVersion ?? "2025-06-18",
         capabilities: { tools: {} },
         serverInfo: { name: "nautila", version: "0.1.0" },
-        instructions: "Notes de cours, flashcards, quiz et devoirs de l'utilisateur dans Nautila. Lis les pages avant de créer des cartes ou des quiz à partir de leur contenu.",
+        instructions:
+          "Notes de cours, flashcards, quiz et devoirs de l'utilisateur dans Nautila. Lis les pages avant de créer des cartes ou des quiz à partir de leur contenu.",
       });
     case "ping":
       return reply({});
@@ -465,7 +633,10 @@ function mcpMessage(user, msg) {
         return reply(result?.content ? result : { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] });
       } catch (err) {
         if (!(err instanceof HttpError)) console.error(err);
-        return reply({ content: [{ type: "text", text: err instanceof HttpError ? err.message : "Erreur interne" }], isError: true });
+        return reply({
+          content: [{ type: "text", text: err instanceof HttpError ? err.message : "Erreur interne" }],
+          isError: true,
+        });
       }
     }
     default:
@@ -498,16 +669,28 @@ function authenticate(req) {
 }
 
 const MIME = {
-  ".html": "text/html; charset=utf-8", ".js": "text/javascript", ".mjs": "text/javascript", ".css": "text/css",
-  ".json": "application/json", ".webmanifest": "application/manifest+json", ".svg": "image/svg+xml",
-  ".png": "image/png", ".wasm": "application/wasm", ".woff2": "font/woff2", ".woff": "font/woff", ".ttf": "font/ttf",
+  ".html": "text/html; charset=utf-8",
+  ".js": "text/javascript",
+  ".mjs": "text/javascript",
+  ".css": "text/css",
+  ".json": "application/json",
+  ".webmanifest": "application/manifest+json",
+  ".svg": "image/svg+xml",
+  ".png": "image/png",
+  ".wasm": "application/wasm",
+  ".woff2": "font/woff2",
+  ".woff": "font/woff",
+  ".ttf": "font/ttf",
 };
 
 async function serveStatic(req, res) {
   const path = decodeURIComponent(new URL(req.url, "http://x").pathname);
   let file = normalize(join(STATIC_DIR, path));
   if (file !== STATIC_DIR && !file.startsWith(STATIC_DIR + sep)) throw new HttpError(403, "forbidden");
-  const found = await stat(file).then((s) => s.isFile(), () => false);
+  const found = await stat(file).then(
+    (s) => s.isFile(),
+    () => false,
+  );
   // Toute adresse inconnue renvoie l'application (elle gère ses propres routes).
   if (!found) file = join(STATIC_DIR, "index.html");
   const body = await readFile(file).catch(() => null);
@@ -531,7 +714,8 @@ const server = createServer(async (req, res) => {
   try {
     const path = new URL(req.url, "http://x").pathname;
     if (path === "/mcp" || path.startsWith("/mcp/")) {
-      if (req.method === "OPTIONS") return void res.writeHead(204, { ...cors, "Access-Control-Max-Age": "86400" }).end();
+      if (req.method === "OPTIONS")
+        return void res.writeHead(204, { ...cors, "Access-Control-Max-Age": "86400" }).end();
       if (req.method !== "POST") throw new HttpError(405, "method not allowed");
       // Le jeton vient de l'en-tête Authorization, ou de l'adresse (/mcp/<jeton>) pour les clients sans en-tête.
       const token = /^Bearer (.+)$/.exec(req.headers.authorization ?? "")?.[1] ?? path.slice(5);
@@ -567,8 +751,9 @@ const server = createServer(async (req, res) => {
     }
     const stream = /^\/api\/share\/([\w-]+)\/stream$/.exec(path);
     if (stream && req.method === "GET") {
-      authenticate(req);
-      return shareStream(openRoom(stream[1]), req, res);
+      const { user } = authenticate(req);
+      const { role } = shareAccess(stream[1], user, { join: true });
+      return shareStream(openRoom(stream[1]), req, res, user, role);
     }
     if (req.method !== "POST") throw new HttpError(405, "method not allowed");
 
@@ -586,7 +771,7 @@ const server = createServer(async (req, res) => {
     if (path === "/api/sync") return send(200, sync(user, await readJson(req)));
     if (path === "/api/token") return send(200, { token: issueToken(user.id) });
     if (path === "/api/share") return send(200, createShare(user, await readJson(req)));
-    const share = /^\/api\/share\/([\w-]+)(?:\/(update|awareness|delete|public))?$/.exec(path);
+    const share = /^\/api\/share\/([\w-]+)(?:\/(update|awareness|delete|public|access|member))?$/.exec(path);
     if (share) {
       const [, id, action] = share;
       if (action === "delete") {
@@ -595,9 +780,27 @@ const server = createServer(async (req, res) => {
         if (row.owner_id !== user.id) throw new HttpError(403, "forbidden");
         const room = rooms.get(id);
         if (room) broadcast(room, null, { type: "closed" });
+        if (room) for (const client of room.clients.values()) client.res.end();
         rooms.delete(id);
         q.dropShare.run(id);
+        q.dropMembers.run(id);
         return send(200, { ok: true });
+      }
+      if (action === "access" || action === "member") {
+        const row = q.share.get(id);
+        if (!row) throw new HttpError(404, "share not found");
+        if (row.owner_id !== user.id) throw new HttpError(403, "forbidden");
+        const body = await readJson(req);
+        if (action === "access") {
+          if (body.access !== "edit" && body.access !== "view") throw new HttpError(400, "invalid access");
+          q.setAccess.run(body.access, id);
+        } else {
+          // role : "edit", "view", "none" (retiré) ou null (suit le réglage général).
+          if (![null, "edit", "view", "none"].includes(body.role)) throw new HttpError(400, "invalid role");
+          q.setMember.run(body.role, id, Number(body.user));
+        }
+        refreshRoles(id);
+        return send(200, { access: q.share.get(id).access, members: q.members.all(id) });
       }
       if (action === "public") {
         const row = q.share.get(id);
@@ -607,6 +810,8 @@ const server = createServer(async (req, res) => {
         q.setPublic.run(enabled ? 1 : 0, id);
         return send(200, { public: enabled });
       }
+      // Lire ou modifier : le droit du compte est vérifié à chaque requête.
+      const { share: row, role } = shareAccess(id, user, { write: action === "update", join: !action });
       const room = openRoom(id);
       const body = await readJson(req);
       if (action === "update") return send(200, shareUpdate(room, body));
@@ -614,14 +819,23 @@ const server = createServer(async (req, res) => {
         if (typeof body.update === "string") broadcast(room, body.conn, { type: "awareness", update: body.update });
         return send(200, { ok: true });
       }
-      const row = q.share.get(id);
-      return send(200, { title: row.title, owner: row.owner_id === user.id, public: !!row.public, ydoc: Buffer.from(Y.encodeStateAsUpdate(room.doc)).toString("base64") });
+      return send(200, {
+        title: row.title,
+        owner: role === "owner",
+        role,
+        access: row.access,
+        public: !!row.public,
+        members: role === "owner" ? q.members.all(id) : undefined,
+        ydoc: Buffer.from(Y.encodeStateAsUpdate(room.doc)).toString("base64"),
+      });
     }
     throw new HttpError(404, "not found");
   } catch (err) {
     if (!(err instanceof HttpError)) console.error(err);
     if (res.headersSent) return void res.end();
-    send(err instanceof HttpError ? err.status : 500, { error: err instanceof HttpError ? err.message : "server error" });
+    send(err instanceof HttpError ? err.status : 500, {
+      error: err instanceof HttpError ? err.message : "server error",
+    });
   }
 });
 
@@ -632,4 +846,6 @@ for (const signal of ["SIGTERM", "SIGINT"])
     process.exit(0);
   });
 
-server.listen(PORT, () => console.log(`Nautila : serveur à l'écoute sur le port ${PORT} (inscriptions : ${REGISTRATION})`));
+server.listen(PORT, () =>
+  console.log(`Nautila : serveur à l'écoute sur le port ${PORT} (inscriptions : ${REGISTRATION})`),
+);

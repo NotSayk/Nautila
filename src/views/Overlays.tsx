@@ -12,6 +12,9 @@ const SHORTCUTS: [Key, [Key, string][]][] = [
       ["scNewPage", `${MOD} Alt N`],
       ["scSidebar", `${MOD} \\`],
       ["scTheme", `${MOD} Maj L`],
+      ["scNewTab", `${MOD} Alt T`],
+      ["scCloseTab", `${MOD} Alt W`],
+      ["scSwitchTab", `${MOD} Alt ← / →`],
       ["scHistory", "Alt ← / Alt →"],
       ["scHelp", `${MOD} /`],
     ],
@@ -110,6 +113,13 @@ export function useGlobalShortcuts() {
       else if (key === "l" && e.shiftKey) run(store.toggleDark);
       // Ctrl+N seul est réservé par les navigateurs (nouvelle fenêtre).
       else if (e.altKey && e.code === "KeyN") run(() => void store.newPage({}));
+      // Ctrl+T et Ctrl+W seuls appartiennent au navigateur : les onglets passent par Ctrl+Alt.
+      else if (e.altKey && (key === "t" || e.code === "KeyT")) run(() => store.openTab());
+      else if (e.altKey && (key === "w" || e.code === "KeyW")) run(() => store.closeTab(store.tab));
+      else if (e.altKey && (key === "arrowright" || key === "arrowleft") && store.tabs.length > 1)
+        run(() =>
+          store.selectTab((store.tab + (key === "arrowright" ? 1 : -1) + store.tabs.length) % store.tabs.length),
+        );
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);

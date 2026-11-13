@@ -36,19 +36,31 @@ import { extract } from "../data/extract";
 import { Comments } from "./Comments";
 import { resolveFileUrl, saveFile } from "../data/files";
 import { createPage, savePageContent } from "../data/pages";
+import { PAGE_LINK } from "../data/importer";
 import { pendingHtml, pendingMarkdown } from "../data/templates";
 import { useT } from "../i18n";
 import { useStore } from "../store";
 import { REMOTE_DOC_EVENT } from "../sync/engine";
-import { startShareSession } from "../sync/share";
+import { knownRole, startShareSession, type ShareRole } from "../sync/share";
 import { fromBase64, toBase64 } from "../util/base64";
 import { languageId, schema, type NautilaBlock, type NautilaEditor } from "./schema";
 
-/** Ramène les langages de code inconnus à du texte brut : le colorateur refuse les autres. */
-function knownLanguages<T extends { type: string; props?: any; children?: T[] }>(blocks: T[]): T[] {
+/**
+ * Met un contenu importé aux normes de l'éditeur : les langages de code inconnus deviennent
+ * du texte brut (le colorateur refuse les autres), et les liens vers une page importée
+ * deviennent des mentions de page.
+ */
+function knownLanguages<T extends { type: string; props?: any; content?: any; children?: T[] }>(blocks: T[]): T[] {
   return blocks.map((b) => ({
     ...b,
     props: b.type === "codeBlock" ? { ...b.props, language: languageId(b.props?.language ?? "") } : b.props,
+    content: Array.isArray(b.content)
+      ? b.content.map((item: any) =>
+          item?.type === "link" && typeof item.href === "string" && item.href.startsWith(PAGE_LINK)
+            ? { type: "pageLink", props: { pageId: item.href.slice(PAGE_LINK.length) } }
+            : item,
+        )
+      : b.content,
     children: b.children ? knownLanguages(b.children) : b.children,
   }));
 }
@@ -86,7 +98,7 @@ type Props = {
   saveOnMount?: boolean;
   /** Page partagée en direct : identifiant de la salle, et retour d'état pour l'en-tête. */
   shareId?: string | null;
-  onShareState?: (state: { online: boolean; peers: number }) => void;
+  onShareState?: (state: { online: boolean; peers: number; role: ShareRole }) => void;
   /** Intégré dans un autre contenu (bloc synchronisé) : sans marge ni zone de clic en bas. */
   embedded?: boolean;
   /** Affichage seul d'un contenu qui n'appartient pas à cet appareil : rien n'est enregistré. */
@@ -138,15 +150,20 @@ export const PageEditor = forwardRef<PageEditorHandle, Props>(function PageEdito
   shareStateRef.current = onShareState;
   useEffect(() => {
     if (!shareId || !connected) return;
-    const state = { online: false, peers: 0 };
-    const report = (patch: Partial<typeof state>) => shareStateRef.current?.(Object.assign(state, patch));
+    const state: { online: boolean; peers: number; role: ShareRole } = {
+      online: false,
+      peers: 0,
+      role: knownRole(shareId),
+    };
+    const report = (patch: Partial<typeof state>) => shareStateRef.current?.({ ...Object.assign(state, patch) });
     const stop = startShareSession(shareId, doc, awareness, {
       onPeers: (peers) => report({ peers }),
       onState: (online) => report({ online }),
+      onRole: (role) => report({ role }),
     });
     return () => {
       stop();
-      shareStateRef.current?.({ online: false, peers: 0 });
+      shareStateRef.current?.({ online: false, peers: 0, role: state.role });
     };
   }, [shareId, connected, doc, awareness]);
 

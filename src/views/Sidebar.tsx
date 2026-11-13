@@ -1,6 +1,7 @@
 import {
   Bell,
   X,
+  SquarePlus,
   Keyboard,
   Users,
   Cloud,
@@ -193,6 +194,7 @@ function PageRow({
               if (selection && (e.ctrlKey || e.metaKey || e.shiftKey)) selection.toggle(page.id);
               else navigate({ view: "page", id: page.id });
             }}
+            onAuxClick={(e) => e.button === 1 && useStore.getState().openTab({ view: "page", id: page.id })}
             onDoubleClick={() => setRenaming(true)}
             className="flex h-full min-w-0 flex-1 items-center gap-2 text-left"
           >
@@ -206,6 +208,11 @@ function PageRow({
             className={ROW_ACTION}
             trigger={<MoreHorizontal size={14} />}
             items={[
+              {
+                icon: <SquarePlus size={16} />,
+                label: t("openInTab"),
+                onClick: () => useStore.getState().openTab({ view: "page", id: page.id }),
+              },
               page.favorite
                 ? { icon: <StarOff size={16} />, label: t("removeFavorite"), onClick: () => setFavorite(page, false) }
                 : { icon: <Star size={16} />, label: t("addFavorite"), onClick: () => setFavorite(page, true) },

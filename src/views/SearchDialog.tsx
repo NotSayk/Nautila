@@ -79,7 +79,11 @@ export function SearchDialog() {
     } else if (e.key === "ArrowUp") {
       e.preventDefault();
       setIndex((i) => Math.max(i - 1, 0));
-    } else if (e.key === "Enter" && hits[index]) navigate({ view: "page", id: hits[index].id });
+    } else if (e.key === "Enter" && hits[index]) {
+      const route = { view: "page", id: hits[index].id } as const;
+      if (e.ctrlKey || e.metaKey) useStore.getState().openTab(route);
+      else navigate(route);
+    }
   };
 
   return (
@@ -125,7 +129,12 @@ export function SearchDialog() {
             <button
               key={h.id}
               onMouseEnter={() => setIndex(i)}
-              onClick={() => navigate({ view: "page", id: h.id })}
+              onClick={(e) =>
+                e.ctrlKey || e.metaKey
+                  ? useStore.getState().openTab({ view: "page", id: h.id })
+                  : navigate({ view: "page", id: h.id })
+              }
+              onAuxClick={(e) => e.button === 1 && useStore.getState().openTab({ view: "page", id: h.id })}
               className={`flex w-full items-start gap-2.5 rounded-md px-2.5 py-1.5 text-left ${i === index ? "bg-hover" : ""}`}
             >
               <span className="mt-0.5">

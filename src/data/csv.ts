@@ -41,6 +41,24 @@ const isoDate = (value: string): string | null => {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 };
 
+export type NotionRef = { title: string; target: string };
+
+/**
+ * Cellule d'une colonne « relation » d'un export Notion : des titres suivis chacun
+ * du chemin (ou de l'adresse) de la page liée, ex. `Maths (Cours%20ab12/Maths%20cd34.md), Physique (…)`.
+ * Renvoie null si la cellule n'a pas cette forme.
+ */
+export function parseNotionRefs(cell: string): NotionRef[] | null {
+  const refs: NotionRef[] = [];
+  const pattern = /\s*(.+?) \(((?:[^()]|\([^()]*\))*?(?:\.md|notion\.so\/[^()\s]*))\)(?:,|$)/gy;
+  let end = 0;
+  for (const match of cell.trim().matchAll(pattern)) {
+    refs.push({ title: match[1].trim(), target: match[2] });
+    end = match.index + match[0].length;
+  }
+  return refs.length > 0 && end === cell.trim().length ? refs : null;
+}
+
 /** Déduit le type d'une colonne de ses valeurs, et renvoie de quoi convertir chaque cellule. */
 export function inferColumn(
   name: string,
@@ -60,6 +78,31 @@ export function inferColumn(
   if (all((v) => /^https?:\/\//.test(v))) return { prop: { id, name, type: "url" }, convert: (c) => c.trim() || null };
   if (all((v) => isoDate(v) !== null))
     return { prop: { id, name, type: "date" }, convert: (c) => (c.trim() ? isoDate(c) : null) };
+
+  // Plusieurs étiquettes séparées par des virgules, qui reviennent d'une ligne à l'autre : choix multiples.
+  const parts = (v: string) =>
+    v
+      .split(",")
+      .map((p) => p.trim())
+      .filter(Boolean);
+  const tokens = filled.flatMap(parts);
+  const labels = [...new Set(tokens)];
+  if (
+    filled.some((v) => parts(v).length > 1) &&
+    labels.length <= 20 &&
+    labels.length < tokens.length &&
+    labels.every((v) => v.length <= 30)
+  ) {
+    const options = labels.map((value, i) => ({
+      id: `${id}-${i}`,
+      name: value,
+      color: OPTION_COLORS[i % OPTION_COLORS.length],
+    }));
+    return {
+      prop: { id, name, type: "multi_select", options },
+      convert: (c) => parts(c).flatMap((p) => options.find((o) => o.name === p)?.id ?? []),
+    };
+  }
 
   // Peu de valeurs différentes, et répétées : une liste de choix.
   const distinct = [...new Set(filled)];

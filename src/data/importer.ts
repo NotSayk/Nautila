@@ -1,10 +1,13 @@
 import { strFromU8, unzipSync } from "fflate";
 import { db } from "../db";
-import { inferColumn, parseCsv } from "./csv";
-import { createRow, newView, saveDatabase } from "./databases";
+import { inferColumn, parseCsv, parseNotionRefs, type NotionRef } from "./csv";
+import { createRow, getDatabase, getRowProps, newView, saveDatabase, setRowProps } from "./databases";
 import type { Value } from "./dbquery";
 import { saveFile } from "./files";
 import { createPage } from "./pages";
+
+/** Adresse d'un lien vers une autre page, dans un contenu importé ; l'éditeur en fait une mention de page. */
+export const PAGE_LINK = "https://page.nautila.invalid/";
 
 /** Préfixe d'un contenu HTML en attente de mise en forme (import Word). */
 export const HTML_MARK = "<!--html-->";
@@ -80,6 +83,27 @@ async function inlineImages(markdown: string, folder: string, entries: Map<strin
   return out + markdown.slice(last);
 }
 
+/** Identifiant Notion (32 chiffres hexadécimaux) à la fin d'un nom de fichier ou d'une adresse. */
+const notionId = (path: string) =>
+  /([0-9a-f]{32})(?:\.\w+)?(?:\?.*)?$/i.exec(path.replace(/-/g, ""))?.[1].toLowerCase();
+const decode = (text: string) => {
+  try {
+    return decodeURIComponent(text);
+  } catch {
+    return text;
+  }
+};
+
+/** Chemin d'un lien relatif, ramené à la racine de l'archive (`..` et `.` résolus). */
+function resolvePath(folder: string, relative: string) {
+  const out: string[] = [];
+  for (const part of [...(folder ? folder.split("/") : []), ...relative.split("/")]) {
+    if (part === "..") out.pop();
+    else if (part && part !== ".") out.push(part);
+  }
+  return out.join("/");
+}
+
 async function importZip(file: File): Promise<string> {
   const entries = allEntries(new Uint8Array(await file.arrayBuffer()));
   const depth = (p: string) => p.split("/").length;
@@ -89,6 +113,17 @@ async function importZip(file: File): Promise<string> {
   /** Dossier d'une base de données → ses lignes, par titre. */
   const databases = new Map<string, { id: string; rows: Map<string, string> }>();
   let first: string | undefined;
+  /** Identifiant Notion → page créée, quand les fichiers de l'export portent encore leur identifiant. */
+  const byNotionId = new Map<string, string>();
+  /** Pages importées depuis un fichier Markdown : leurs liens internes sont réécrits à la fin. */
+  const contents: { id: string; folder: string; content: string }[] = [];
+  /** Colonnes qui ressemblent à des relations : résolues une fois toutes les bases créées. */
+  const relations: { database: string; prop: string; cells: { row: string; refs: NotionRef[] }[] }[] = [];
+  const remember = (path: string, id: string) => {
+    byPath.set(path.replace(/\.(md|csv)$/i, "").replace(/_all$/, ""), id);
+    const key = notionId(path);
+    if (key) byNotionId.set(key, id);
+  };
 
   // Notion exporte chaque base en CSV et range les pages de ses lignes dans un dossier du même nom.
   const csvPaths = paths.filter((p) => /\.csv$/i.test(p));
@@ -103,7 +138,8 @@ async function importZip(file: File): Promise<string> {
     let id = database?.rows.get(title.trim());
     if (id) await setContent(id, content);
     else id = await importPage(title, content, database?.id ?? byPath.get(folder) ?? null);
-    byPath.set(path.replace(/\.md$/i, ""), id);
+    remember(path, id);
+    contents.push({ id, folder, content });
     first ??= id;
   };
 
@@ -116,13 +152,19 @@ async function importZip(file: File): Promise<string> {
     if (databases.has(base)) continue;
     const [header, ...lines] = parseCsv(strFromU8(entries.get(path)!));
     if (!header) continue;
-    const columns = header.slice(1).map((name, i) =>
-      inferColumn(
-        name || `Colonne ${i + 2}`,
-        lines.map((l) => l[i + 1] ?? ""),
-        `c${i}`,
-      ),
-    );
+    const columns = header.slice(1).map((name, i) => {
+      const cells = lines.map((l) => l[i + 1] ?? "");
+      const refs = cells.map((c) => (c.trim() ? parseNotionRefs(c) : []));
+      const column = inferColumn(name || `Colonne ${i + 2}`, cells, `c${i}`);
+      // Relation probable : le texte ne garde que les titres, en attendant de retrouver les lignes liées.
+      return refs.some((r) => r?.length) && refs.every((r) => r !== null)
+        ? {
+            prop: { id: `c${i}`, name: column.prop.name, type: "text" as const },
+            convert: (_: string, line: number): Value => refs[line]!.map((r) => r.title).join(", ") || null,
+            refs: refs as NotionRef[][],
+          }
+        : { ...column, refs: null };
+    });
     const page = await createPage({
       title: notionTitle(path),
       kind: "database",
@@ -130,19 +172,80 @@ async function importZip(file: File): Promise<string> {
     });
     await saveDatabase(page.id, { props: columns.map((c) => c.prop), views: [newView("table", "Table")] });
     const rows = new Map<string, string>();
-    for (const line of lines) {
+    const rowIds: string[] = [];
+    for (const [index, line] of lines.entries()) {
       const values: Record<string, Value> = {};
-      columns.forEach((c, i) => (values[c.prop.id] = c.convert(line[i + 1] ?? "")));
+      columns.forEach((c, i) => (values[c.prop.id] = c.convert(line[i + 1] ?? "", index)));
       const rowId = await createRow(page.id, values);
       await db().run("UPDATE pages SET title = ? WHERE id = ?", [line[0] ?? "", rowId]);
       rows.set((line[0] ?? "").trim(), rowId);
+      rowIds.push(rowId);
     }
+    for (const column of columns)
+      if (column.refs)
+        relations.push({
+          database: page.id,
+          prop: column.prop.id,
+          cells: column.refs.map((refs, i) => ({ row: rowIds[i], refs })),
+        });
     databases.set(base, { id: page.id, rows });
-    byPath.set(base, page.id);
+    remember(path, page.id);
     first ??= page.id;
   }
 
   for (const path of mdPaths.filter((p) => databaseFolders.has(dirname(p)))) await importMarkdown(path);
+
+  /** Page désignée par un lien de l'export : par identifiant Notion, sinon par chemin. */
+  const pageOf = (target: string, folder: string) => {
+    const key = notionId(target);
+    if (key && byNotionId.has(key)) return byNotionId.get(key);
+    if (/^[a-z][a-z0-9+.-]*:/i.test(target)) return undefined;
+    const clean = decode(target.split(/[?#]/)[0])
+      .replace(/\.(md|csv)$/i, "")
+      .replace(/_all$/, "");
+    return byPath.get(resolvePath(folder, clean)) ?? byPath.get(clean);
+  };
+
+  // Relations : chaque référence est rattachée à la ligne importée qu'elle désigne (à défaut, par son titre).
+  const rowDatabase = new Map<string, string>();
+  for (const d of databases.values()) for (const id of d.rows.values()) rowDatabase.set(id, d.id);
+  for (const relation of relations) {
+    const folder = dirname([...databases].find(([, d]) => d.id === relation.database)?.[0] ?? "");
+    const resolved = relation.cells.map(({ row, refs }) => ({
+      row,
+      ids: refs.flatMap((ref) => {
+        const direct = pageOf(ref.target, folder);
+        if (direct && rowDatabase.has(direct)) return [direct];
+        const byTitle = [...databases.values()].flatMap((d) => d.rows.get(ref.title) ?? []);
+        return byTitle.length === 1 ? byTitle : [];
+      }),
+    }));
+    // La base visée est celle de la majorité des lignes retrouvées ; les autres références sont écartées.
+    const counts = new Map<string, number>();
+    for (const { ids } of resolved)
+      for (const id of ids) counts.set(rowDatabase.get(id)!, (counts.get(rowDatabase.get(id)!) ?? 0) + 1);
+    const target = [...counts].sort((a, b) => b[1] - a[1])[0]?.[0];
+    const config = target && (await getDatabase(relation.database));
+    if (!config) continue;
+    await saveDatabase(relation.database, {
+      ...config,
+      props: config.props.map((p) => (p.id === relation.prop ? { ...p, type: "relation" as const, target } : p)),
+    });
+    for (const { row, ids } of resolved)
+      await setRowProps(row, {
+        ...(await getRowProps(row)),
+        [relation.prop]: ids.filter((id) => rowDatabase.get(id) === target),
+      });
+  }
+
+  // Liens d'une page vers une autre page de l'export : ils pointent désormais vers la page importée.
+  for (const { id, folder, content } of contents) {
+    const linked = content.replace(/(?<!!)\[([^\]]*)\]\(([^)\s]+)\)/g, (whole, text: string, target: string) => {
+      const page = pageOf(target, folder);
+      return page ? `[${text}](${PAGE_LINK}${page})` : whole;
+    });
+    if (linked !== content) await setContent(id, linked);
+  }
 
   if (!first) throw new Error("nothing to import");
   return first;

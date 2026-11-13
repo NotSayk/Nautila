@@ -37,10 +37,46 @@ const store = (key: string, value: string) => {
   }
 };
 
+const routeHash = (route: Route) =>
+  route.view === "page" || route.view === "join" || route.view === "view"
+    ? `/${route.view}/${route.id}`
+    : route.view === "home"
+      ? "/"
+      : `/${route.view}`;
+
+/** Onglets rouverts au lancement ; l'adresse courante l'emporte sur l'onglet actif mémorisé. */
+function restoreTabs(): { tabs: Route[]; tab: number } {
+  const current = parseHash();
+  try {
+    const saved = JSON.parse(stored("nautila.tabs") ?? "null") as { tabs: Route[]; tab: number } | null;
+    if (saved && Array.isArray(saved.tabs) && saved.tabs.length > 0) {
+      const tabs = saved.tabs.filter((r) => r && typeof r.view === "string");
+      const tab = Math.min(Math.max(0, saved.tab | 0), tabs.length - 1);
+      if (tabs.length === saved.tabs.length) {
+        if (location.hash.replace(/^#\/?/, "")) tabs[tab] = current;
+        return { tabs, tab };
+      }
+    }
+  } catch {
+    /* onglets illisibles : on repart d'un seul */
+  }
+  return { tabs: [current], tab: 0 };
+}
+const initial = restoreTabs();
+/** Mémorise les onglets ; les écrans de passage (invitation, page publique) ne sont pas rouverts. */
+const keepTabs = (tabs: Route[], tab: number) =>
+  store(
+    "nautila.tabs",
+    JSON.stringify({ tabs: tabs.map((r) => (r.view === "join" || r.view === "view" ? { view: "home" } : r)), tab }),
+  );
+
 const isDesktop = () => matchMedia("(min-width: 768px)").matches;
 
 type State = {
   route: Route;
+  /** Onglets ouverts ; `route` est toujours celui de l'onglet actif. */
+  tabs: Route[];
+  tab: number;
   pages: PageMeta[];
   dueCount: number;
   lang: Lang;
@@ -59,6 +95,9 @@ type State = {
   toast: { message: string; action?: { label: string; run: () => void } } | null;
   pomodoro: { mode: "focus" | "break"; endsAt: number | null; left: number };
   navigate: (route: Route) => void;
+  openTab: (route?: Route) => void;
+  selectTab: (index: number) => void;
+  closeTab: (index: number) => void;
   refreshPages: () => Promise<void>;
   refreshDue: () => Promise<void>;
   newPage: (input: { parentId?: string | null; kind?: PageKind }) => Promise<void>;
@@ -69,7 +108,9 @@ type State = {
 };
 
 export const useStore = create<State>((set, get) => ({
-  route: parseHash(),
+  route: initial.tabs[initial.tab],
+  tabs: initial.tabs,
+  tab: initial.tab,
   pages: [],
   dueCount: 0,
   lang:
@@ -92,14 +133,35 @@ export const useStore = create<State>((set, get) => ({
   sidebarOpen: isDesktop() && stored("nautila.sidebar") !== "0",
 
   navigate: (route) => {
-    location.hash =
-      route.view === "page" || route.view === "join" || route.view === "view"
-        ? `/${route.view}/${route.id}`
-        : route.view === "home"
-          ? "/"
-          : `/${route.view}`;
+    const tabs = get().tabs.map((r, i) => (i === get().tab ? route : r));
     // Sur mobile la barre latérale recouvre la page : on la referme.
-    set({ route, searchOpen: false, ...(isDesktop() ? {} : { sidebarOpen: false }) });
+    set({ route, tabs, searchOpen: false, ...(isDesktop() ? {} : { sidebarOpen: false }) });
+    keepTabs(tabs, get().tab);
+    location.hash = routeHash(route);
+  },
+  openTab: (route = { view: "home" }) => {
+    const tabs = [...get().tabs];
+    const tab = get().tab + 1;
+    tabs.splice(tab, 0, route);
+    set({ route, tabs, tab, searchOpen: false });
+    keepTabs(tabs, tab);
+    location.hash = routeHash(route);
+  },
+  selectTab: (index) => {
+    const route = get().tabs[index];
+    if (!route) return;
+    set({ route, tab: index });
+    keepTabs(get().tabs, index);
+    location.hash = routeHash(route);
+  },
+  closeTab: (index) => {
+    const { tabs, tab } = get();
+    if (tabs.length < 2 || !tabs[index]) return;
+    const next = tabs.filter((_, i) => i !== index);
+    const active = index < tab || tab === next.length ? tab - 1 : tab;
+    set({ route: next[active], tabs: next, tab: active });
+    keepTabs(next, active);
+    location.hash = routeHash(next[active]);
   },
   refreshPages: async () => set({ pages: await listPages() }),
   refreshDue: async () => set({ dueCount: (await cardStats()).due }),
@@ -124,4 +186,12 @@ export const useStore = create<State>((set, get) => ({
   },
 }));
 
-window.addEventListener("hashchange", () => useStore.setState({ route: parseHash() }));
+// Précédent / suivant du navigateur, ou adresse saisie à la main : l'onglet actif suit.
+window.addEventListener("hashchange", () => {
+  const route = parseHash();
+  const { tabs, tab, route: current } = useStore.getState();
+  if (routeHash(route) === routeHash(current)) return;
+  const next = tabs.map((r, i) => (i === tab ? route : r));
+  useStore.setState({ route, tabs: next });
+  keepTabs(next, tab);
+});

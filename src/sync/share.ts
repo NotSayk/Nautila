@@ -68,7 +68,23 @@ export async function leaveShare(pageId: string, shareId: string) {
   await updatePageMeta(pageId, { share_id: null });
 }
 
-type Handlers = { onPeers: (count: number) => void; onState: (online: boolean) => void };
+/** Droit de ce compte sur une page partagée ; "none" : le propriétaire l'a retiré. */
+export type ShareRole = "owner" | "edit" | "view" | "none";
+/** Dernier droit connu sur cet appareil, pour ne pas ouvrir en écriture une page qu'on ne peut que lire. */
+export function knownRole(shareId: string | null | undefined): ShareRole {
+  try {
+    const role = shareId && localStorage.getItem(`nautila.role.${shareId}`);
+    return role === "view" || role === "none" || role === "owner" ? role : "edit";
+  } catch {
+    return "edit";
+  }
+}
+
+type Handlers = {
+  onPeers: (count: number) => void;
+  onState: (online: boolean) => void;
+  onRole: (role: ShareRole) => void;
+};
 
 /**
  * Relie un document ouvert à sa salle sur le serveur : les modifications
@@ -80,8 +96,11 @@ export function startShareSession(shareId: string, doc: Y.Doc, awareness: Awaren
   let conn: string | null = null;
   let queue: Uint8Array[] = [];
   let sending = false;
+  let role = knownRole(shareId);
 
   const flush = async () => {
+    // En lecture seule rien ne part : le serveur refuserait la modification.
+    if (role === "view" || role === "none") return void (queue = []);
     if (sending || !conn || queue.length === 0) return;
     sending = true;
     const update = Y.mergeUpdates(queue);
@@ -111,7 +130,16 @@ export function startShareSession(shareId: string, doc: Y.Doc, awareness: Awaren
   doc.on("update", onUpdate);
   awareness.on("update", onAwareness);
 
-  const handle = (event: { type: string; conn?: string; update?: string; peers?: number }) => {
+  const handle = (event: { type: string; conn?: string; update?: string; peers?: number; role?: ShareRole }) => {
+    if (event.role) {
+      role = event.role;
+      try {
+        localStorage.setItem(`nautila.role.${shareId}`, role);
+      } catch {
+        /* non mémorisé, sans gravité */
+      }
+      handlers.onRole(role);
+    }
     if (event.type === "sync" && event.update && event.conn) {
       conn = event.conn;
       const remote = fromBase64(event.update);
@@ -136,6 +164,13 @@ export function startShareSession(shareId: string, doc: Y.Doc, awareness: Awaren
           headers: { Authorization: `Bearer ${token}` },
           signal: abort.signal,
         });
+        if (res.status === 403 || res.status === 404) {
+          // Accès retiré ou partage arrêté : inutile de réessayer.
+          handlers.onRole("none");
+          handlers.onState(false);
+          handlers.onPeers(0);
+          return;
+        }
         if (!res.ok || !res.body) throw new Error(String(res.status));
         const reader = res.body.pipeThrough(new TextDecoderStream()).getReader();
         let buffer = "";
@@ -156,6 +191,7 @@ export function startShareSession(shareId: string, doc: Y.Doc, awareness: Awaren
       conn = null;
       handlers.onState(false);
       handlers.onPeers(0);
+      if (role === "none") return;
       if (!abort.signal.aborted) await new Promise((r) => setTimeout(r, 3000));
     }
   })();
@@ -173,8 +209,27 @@ export function startShareSession(shareId: string, doc: Y.Doc, awareness: Awaren
   };
 }
 
+export type ShareMember = { id: number; username: string; role: "edit" | "view" | "none" | null };
+export type ShareInfo = {
+  owner: boolean;
+  role: ShareRole;
+  /** Droit de ceux qui rejoignent par le lien, sauf réglage particulier. */
+  access: "edit" | "view";
+  public: boolean;
+  /** Participants, visibles du propriétaire seulement. */
+  members?: ShareMember[];
+};
+
 /** Réglages d'une page partagée, vus par ce compte. */
-export const shareInfo = (shareId: string) => post<{ owner: boolean; public: boolean }>(`share/${shareId}`, {});
+export const shareInfo = (shareId: string) => post<ShareInfo>(`share/${shareId}`, {});
+
+/** Droit général de ceux qui rejoignent par le lien (propriétaire seulement). */
+export const setShareAccess = (shareId: string, access: "edit" | "view") =>
+  post<Pick<ShareInfo, "access" | "members">>(`share/${shareId}/access`, { access });
+
+/** Droit d'un participant ; `null` le remet sur le réglage général, "none" le retire. */
+export const setMemberRole = (shareId: string, user: number, role: ShareMember["role"]) =>
+  post<Pick<ShareInfo, "access" | "members">>(`share/${shareId}/member`, { user, role });
 
 /** Active ou coupe le lien public en lecture seule (propriétaire seulement). */
 export const setSharePublic = (shareId: string, enabled: boolean) =>

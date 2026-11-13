@@ -9,13 +9,18 @@ import {
   leaveShare,
   parseShareId,
   publicLink,
+  setMemberRole,
+  setShareAccess,
   setSharePublic,
   shareInfo,
   shareLink,
+  type ShareInfo,
+  type ShareRole,
 } from "../sync/share";
 import { PageEditor } from "../editor/PageEditor";
 
 const BUTTON = "h-8 rounded-md px-3 font-medium disabled:opacity-40";
+const SELECT = "h-8 shrink-0 rounded-md bg-hover px-2 text-sm";
 const FIELD = "h-8 w-full rounded-md bg-hover px-2 text-sm placeholder:text-faint";
 
 function Shell({ label, onClose, children }: { label: string; onClose: () => void; children: React.ReactNode }) {
@@ -41,9 +46,11 @@ export function ShareDialog({
   page,
   peers,
   online,
+  role,
   getDoc,
   onClose,
 }: {
+  role: ShareRole;
   page: PageMeta;
   peers: number;
   online: boolean;
@@ -58,7 +65,7 @@ export function ShareDialog({
   const [busy, setBusy] = useState(false);
   const [failed, setFailed] = useState(false);
 
-  const [info, setInfo] = useState<{ owner: boolean; public: boolean }>();
+  const [info, setInfo] = useState<ShareInfo>();
   const [viewLink, setViewLink] = useState("");
 
   useEffect(() => {
@@ -66,7 +73,8 @@ export function ShareDialog({
     void shareLink(page.share_id).then(setLink);
     void publicLink(page.share_id).then(setViewLink);
     void shareInfo(page.share_id).then(setInfo, () => undefined);
-  }, [page.share_id, connected]);
+    // Rechargé quand quelqu'un rejoint ou part, pour que la liste des participants reste à jour.
+  }, [page.share_id, connected, peers]);
 
   const run = async (action: () => Promise<unknown>) => {
     setBusy(true);
@@ -110,6 +118,69 @@ export function ShareDialog({
           <p className={`mt-2 text-[13px] ${online ? "text-muted" : "text-danger"}`}>
             {online ? `${t("shareOnline")} · ${peers} ${t("sharePeers")}` : t("shareOffline")}
           </p>
+          {!info?.owner && (role === "view" || role === "none") && (
+            <p className="mt-2 text-[13px] text-muted">{t(role === "none" ? "shareRemovedHint" : "readOnlyHint")}</p>
+          )}
+          {info?.owner && (
+            <div className="mt-4 pt-3 shadow-[inset_0_1px_0_var(--color-line)]">
+              <label className="flex items-center justify-between gap-3">
+                <span className="font-medium">{t("shareAccess")}</span>
+                <select
+                  className={SELECT}
+                  value={info.access}
+                  disabled={busy}
+                  onChange={(e) =>
+                    run(async () =>
+                      setInfo({
+                        ...info,
+                        ...(await setShareAccess(page.share_id!, e.target.value as "edit" | "view")),
+                      }),
+                    )
+                  }
+                >
+                  <option value="edit">{t("roleEdit")}</option>
+                  <option value="view">{t("roleView")}</option>
+                </select>
+              </label>
+              {(info.members ?? []).length > 0 && (
+                <ul className="mt-2 max-h-40 overflow-y-auto" aria-label={t("shareMembers")}>
+                  {info.members!.map((m) => (
+                    <li key={m.id} className="flex min-h-9 items-center justify-between gap-3">
+                      <span className={`truncate ${m.role === "none" ? "text-muted line-through" : ""}`}>
+                        {m.username}
+                      </span>
+                      <select
+                        aria-label={`${t("shareRoleOf")} ${m.username}`}
+                        className={SELECT}
+                        value={m.role ?? ""}
+                        disabled={busy}
+                        onChange={(e) =>
+                          run(async () =>
+                            setInfo({
+                              ...info,
+                              ...(await setMemberRole(
+                                page.share_id!,
+                                m.id,
+                                (e.target.value || null) as "edit" | "view" | "none" | null,
+                              )),
+                            }),
+                          )
+                        }
+                      >
+                        <option value="">{t("roleDefault")}</option>
+                        <option value="edit">{t("roleEdit")}</option>
+                        <option value="view">{t("roleView")}</option>
+                        <option value="none">{t("roleNone")}</option>
+                      </select>
+                    </li>
+                  ))}
+                </ul>
+              )}
+              {(info.members ?? []).length === 0 && (
+                <p className="mt-1 text-[13px] text-muted">{t("shareNoMembers")}</p>
+              )}
+            </div>
+          )}
           {info?.owner && (
             <div className="mt-4 pt-3 shadow-[inset_0_1px_0_var(--color-line)]">
               <p className="font-medium">{t("publicLink")}</p>
@@ -127,7 +198,7 @@ export function ShareDialog({
                 className={`${BUTTON} mt-2 shadow-[0_0_0_1px_var(--color-line)] hover:bg-hover`}
                 disabled={busy}
                 onClick={() =>
-                  run(async () => setInfo({ owner: true, ...(await setSharePublic(page.share_id!, !info.public)) }))
+                  run(async () => setInfo({ ...info, ...(await setSharePublic(page.share_id!, !info.public)) }))
                 }
               >
                 {t(info.public ? "publicDisable" : "publicEnable")}

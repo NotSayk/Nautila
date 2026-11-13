@@ -1,4 +1,5 @@
 import {
+  Eye,
   ALargeSmall,
   BookmarkPlus,
   CodeXml,
@@ -54,6 +55,7 @@ import { EmojiPicker } from "./EmojiPicker";
 import { moveToTrash } from "./actions";
 import { HistoryDialog } from "./HistoryDialog";
 import { ShareDialog } from "./ShareDialog";
+import { knownRole, type ShareRole } from "../sync/share";
 
 const COVER_COLORS = [
   "#ebeced",
@@ -119,7 +121,13 @@ export function PageView({ id }: { id: string }) {
   const [commentsOpen, setCommentsOpen] = useState(false);
   const [commentCount, setCommentCount] = useState(0);
   const [newTag, setNewTag] = useState("");
-  const [share, setShare] = useState({ online: false, peers: 0 });
+  const [share, setShare] = useState<{ online: boolean; peers: number; role: ShareRole }>(() => ({
+    online: false,
+    peers: 0,
+    role: knownRole(page?.share_id),
+  }));
+  /** Page partagée que ce compte ne peut que lire (ou dont il a été retiré). */
+  const readOnly = !!page?.share_id && (share.role === "view" || share.role === "none");
   const [custom, setCustom] = useState<CustomTemplate[]>([]);
   const [pristine, setPristine] = useState(false);
   const [title, setTitle] = useState(page?.title ?? "");
@@ -149,6 +157,17 @@ export function PageView({ id }: { id: string }) {
     };
   }, [id]);
 
+  // Le titre s'enregistre quand on quitte le champ ; changer d'onglet au clavier ferme la page
+  // sans le quitter, d'où cet enregistrement à la fermeture.
+  const pendingTitle = useRef<string | null>(null);
+  pendingTitle.current = page && title !== page.title ? title : null;
+  useEffect(
+    () => () => {
+      if (pendingTitle.current !== null)
+        void updatePageMeta(id, { title: pendingTitle.current }).then(() => useStore.getState().refreshPages());
+    },
+    [id],
+  );
   if (!page)
     return (
       <>
@@ -200,6 +219,12 @@ export function PageView({ id }: { id: string }) {
               <span className="mr-1 flex items-center gap-1 text-muted">
                 <Lock size={14} />
                 {t("locked")}
+              </span>
+            )}
+            {readOnly && (
+              <span className="mr-1 flex items-center gap-1 text-muted">
+                <Eye size={14} />
+                {t(share.role === "none" ? "shareRemoved" : "readOnly")}
               </span>
             )}
             {!isDatabase && (
@@ -518,7 +543,7 @@ export function PageView({ id }: { id: string }) {
               commentsOpen={commentsOpen}
               onCommentCount={setCommentCount}
               onCloseComments={() => setCommentsOpen(false)}
-              editable={!page.locked}
+              editable={!page.locked && !readOnly}
               onFirstEdit={() => setPristine(false)}
             />
           )}
@@ -577,6 +602,7 @@ export function PageView({ id }: { id: string }) {
             page={page}
             peers={share.peers}
             online={share.online}
+            role={share.role}
             getDoc={() => editor.current?.docState() ?? null}
             onClose={() => setShareOpen(false)}
           />

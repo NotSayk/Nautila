@@ -15,6 +15,7 @@ import { PageView } from "./views/PageView";
 import { Review } from "./views/Review";
 import { SearchDialog } from "./views/SearchDialog";
 import { Sidebar } from "./views/Sidebar";
+import { Tabs } from "./views/Tabs";
 import { Tasks } from "./views/Tasks";
 import { Trash } from "./views/Trash";
 
@@ -27,6 +28,7 @@ export function App() {
   const t = useT();
   const [status, setStatus] = useState<Status>({ state: "loading" });
   const route = useStore((s) => s.route);
+  const tab = useStore((s) => s.tab);
   const dark = useStore((s) => s.dark);
   const lang = useStore((s) => s.lang);
   const searchOpen = useStore((s) => s.searchOpen);
@@ -67,22 +69,25 @@ export function App() {
   return (
     <div className="flex h-full">
       {route.view !== "view" && <Sidebar />}
-      <main className="min-w-0 flex-1 overflow-y-auto">
-        {!status.persistent && (
-          <div className="bg-[#fbf3db] px-4 py-2 text-[#402c1b] dark:bg-[#564328] dark:text-white/85">
-            {t("notPersistent")}
-          </div>
-        )}
-        {route.view === "home" && <Dashboard />}
-        {route.view === "page" && <PageView key={route.id} id={route.id} />}
-        {route.view === "review" && <Review />}
-        {route.view === "tasks" && <Tasks />}
-        {route.view === "trash" && <Trash />}
-        {route.view === "timetable" && <Timetable />}
-        {route.view === "grades" && <Grades />}
-        {route.view === "join" && <JoinView id={route.id} />}
-        {route.view === "view" && <PublicView id={route.id} />}
-      </main>
+      <div className="flex min-w-0 flex-1 flex-col">
+        {route.view !== "view" && <Tabs />}
+        <main className="min-h-0 min-w-0 flex-1 overflow-y-auto">
+          {!status.persistent && (
+            <div className="bg-[#fbf3db] px-4 py-2 text-[#402c1b] dark:bg-[#564328] dark:text-white/85">
+              {t("notPersistent")}
+            </div>
+          )}
+          {route.view === "home" && <Dashboard />}
+          {route.view === "page" && <PageView key={`${tab}:${route.id}`} id={route.id} />}
+          {route.view === "review" && <Review />}
+          {route.view === "tasks" && <Tasks />}
+          {route.view === "trash" && <Trash />}
+          {route.view === "timetable" && <Timetable />}
+          {route.view === "grades" && <Grades />}
+          {route.view === "join" && <JoinView id={route.id} />}
+          {route.view === "view" && <PublicView id={route.id} />}
+        </main>
+      </div>
       {searchOpen && <SearchDialog />}
       {moveIds && <MoveDialog ids={moveIds} />}
       {syncOpen && <SyncDialog />}
