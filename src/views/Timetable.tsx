@@ -1,6 +1,7 @@
-import { Plus } from "lucide-react";
-import { useEffect, useState } from "react";
-import { deleteSlot, listSlots, saveSlot, toMinutes, type Slot } from "../data/school";
+import { CalendarPlus, Plus } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
+import { matchCourse, parseIcal, type IcalSlot } from "../data/ical";
+import { addSlots, deleteSlot, listSlots, saveSlot, toMinutes, type Slot } from "../data/school";
 import { OPTION_COLORS } from "../data/dbquery";
 import { useT } from "../i18n";
 import { useStore } from "../store";
@@ -141,12 +142,138 @@ function SlotDialog({ draft, onClose }: { draft: Draft; onClose: (changed: boole
 
 const pad = (n: number) => String(n).padStart(2, "0");
 
+const slotKey = (s: Pick<Slot, "title" | "day" | "start" | "end" | "room">) =>
+  JSON.stringify([s.title, s.day, s.start, s.end, s.room]);
+
+/**
+ * Choix des créneaux à importer depuis un fichier .ics. Les cours qui reviennent
+ * plusieurs fois sont cochés d'office ; les séances isolées (examens, rattrapages)
+ * ne le sont que si le fichier ne contient rien d'autre.
+ */
+function IcalDialog({
+  found,
+  existing,
+  onClose,
+}: {
+  found: IcalSlot[];
+  existing: Slot[];
+  onClose: (changed: boolean) => void;
+}) {
+  const t = useT();
+  const lang = useStore((s) => s.lang);
+  const courses = useStore((s) => s.pages).filter((p) => p.kind === "course");
+  const names = dayNames(lang, "short");
+  const present = new Set(existing.map(slotKey));
+  const fresh = found.filter((s) => !present.has(slotKey(s)));
+  const recurring = found.some((s) => s.count > 1);
+  const [picked, setPicked] = useState(
+    () => new Set(fresh.filter((s) => !recurring || s.count > 1).map(slotKey)),
+  );
+  useOverlay(() => onClose(false));
+  const toggle = (key: string) =>
+    setPicked((p) => {
+      const next = new Set(p);
+      if (!next.delete(key)) next.add(key);
+      return next;
+    });
+
+  return (
+    <div className="fixed inset-0 z-50 grid place-items-center bg-black/40 p-4" onClick={() => onClose(false)}>
+      <form
+        role="dialog"
+        aria-label={t("importIcal")}
+        className="flex max-h-[85vh] w-full max-w-lg flex-col gap-3 rounded-xl bg-pop p-4 shadow-pop"
+        onClick={(e) => e.stopPropagation()}
+        onSubmit={async (e) => {
+          e.preventDefault();
+          const chosen = fresh.filter((s) => picked.has(slotKey(s)));
+          if (!chosen.length) return;
+          await addSlots(
+            chosen.map(({ count: _, ...s }) => ({ ...s, course_id: matchCourse(s.title, courses) })),
+          );
+          onClose(true);
+        }}
+      >
+        <p className="font-semibold">{t("importIcal")}</p>
+        {found.length === 0 ? (
+          <p className="text-sm text-muted">{t("icalEmpty")}</p>
+        ) : (
+          <>
+            <p className="text-xs text-muted">{t("icalHint")}</p>
+            <div className="-mx-1 min-h-0 flex-1 overflow-y-auto">
+              {found.map((s) => {
+                const key = slotKey(s);
+                const already = present.has(key);
+                const course = courses.find((c) => c.id === matchCourse(s.title, courses));
+                return (
+                  <label
+                    key={key}
+                    className={`flex items-start gap-2 rounded-md px-1 py-1.5 text-sm ${already ? "opacity-50" : "hover:bg-hover"}`}
+                  >
+                    <input
+                      type="checkbox"
+                      className="mt-0.5"
+                      disabled={already}
+                      checked={already || picked.has(key)}
+                      onChange={() => toggle(key)}
+                    />
+                    <span className="min-w-0 flex-1">
+                      <span className="block truncate font-medium">{s.title}</span>
+                      <span className="block truncate text-xs text-muted">
+                        <span className="first-letter:uppercase">{names[s.day]}</span> {s.start} – {s.end}
+                        {s.room && ` · ${s.room}`}
+                        {course && ` · ${course.title}`}
+                      </span>
+                    </span>
+                    <span className="shrink-0 text-xs text-faint">
+                      {already
+                        ? t("icalPresent")
+                        : s.count === Infinity
+                          ? t("icalWeekly")
+                          : `${s.count} ${t(s.count > 1 ? "icalSessions" : "icalSession")}`}
+                    </span>
+                  </label>
+                );
+              })}
+            </div>
+          </>
+        )}
+        <div className="flex items-center gap-2 pt-1">
+          {fresh.length > 0 && (
+            <button
+              type="button"
+              className="h-8 rounded-md px-2 text-muted hover:bg-hover"
+              onClick={() => setPicked(picked.size === fresh.length ? new Set() : new Set(fresh.map(slotKey)))}
+            >
+              {t(picked.size === fresh.length ? "selectNone" : "selectAll")}
+            </button>
+          )}
+          <span className="flex-1" />
+          <button type="button" className="h-8 rounded-md px-3 hover:bg-hover" onClick={() => onClose(false)}>
+            {t("cancel")}
+          </button>
+          {fresh.length > 0 && (
+            <button
+              disabled={picked.size === 0}
+              className="h-8 rounded-md bg-accent px-3 font-medium text-white hover:brightness-95 disabled:opacity-40"
+            >
+              {t("icalAdd")} ({picked.size})
+            </button>
+          )}
+        </div>
+      </form>
+    </div>
+  );
+}
+
 export function Timetable() {
   const t = useT();
   const lang = useStore((s) => s.lang);
   const courses = useStore((s) => s.pages).filter((p) => p.kind === "course");
   const [slots, setSlots] = useState<Slot[]>([]);
   const [draft, setDraft] = useState<Draft | null>(null);
+  const [ical, setIcal] = useState<IcalSlot[] | null>(null);
+  const icalInput = useRef<HTMLInputElement>(null);
 
   const reload = () => listSlots().then(setSlots);
   useEffect(() => void reload(), []);
@@ -170,13 +297,35 @@ export function Timetable() {
     <View
       title={t("timetable")}
       right={
-        <button
-          onClick={() => setDraft(blank(today < days ? today : 0, 8))}
-          className="flex h-7 items-center gap-1 rounded-md px-2 text-muted hover:bg-hover"
-        >
-          <Plus size={15} />
-          {t("addSlot")}
-        </button>
+        <>
+          <button
+            onClick={() => icalInput.current?.click()}
+            aria-label={t("importIcal")}
+            title={t("importIcal")}
+            className="flex h-7 items-center gap-1 rounded-md px-2 text-muted hover:bg-hover"
+          >
+            <CalendarPlus size={15} />
+            <span className="hidden sm:inline">{t("importIcal")}</span>
+          </button>
+          <input
+            ref={icalInput}
+            type="file"
+            accept=".ics,.ical,.ifb,.icalendar,text/calendar"
+            hidden
+            onChange={async (e) => {
+              const file = e.target.files?.[0];
+              e.target.value = "";
+              if (file) setIcal(parseIcal(await file.text()));
+            }}
+          />
+          <button
+            onClick={() => setDraft(blank(today < days ? today : 0, 8))}
+            className="flex h-7 items-center gap-1 rounded-md px-2 text-muted hover:bg-hover"
+          >
+            <Plus size={15} />
+            {t("addSlot")}
+          </button>
+        </>
       }
     >
       <div className="overflow-x-auto">
@@ -240,6 +389,16 @@ export function Timetable() {
           ))}
         </div>
       </div>
+      {ical && (
+        <IcalDialog
+          found={ical}
+          existing={slots}
+          onClose={(changed) => {
+            setIcal(null);
+            if (changed) void reload();
+          }}
+        />
+      )}
       {draft && (
         <SlotDialog
           draft={draft}

@@ -33,6 +33,8 @@ Tes notes restent sur ton appareil : pas de compte, pas de télémétrie.
 - Flashcards à répétition espacée (FSRS) créées depuis les notes, rangées en paquets par page.
 - Modes d'étude : cartes, QCM, écriture, association ; quiz à choix multiples.
 - Devoirs et examens avec rappels, emploi du temps, notes et moyennes pondérées.
+- Import de l'emploi du temps depuis un fichier iCal (.ics) exporté d'ADE, HyperPlanning, Celcat ou d'un
+  agenda : les cours réguliers deviennent des créneaux de la semaine type, rattachés à leur matière.
 - Minuteur Pomodoro, tableau de bord du jour.
 
 **Données**
