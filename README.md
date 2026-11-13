@@ -44,7 +44,8 @@ Tes notes restent sur ton appareil : pas de compte, pas de télémétrie.
   entre bases, choix multiples et liens entre pages) ; sauvegarde et restauration complètes en JSON.
 - Synchronisation entre appareils via un serveur auto-hébergé, avec comptes.
 - Partage en direct : plusieurs comptes modifient la même page, avec curseurs nommés. Le propriétaire
-  choisit qui peut modifier, qui ne fait que lire, et peut retirer un participant.
+  choisit qui peut modifier, qui ne fait que lire, et peut retirer un participant. Une page partagée se
+  met à jour même fermée (au lancement, à la reconnexion), et ses images et fichiers sont visibles de tous.
 - Onglets : plusieurs pages ouvertes côte à côte, rouvertes au lancement.
 - Lien public en lecture seule, consultable sans compte.
 - Connecteur MCP : Claude ou Codex lisent les notes et créent flashcards, quiz et fiches.

@@ -1,5 +1,6 @@
+import { X } from "lucide-react";
 import { useEffect, useState } from "react";
-import { initDb } from "./db";
+import { initDb, isTauri } from "./db";
 import { useT } from "./i18n";
 import { useStore } from "./store";
 import { Dashboard } from "./views/Dashboard";
@@ -23,6 +24,63 @@ type Status = { state: "loading" } | { state: "ready"; persistent: boolean } | {
 
 // Une seule ouverture de la base, même si React monte le composant deux fois.
 let opening: ReturnType<typeof initDb> | undefined;
+
+const CLOUD_HINT = "nautila.cloudHint";
+
+/**
+ * Version navigateur servie par un serveur Nautila, sans compte connecté : les notes ne
+ * vivent que dans ce navigateur. Un bandeau propose de se connecter pour les mettre dans le cloud.
+ */
+function CloudHint() {
+  const t = useT();
+  const off = useStore((s) => s.sync.status === "off");
+  const [server, setServer] = useState(false);
+  const [hidden, setHidden] = useState(() => {
+    try {
+      return localStorage.getItem(CLOUD_HINT) === "hidden";
+    } catch {
+      return false;
+    }
+  });
+  useEffect(() => {
+    if (isTauri() || !off || hidden) return;
+    let live = true;
+    fetch(`${location.origin}/api/health`)
+      .then((res) => (res.ok ? res.json() : null))
+      .then((body) => live && setServer(body?.ok === true))
+      .catch(() => undefined);
+    return () => {
+      live = false;
+    };
+  }, [off, hidden]);
+  if (!server || !off || hidden) return null;
+  return (
+    <div className="flex items-center gap-3 bg-panel px-4 py-2 shadow-[inset_0_-1px_0_var(--color-line)]">
+      <p className="min-w-0 flex-1 text-muted">{t("cloudHint")}</p>
+      <button
+        className="h-7 shrink-0 rounded-md bg-accent px-3 font-medium text-white hover:brightness-95"
+        onClick={() => useStore.setState({ syncOpen: true })}
+      >
+        {t("signIn")}
+      </button>
+      <button
+        aria-label={t("close")}
+        title={t("close")}
+        className="grid size-7 shrink-0 place-items-center rounded-md text-muted hover:bg-hover"
+        onClick={() => {
+          setHidden(true);
+          try {
+            localStorage.setItem(CLOUD_HINT, "hidden");
+          } catch {
+            /* le bandeau reviendra au prochain lancement */
+          }
+        }}
+      >
+        <X size={15} />
+      </button>
+    </div>
+  );
+}
 
 export function App() {
   const t = useT();
@@ -71,6 +129,7 @@ export function App() {
       {route.view !== "view" && <Sidebar />}
       <div className="flex min-w-0 flex-1 flex-col">
         {route.view !== "view" && <Tabs />}
+        {route.view !== "view" && <CloudHint />}
         <main className="min-h-0 min-w-0 flex-1 overflow-y-auto">
           {!status.persistent && (
             <div className="bg-[#fbf3db] px-4 py-2 text-[#402c1b] dark:bg-[#564328] dark:text-white/85">

@@ -220,6 +220,13 @@ async function cycle() {
       await db().run("UPDATE sync_state SET seq = ?, last_sync = ?", [seq, Date.now()]);
       if (!res.more && changes.length === pending.length && pending.length < PUSH_ROWS) break;
     }
+    // Pages partagées : les modifications des autres participants arrivent même page fermée.
+    try {
+      const { syncSharedPages } = await import("./share");
+      if (await syncSharedPages()) received = true;
+    } catch (err) {
+      console.warn("Pages partagées non synchronisées :", err);
+    }
     if (received) {
       await useStore.getState().refreshPages();
       await useStore.getState().refreshDue();

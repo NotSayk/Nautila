@@ -8,7 +8,7 @@ import * as Y from "yjs";
 import { db } from "../db";
 import { createPage, updatePageMeta } from "../data/pages";
 import { fromBase64, toBase64 } from "../util/base64";
-import { getSyncState, SyncError } from "./engine";
+import { getSyncState, REMOTE_DOC_EVENT, SyncError } from "./engine";
 
 const REMOTE = "share-remote";
 
@@ -80,6 +80,89 @@ export function knownRole(shareId: string | null | undefined): ShareRole {
   }
 }
 
+function rememberRole(shareId: string, role: ShareRole) {
+  try {
+    localStorage.setItem(`nautila.role.${shareId}`, role);
+  } catch {
+    /* non mémorisé, sans gravité */
+  }
+}
+
+/** Empreinte courte d'un document, pour savoir s'il a changé depuis le dernier envoi. */
+function fingerprint(text: string): string {
+  let h = 2166136261;
+  for (let i = 0; i < text.length; i++) h = Math.imul(h ^ text.charCodeAt(i), 16777619);
+  return `${text.length}:${h >>> 0}`;
+}
+const pushedKey = (shareId: string) => `nautila.shared.${shareId}`;
+function lastPushed(shareId: string): string | null {
+  try {
+    return localStorage.getItem(pushedKey(shareId));
+  } catch {
+    return null;
+  }
+}
+function markPushed(shareId: string, ydoc: string) {
+  try {
+    localStorage.setItem(pushedKey(shareId), fingerprint(ydoc));
+  } catch {
+    /* le document sera simplement renvoyé au prochain passage */
+  }
+}
+
+type RemoteShare = { id: string; role: ShareRole | "gone"; update?: string; sv?: string };
+
+/**
+ * Met à jour les pages partagées de cet appareil sans qu'elles soient ouvertes :
+ * récupère les modifications des autres participants, et envoie celles faites ici
+ * hors connexion ou page fermée. Renvoie vrai si une page a changé.
+ */
+export async function syncSharedPages(): Promise<boolean> {
+  const pages = await db().all<{ id: string; share_id: string; ydoc: string | null }>(
+    "SELECT id, share_id, ydoc FROM pages WHERE share_id IS NOT NULL AND deleted_at IS NULL",
+  );
+  if (pages.length === 0) return false;
+  const { shares } = await post<{ shares: RemoteShare[] }>("shares/state", {
+    shares: pages.map((p) => ({
+      id: p.share_id,
+      sv: p.ydoc ? toBase64(Y.encodeStateVectorFromUpdate(fromBase64(p.ydoc))) : "",
+    })),
+  });
+  const byId = new Map(shares.map((s) => [s.id, s]));
+  let changed = false;
+
+  for (const page of pages) {
+    const remote = byId.get(page.share_id);
+    if (!remote) continue;
+    const role: ShareRole = remote.role === "gone" ? "none" : remote.role;
+    rememberRole(page.share_id, role);
+    if (role === "none" || !remote.update) continue;
+
+    const doc = new Y.Doc();
+    if (page.ydoc) Y.applyUpdate(doc, fromBase64(page.ydoc));
+    let touched = false;
+    doc.on("update", () => (touched = true));
+    Y.applyUpdate(doc, fromBase64(remote.update), REMOTE);
+    let ydoc = page.ydoc;
+    if (touched || !ydoc) {
+      ydoc = toBase64(Y.encodeStateAsUpdate(doc));
+      // Enregistré comme une modification locale : les autres appareils du compte la recevront aussi.
+      await db().run("UPDATE pages SET ydoc = ? WHERE id = ?", [ydoc, page.id]);
+      window.dispatchEvent(new CustomEvent(REMOTE_DOC_EVENT, { detail: { id: page.id, ydoc: remote.update } }));
+      changed = true;
+    }
+
+    // Ce que cet appareil a écrit et que le serveur n'a pas encore (page modifiée hors du partage en direct).
+    if ((role === "owner" || role === "edit") && remote.sv && lastPushed(page.share_id) !== fingerprint(ydoc)) {
+      const missing = Y.encodeStateAsUpdate(doc, fromBase64(remote.sv));
+      await post(`share/${page.share_id}/update`, { update: toBase64(missing) });
+      markPushed(page.share_id, ydoc);
+    }
+    doc.destroy();
+  }
+  return changed;
+}
+
 type Handlers = {
   onPeers: (count: number) => void;
   onState: (online: boolean) => void;
@@ -133,11 +216,7 @@ export function startShareSession(shareId: string, doc: Y.Doc, awareness: Awaren
   const handle = (event: { type: string; conn?: string; update?: string; peers?: number; role?: ShareRole }) => {
     if (event.role) {
       role = event.role;
-      try {
-        localStorage.setItem(`nautila.role.${shareId}`, role);
-      } catch {
-        /* non mémorisé, sans gravité */
-      }
+      rememberRole(shareId, role);
       handlers.onRole(role);
     }
     if (event.type === "sync" && event.update && event.conn) {

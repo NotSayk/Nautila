@@ -99,6 +99,11 @@ const q = {
   ),
   dropMembers: db.prepare("DELETE FROM share_members WHERE share_id = ?"),
   fileOf: db.prepare("SELECT data FROM records WHERE user_id = ? AND tbl = 'files' AND id = ? AND data IS NOT NULL"),
+  // Fichier d'une page partagée : il appartient au propriétaire ou à l'un des participants qui l'a ajouté.
+  sharedFile: db.prepare(
+    `SELECT data FROM records WHERE tbl = 'files' AND id = ? AND data IS NOT NULL AND (user_id = ? OR user_id IN
+       (SELECT user_id FROM share_members WHERE share_id = ? AND (role IS NULL OR role != 'none'))) LIMIT 1`,
+  ),
   records: db.prepare("SELECT id, data FROM records WHERE user_id = ? AND tbl = ? AND data IS NOT NULL"),
   usage: db.prepare("SELECT COALESCE(SUM(LENGTH(data)), 0) AS bytes FROM records WHERE user_id = ?"),
 };
@@ -334,6 +339,47 @@ function shareStream(room, req, res, user, role) {
       rooms.delete(room.id);
     }
   });
+}
+
+/** Document d'une page partagée : celui de la salle ouverte, sinon la dernière version enregistrée. */
+function shareDoc(share) {
+  const room = rooms.get(share.id);
+  if (room) return room.doc;
+  const doc = new Y.Doc();
+  if (share.ydoc) Y.applyUpdate(doc, b64(share.ydoc));
+  return doc;
+}
+
+/**
+ * État des pages partagées d'un appareil, pour les mettre à jour sans les ouvrir :
+ * pour chacune, ce qui manque à l'appareil (d'après son vecteur d'état) et le vecteur
+ * d'état du serveur, qui lui permet d'envoyer en retour ce que le serveur n'a pas.
+ */
+function sharesState(user, body) {
+  const list = Array.isArray(body.shares) ? body.shares.slice(0, 500) : [];
+  return {
+    shares: list.map(({ id, sv }) => {
+      const share = typeof id === "string" ? q.share.get(id) : null;
+      if (!share) return { id, role: "gone" };
+      const role = roleOf(share, user);
+      if (role === "none") return { id, role };
+      const doc = shareDoc(share);
+      let vector;
+      try {
+        vector = typeof sv === "string" && sv ? b64(sv) : undefined;
+        if (vector) Y.decodeStateVector(vector);
+      } catch {
+        vector = undefined;
+      }
+      const update = Y.encodeStateAsUpdate(doc, vector);
+      return {
+        id,
+        role,
+        update: Buffer.from(update).toString("base64"),
+        sv: Buffer.from(Y.encodeStateVector(doc)).toString("base64"),
+      };
+    }),
+  };
 }
 
 function shareUpdate(room, body) {
@@ -750,6 +796,18 @@ const server = createServer(async (req, res) => {
       res.writeHead(200, { "Content-Type": file.mime, "Cache-Control": "private, max-age=3600", ...cors });
       return void res.end(Buffer.from(file.data, "base64"));
     }
+    // Fichier d'une page partagée, pour ses participants (il est dans le compte de celui qui l'a ajouté).
+    const sharedFile = /^\/api\/share\/([\w-]+)\/file\/([\w-]+)$/.exec(path);
+    if (sharedFile && req.method === "GET") {
+      const { user } = authenticate(req);
+      const { share: row } = shareAccess(sharedFile[1], user);
+      if (!shareDoc(row).getXmlFragment("doc").toString().includes(sharedFile[2])) throw new HttpError(404, "not found");
+      const record = q.sharedFile.get(sharedFile[2], row.owner_id, row.id);
+      if (!record) throw new HttpError(404, "not found");
+      const file = JSON.parse(record.data);
+      res.writeHead(200, { "Content-Type": file.mime, "Cache-Control": "private, max-age=3600", ...cors });
+      return void res.end(Buffer.from(file.data, "base64"));
+    }
     const stream = /^\/api\/share\/([\w-]+)\/stream$/.exec(path);
     if (stream && req.method === "GET") {
       const { user } = authenticate(req);
@@ -772,6 +830,7 @@ const server = createServer(async (req, res) => {
     if (path === "/api/sync") return send(200, sync(user, await readJson(req)));
     if (path === "/api/token") return send(200, { token: issueToken(user.id) });
     if (path === "/api/share") return send(200, createShare(user, await readJson(req)));
+    if (path === "/api/shares/state") return send(200, sharesState(user, await readJson(req)));
     const share = /^\/api\/share\/([\w-]+)(?:\/(update|awareness|delete|public|access|member))?$/.exec(path);
     if (share) {
       const [, id, action] = share;

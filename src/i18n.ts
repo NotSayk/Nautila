@@ -353,6 +353,12 @@ const fr = {
   join: "Rejoindre",
   joinFailed: "Cette page partagée est introuvable, ou le serveur est injoignable.",
   joining: "Ouverture de la page partagée…",
+  joinNeedsAccount: "Connecte-toi pour ouvrir cette page partagée.",
+  joinNeedsAccountHint:
+    "Crée un compte ou connecte-toi sur ce serveur : la page sera ajoutée à tes notes et se mettra à jour toute seule.",
+  signIn: "Se connecter",
+  cloudHint:
+    "Tes notes ne sont enregistrées que dans ce navigateur. Connecte-toi pour les sauvegarder dans le cloud et les retrouver sur tes autres appareils.",
   openSync: "Ouvrir la synchronisation",
   syncTitle: "Synchronisation",
   syncIntro:
@@ -771,6 +777,12 @@ const en: typeof fr = {
   join: "Join",
   joinFailed: "This shared page cannot be found, or the server is unreachable.",
   joining: "Opening the shared page…",
+  joinNeedsAccount: "Sign in to open this shared page.",
+  joinNeedsAccountHint:
+    "Create an account or sign in on this server: the page will be added to your notes and keep itself up to date.",
+  signIn: "Sign in",
+  cloudHint:
+    "Your notes are only saved in this browser. Sign in to back them up to the cloud and find them on your other devices.",
   openSync: "Open sync settings",
   syncTitle: "Sync",
   syncIntro:

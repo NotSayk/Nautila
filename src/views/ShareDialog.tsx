@@ -297,12 +297,13 @@ export function JoinView({ id }: { id: string }) {
     <div className="mx-auto max-w-md px-6 pt-[18vh] text-center">
       {!connected ? (
         <>
-          <p>{t("shareNeedsAccount")}</p>
+          <p className="font-medium">{t("joinNeedsAccount")}</p>
+          <p className="mt-2 text-muted">{t("joinNeedsAccountHint")}</p>
           <button
             className={`${BUTTON} mt-4 bg-accent text-white`}
             onClick={() => useStore.setState({ syncOpen: true })}
           >
-            {t("openSync")}
+            {t("signIn")}
           </button>
         </>
       ) : (

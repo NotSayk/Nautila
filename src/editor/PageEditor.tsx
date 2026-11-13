@@ -34,7 +34,7 @@ import { Awareness } from "y-protocols/awareness";
 import * as Y from "yjs";
 import { extract } from "../data/extract";
 import { Comments } from "./Comments";
-import { resolveFileUrl, saveFile } from "../data/files";
+import { resolveFileUrl, saveFile, watchSharedFiles } from "../data/files";
 import { createPage, savePageContent } from "../data/pages";
 import { PAGE_LINK } from "../data/importer";
 import { pendingHtml, pendingMarkdown } from "../data/templates";
@@ -144,6 +144,11 @@ export const PageEditor = forwardRef<PageEditorHandle, Props>(function PageEdito
   const awareness = useMemo(() => new Awareness(doc), [doc]);
   const username = useStore((s) => s.sync.username);
   const connected = useStore((s) => s.sync.status !== "off");
+
+  // Fichiers de la page partagée ajoutés par les autres participants : demandés au serveur.
+  // (Inscrit pendant le rendu, pour que les blocs puissent les demander dès leur affichage.)
+  const sharedFiles = useMemo(() => (shareId ? watchSharedFiles(shareId) : null), [shareId]);
+  useEffect(() => () => sharedFiles?.(), [sharedFiles]);
 
   // Session en direct : ouverte tant que la page partagée est affichée et le compte connecté.
   const shareStateRef = useRef(onShareState);
