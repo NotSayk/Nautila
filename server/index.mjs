@@ -19,7 +19,7 @@ const INVITE_CODE = process.env.INVITE_CODE ?? "";
 const MAX_USER_BYTES = Number(process.env.MAX_USER_MB ?? 1024) * 1024 * 1024;
 const MAX_BODY = 48 * 1024 * 1024;
 const PULL_BYTES = 4 * 1024 * 1024;
-const TABLES = new Set(["pages", "tasks", "cards", "files", "databases", "slots", "grades", "templates", "links", "page_files", "quizzes"]);
+const TABLES = new Set(["pages", "tasks", "cards", "files", "databases", "slots", "grades", "templates", "links", "page_files", "quizzes", "refs"]);
 
 const db = new DatabaseSync(DATA_FILE);
 db.exec(`
@@ -41,6 +41,12 @@ db.exec(`
   );
 `);
 
+try {
+  db.exec("ALTER TABLE shares ADD COLUMN public INTEGER NOT NULL DEFAULT 0");
+} catch {
+  /* colonne déjà présente */
+}
+
 const q = {
   user: db.prepare("SELECT * FROM users WHERE username = ?"),
   addUser: db.prepare("INSERT INTO users (username, salt, hash, created_at) VALUES (?, ?, ?, ?)"),
@@ -58,6 +64,8 @@ const q = {
   addShare: db.prepare("INSERT INTO shares (id, owner_id, title, ydoc, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)"),
   saveShare: db.prepare("UPDATE shares SET ydoc = ?, updated_at = ? WHERE id = ?"),
   dropShare: db.prepare("DELETE FROM shares WHERE id = ?"),
+  setPublic: db.prepare("UPDATE shares SET public = ? WHERE id = ?"),
+  fileOf: db.prepare("SELECT data FROM records WHERE user_id = ? AND tbl = 'files' AND id = ? AND data IS NOT NULL"),
   records: db.prepare("SELECT id, data FROM records WHERE user_id = ? AND tbl = ? AND data IS NOT NULL"),
   usage: db.prepare("SELECT COALESCE(SUM(LENGTH(data)), 0) AS bytes FROM records WHERE user_id = ?"),
 };
@@ -540,6 +548,23 @@ const server = createServer(async (req, res) => {
     }
     if (req.method === "OPTIONS") return void res.writeHead(204, { ...cors, "Access-Control-Max-Age": "86400" }).end();
     if (path === "/api/health") return send(200, { ok: true, registration: REGISTRATION });
+    // Page publique : lecture seule, sans compte. Seuls le contenu et les fichiers qu'il utilise sont servis.
+    const pub = /^\/api\/public\/([\w-]+)(?:\/file\/([\w-]+))?$/.exec(path);
+    if (pub && req.method === "GET") {
+      const row = q.share.get(pub[1]);
+      if (!row?.public) throw new HttpError(404, "not found");
+      const room = rooms.get(row.id);
+      const ydoc = room ? Buffer.from(Y.encodeStateAsUpdate(room.doc)).toString("base64") : row.ydoc;
+      if (!pub[2]) return send(200, { title: row.title, ydoc });
+      const doc = room?.doc ?? new Y.Doc();
+      if (!room && ydoc) Y.applyUpdate(doc, b64(ydoc));
+      if (!doc.getXmlFragment("doc").toString().includes(pub[2])) throw new HttpError(404, "not found");
+      const record = q.fileOf.get(row.owner_id, pub[2]);
+      if (!record) throw new HttpError(404, "not found");
+      const file = JSON.parse(record.data);
+      res.writeHead(200, { "Content-Type": file.mime, "Cache-Control": "private, max-age=3600", ...cors });
+      return void res.end(Buffer.from(file.data, "base64"));
+    }
     const stream = /^\/api\/share\/([\w-]+)\/stream$/.exec(path);
     if (stream && req.method === "GET") {
       authenticate(req);
@@ -561,7 +586,7 @@ const server = createServer(async (req, res) => {
     if (path === "/api/sync") return send(200, sync(user, await readJson(req)));
     if (path === "/api/token") return send(200, { token: issueToken(user.id) });
     if (path === "/api/share") return send(200, createShare(user, await readJson(req)));
-    const share = /^\/api\/share\/([\w-]+)(?:\/(update|awareness|delete))?$/.exec(path);
+    const share = /^\/api\/share\/([\w-]+)(?:\/(update|awareness|delete|public))?$/.exec(path);
     if (share) {
       const [, id, action] = share;
       if (action === "delete") {
@@ -574,6 +599,14 @@ const server = createServer(async (req, res) => {
         q.dropShare.run(id);
         return send(200, { ok: true });
       }
+      if (action === "public") {
+        const row = q.share.get(id);
+        if (!row) throw new HttpError(404, "share not found");
+        if (row.owner_id !== user.id) throw new HttpError(403, "forbidden");
+        const enabled = (await readJson(req)).public === true;
+        q.setPublic.run(enabled ? 1 : 0, id);
+        return send(200, { public: enabled });
+      }
       const room = openRoom(id);
       const body = await readJson(req);
       if (action === "update") return send(200, shareUpdate(room, body));
@@ -582,7 +615,7 @@ const server = createServer(async (req, res) => {
         return send(200, { ok: true });
       }
       const row = q.share.get(id);
-      return send(200, { title: row.title, owner: row.owner_id === user.id, ydoc: Buffer.from(Y.encodeStateAsUpdate(room.doc)).toString("base64") });
+      return send(200, { title: row.title, owner: row.owner_id === user.id, public: !!row.public, ydoc: Buffer.from(Y.encodeStateAsUpdate(room.doc)).toString("base64") });
     }
     throw new HttpError(404, "not found");
   } catch (err) {

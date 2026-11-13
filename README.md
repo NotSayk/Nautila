@@ -12,6 +12,7 @@ Tes notes restent sur ton appareil : pas de compte, pas de télémétrie.
 - PDF lisible dans la page, avec surlignage et citation des extraits dans la note.
 - Commandes `/`, raccourcis Markdown, couleurs, glisser-déposer des blocs.
 - Code coloré dans 81 langages.
+- Blocs synchronisés, citations BibTeX et bibliographie, équations numérotées.
 
 **Pages**
 - Semestres, matières et pages imbriqués ; favoris, fil d'Ariane, sous-pages.
@@ -19,11 +20,13 @@ Tes notes restent sur ton appareil : pas de compte, pas de télémétrie.
 - Renommer, dupliquer, déplacer et réordonner par glisser-déposer.
 - Liens entre pages (`@`) et rétroliens, recherche plein texte (`Ctrl K`).
 - Modèles fournis et modèles personnalisés, historique des versions, corbeille.
+- Étiquettes (`#étiquette` dans la recherche), commentaires sur un bloc, sélection de plusieurs pages.
 
 **Bases de données**
 - Une page peut devenir une base dont chaque ligne est une page.
 - Propriétés : texte, nombre, sélection simple ou multiple, date, case à cocher, lien, formule, relation.
-- Vues tableau, kanban, calendrier, liste, galerie et chronologie, avec filtres et tri.
+- Formules sur nombres, textes et dates : `if`, `round`, `concat`, `days`, `today`, comparaisons.
+- Vues tableau, kanban, calendrier, liste, galerie et chronologie, avec filtres, tri et regroupement.
 - Une base peut être intégrée dans une page.
 
 **Études**
@@ -34,20 +37,22 @@ Tes notes restent sur ton appareil : pas de compte, pas de télémétrie.
 
 **Données**
 - Tout est stocké sur l'appareil. Export Markdown, HTML et PDF par page.
-- Import Markdown, Word (.docx) et export Notion (.zip) ; sauvegarde et restauration complètes en JSON.
+- Import Markdown, Word (.docx) et export Notion (.zip, avec images et bases de données) ;
+  sauvegarde et restauration complètes en JSON.
 - Synchronisation entre appareils via un serveur auto-hébergé, avec comptes.
 - Partage en direct : plusieurs comptes modifient la même page, avec curseurs nommés.
+- Lien public en lecture seule, consultable sans compte.
 - Connecteur MCP : Claude ou Codex lisent les notes et créent flashcards, quiz et fiches.
 - Interface en français et en anglais, thème clair et sombre.
 
 ## Pas encore fait
 
-- Applications Android et iOS ; l'application de bureau Tauri est prête mais n'a pas encore été compilée.
-- Blocs synchronisés, commentaires, étiquettes de pages, onglets, équations numérotées.
-- Bases de données : regroupements dans le tableau, formules sur du texte ou des dates.
-- Import Notion : le texte et l'arborescence sont repris, pas les images ni les bases de données.
-- Citations BibTeX/Zotero.
+- Applications Android et iOS.
+- Application de bureau : elle se compile et démarre (testé sous Linux), mais n'a pas encore
+  d'installateur ni été essayée à la main sous Windows et macOS.
+- Onglets, et droits fins sur une page partagée (tout participant peut modifier).
 - Les rappels d'échéances ne se déclenchent que lorsque Nautila est ouvert.
+- Import Notion : les relations entre bases et les formules ne sont pas reprises.
 
 ## Développement
 

@@ -5,16 +5,16 @@ import { useT } from "../i18n";
 import { useStore } from "../store";
 import { PageIcon, useOverlay } from "./common";
 
-export function MoveDialog({ id }: { id: string }) {
+export function MoveDialog({ ids }: { ids: string[] }) {
   const t = useT();
   const pages = useStore((s) => s.pages);
-  const close = () => useStore.setState({ moveId: null });
+  const close = () => useStore.setState({ moveIds: null });
   useOverlay(close);
   const [query, setQuery] = useState("");
 
   // Une page ne peut pas être déplacée dans elle-même ni dans sa descendance.
   const targets = useMemo(() => {
-    const blocked = new Set([id]);
+    const blocked = new Set(ids);
     for (let grew = true; grew; ) {
       grew = false;
       for (const p of pages)
@@ -25,10 +25,10 @@ export function MoveDialog({ id }: { id: string }) {
     }
     const q = query.trim().toLowerCase();
     return pages.filter((p) => !blocked.has(p.id) && (p.title || t("untitled")).toLowerCase().includes(q)).slice(0, 40);
-  }, [pages, id, query, t]);
+  }, [pages, ids, query, t]);
 
   const move = async (parentId: string | null) => {
-    await movePage(id, parentId);
+    for (const id of ids) await movePage(id, parentId);
     await useStore.getState().refreshPages();
     close();
   };

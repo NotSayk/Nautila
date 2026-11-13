@@ -13,7 +13,7 @@ import {
   Trash2,
   X,
 } from "lucide-react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
 import { createRow, getDatabase, listRows, newView, saveDatabase, setRowProps } from "../../data/databases";
 import {
   applyView,
@@ -345,6 +345,13 @@ function TableLayout({ api }: { api: Api }) {
   const { props, rows } = api;
   const columns = `280px ${props.map(() => "180px").join(" ")} 40px`;
   const cell = "min-w-0 shadow-[inset_-1px_0_0_var(--color-line)]";
+  // Regroupement facultatif par une propriété « sélection » : une section par option.
+  const group = props.find((p) => p.id === api.view.groupBy && p.type === "select");
+  const groups: { id: string; option?: Option; rows: Row[] }[] = group
+    ? [...(group.options ?? []).map((o) => ({ id: o.id, option: o })), { id: "" }]
+        .map((g) => ({ ...g, rows: rows.filter((r) => (r.props[group.id] ?? "") === g.id) }))
+        .filter((g) => g.rows.length > 0)
+    : [{ id: "", rows }];
   return (
     <div className="overflow-x-auto">
       <div className="min-w-max">
@@ -376,36 +383,50 @@ function TableLayout({ api }: { api: Api }) {
             }))}
           />
         </div>
-        {rows.map((row) => (
-          <div key={row.id} className={`group grid min-h-9 ${LINE}`} style={{ gridTemplateColumns: columns }}>
-            <span className={`${cell} flex items-center gap-1.5 pl-2 pr-1`}>
-              <PageIcon page={{ icon: row.icon, kind: "note" }} size={16} />
-              <TitleInput row={row} api={api} className="h-full" />
-              <button
-                onClick={() => api.open(row.id)}
-                className="hidden h-6 shrink-0 rounded bg-pop px-1.5 text-xs text-muted shadow-[0_0_0_1px_var(--color-line)] hover:bg-hover group-hover:block"
-              >
-                {t("open")}
-              </button>
-            </span>
-            {props.map((p) => (
-              <span key={p.id} className={cell}>
-                <PropEditor
-                  prop={p}
-                  value={row.props[p.id]}
-                  onChange={(v) => api.setValue(row, p.id, v)}
-                  onOptions={(o) => api.setOptions(p.id, o)}
-                />
-              </span>
+        {groups.map((g) => (
+          <Fragment key={g.id}>
+            {group && (
+              <div className={`flex h-9 items-center gap-2 px-2 ${LINE}`}>
+                {g.option ? (
+                  <span className={`tag tag-${g.option.color}`}>{g.option.name}</span>
+                ) : (
+                  <span className="text-muted">{t("noValue")}</span>
+                )}
+                <span className="text-faint">{g.rows.length}</span>
+              </div>
+            )}
+            {g.rows.map((row) => (
+              <div key={row.id} className={`group grid min-h-9 ${LINE}`} style={{ gridTemplateColumns: columns }}>
+                <span className={`${cell} flex items-center gap-1.5 pl-2 pr-1`}>
+                  <PageIcon page={{ icon: row.icon, kind: "note" }} size={16} />
+                  <TitleInput row={row} api={api} className="h-full" />
+                  <button
+                    onClick={() => api.open(row.id)}
+                    className="hidden h-6 shrink-0 rounded bg-pop px-1.5 text-xs text-muted shadow-[0_0_0_1px_var(--color-line)] hover:bg-hover group-hover:block"
+                  >
+                    {t("open")}
+                  </button>
+                </span>
+                {props.map((p) => (
+                  <span key={p.id} className={cell}>
+                    <PropEditor
+                      prop={p}
+                      value={row.props[p.id]}
+                      onChange={(v) => api.setValue(row, p.id, v)}
+                      onOptions={(o) => api.setOptions(p.id, o)}
+                    />
+                  </span>
+                ))}
+                <IconButton
+                  label={t("moveToTrash")}
+                  onClick={() => api.remove(row.id)}
+                  className="m-auto opacity-0 focus:opacity-100 group-hover:opacity-100"
+                >
+                  <Trash2 size={14} />
+                </IconButton>
+              </div>
             ))}
-            <IconButton
-              label={t("moveToTrash")}
-              onClick={() => api.remove(row.id)}
-              className="m-auto opacity-0 focus:opacity-100 group-hover:opacity-100"
-            >
-              <Trash2 size={14} />
-            </IconButton>
-          </div>
+          </Fragment>
         ))}
         <AddRow onClick={() => api.add()} />
       </div>
@@ -862,7 +883,7 @@ export function DatabaseView({ page, embedded }: { page: PageMeta; embedded?: bo
   const patchView = (patch: Partial<DbView>) =>
     setConfig((c) => ({ ...c, views: c.views.map((v) => (v.id === view.id ? { ...v, ...patch } : v)) }));
   const pickers: [keyof DbView, PropType, boolean][] = [
-    ["groupBy", "select", view.type === "board"],
+    ["groupBy", "select", view.type === "board" || view.type === "table"],
     ["dateProp", "date", view.type === "calendar" || view.type === "timeline"],
     ["endProp", "date", view.type === "timeline"],
   ];
@@ -939,6 +960,11 @@ export function DatabaseView({ page, embedded }: { page: PageMeta; embedded?: bo
                   onChange={(e) => patchView({ [key]: e.target.value })}
                   className="h-7 max-w-36 rounded-md bg-transparent px-1 text-muted hover:bg-hover"
                 >
+                  {key === "groupBy" && view.type === "table" && (
+                    <option value="">
+                      {t("groupBy")} : {t("none").toLowerCase()}
+                    </option>
+                  )}
                   {key === "endProp" && (
                     <option value="">
                       {t("endDate")} : {t("none").toLowerCase()}

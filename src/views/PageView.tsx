@@ -16,18 +16,28 @@ import {
   Star,
   Table2,
   Trash2,
+  MessageSquare,
   Type,
   Users,
 } from "lucide-react";
 import { Fragment, useEffect, useRef, useState } from "react";
 import { download } from "../data/backup";
 import { saveFile } from "../data/files";
-import { deleteTemplate, listTemplates, pendingMarkdown, saveTemplate, type CustomTemplate } from "../data/templates";
+import { HTML_MARK } from "../data/importer";
+import {
+  deleteTemplate,
+  listTemplates,
+  pendingHtml,
+  pendingMarkdown,
+  saveTemplate,
+  type CustomTemplate,
+} from "../data/templates";
 import { snapshot } from "../data/versions";
 import {
   backlinks,
   duplicatePage,
   getPageDoc,
+  pageTags,
   replacePageDoc,
   updatePageMeta,
   type PageFont,
@@ -106,6 +116,9 @@ export function PageView({ id }: { id: string }) {
   const [doc, setDoc] = useState<{ ydoc: string | null; rev: number } | undefined>();
   const [historyOpen, setHistoryOpen] = useState(false);
   const [shareOpen, setShareOpen] = useState(false);
+  const [commentsOpen, setCommentsOpen] = useState(false);
+  const [commentCount, setCommentCount] = useState(0);
+  const [newTag, setNewTag] = useState("");
   const [share, setShare] = useState({ online: false, peers: 0 });
   const [custom, setCustom] = useState<CustomTemplate[]>([]);
   const [pristine, setPristine] = useState(false);
@@ -124,7 +137,8 @@ export function PageView({ id }: { id: string }) {
     getPageDoc(id).then(({ ydoc, markdown }) => {
       if (!live) return;
       // Page créée hors de l'application (connecteur IA) : son Markdown est mis en forme à l'ouverture.
-      if (ydoc === null && markdown) pendingMarkdown.set(id, markdown);
+      if (ydoc === null && markdown?.startsWith(HTML_MARK)) pendingHtml.set(id, markdown.slice(HTML_MARK.length));
+      else if (ydoc === null && markdown) pendingMarkdown.set(id, markdown);
       setDoc({ ydoc, rev: 0 });
       if (ydoc === null) void listTemplates().then((list) => live && setCustom(list));
       setPristine(ydoc === null && !markdown);
@@ -147,6 +161,8 @@ export function PageView({ id }: { id: string }) {
     await updatePageMeta(id, patch);
     await refreshPages();
   };
+  const tags = pageTags(page);
+  const saveTags = (next: string[]) => saveMeta({ tags: next.length ? JSON.stringify(next) : null });
 
   const trail: PageMeta[] = [];
   for (let p: PageMeta | undefined = page; p; p = pages.find((x) => x.id === p!.parent_id)) trail.unshift(p);
@@ -185,6 +201,17 @@ export function PageView({ id }: { id: string }) {
                 <Lock size={14} />
                 {t("locked")}
               </span>
+            )}
+            {!isDatabase && (
+              <button
+                onClick={() => setCommentsOpen((open) => !open)}
+                aria-label={t("comments")}
+                title={t("comments")}
+                className={`flex h-7 items-center gap-1 rounded-md px-1.5 hover:bg-hover ${commentsOpen ? "bg-hover text-ink" : "text-muted"}`}
+              >
+                <MessageSquare size={16} strokeWidth={1.75} />
+                {commentCount > 0 && <span className="text-xs tabular-nums">{commentCount}</span>}
+              </button>
             )}
             {!isDatabase && (
               <button
@@ -253,7 +280,7 @@ export function PageView({ id }: { id: string }) {
                   {
                     icon: <CornerUpRight size={16} />,
                     label: t("moveTo"),
-                    onClick: () => useStore.setState({ moveId: id }),
+                    onClick: () => useStore.setState({ moveIds: [id] }),
                   },
                   {
                     icon: <Download size={16} />,
@@ -435,6 +462,45 @@ export function PageView({ id }: { id: string }) {
             }}
             className="page-title w-full bg-transparent text-[40px] font-bold leading-[1.2] placeholder:text-faint"
           />
+          <div className="mt-2 flex flex-wrap items-center gap-1.5">
+            {tags.map((tag) => (
+              <span key={tag} className="tag tag-gray flex items-center gap-1">
+                <button
+                  title={t("search")}
+                  onClick={() => useStore.setState({ searchOpen: true, searchSeed: `#${tag}` })}
+                  className="hover:underline"
+                >
+                  #{tag}
+                </button>
+                {!page.locked && (
+                  <button
+                    aria-label={`${t("delete")} ${tag}`}
+                    onClick={() => saveTags(tags.filter((x) => x !== tag))}
+                    className="opacity-60 hover:opacity-100"
+                  >
+                    ×
+                  </button>
+                )}
+              </span>
+            ))}
+            {!page.locked && (
+              <input
+                value={newTag}
+                onChange={(e) => setNewTag(e.target.value)}
+                onKeyDown={(e) => {
+                  const tag = newTag.trim().replace(/^#/, "");
+                  if (e.key !== "Enter" || !tag) return;
+                  setNewTag("");
+                  if (!tags.includes(tag)) void saveTags([...tags, tag]);
+                }}
+                placeholder={tags.length ? "+" : `+ ${t("addTag")}`}
+                aria-label={t("addTag")}
+                className={`h-6 rounded bg-transparent px-1 text-[13px] placeholder:text-faint hover:bg-hover focus:bg-hover ${
+                  tags.length ? "w-24" : "w-44 opacity-0 focus:opacity-100 group-hover:opacity-100 max-md:opacity-100"
+                }`}
+              />
+            )}
+          </div>
           {parent?.kind === "database" && <RowProperties page={page} databaseId={parent.id} />}
         </div>
 
@@ -449,6 +515,9 @@ export function PageView({ id }: { id: string }) {
               saveOnMount={doc.rev > 0}
               shareId={page.share_id}
               onShareState={setShare}
+              commentsOpen={commentsOpen}
+              onCommentCount={setCommentCount}
+              onCloseComments={() => setCommentsOpen(false)}
               editable={!page.locked}
               onFirstEdit={() => setPristine(false)}
             />

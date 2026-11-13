@@ -3,7 +3,17 @@ import type { PageMeta } from "../data/pages";
 import { useT } from "../i18n";
 import { useStore } from "../store";
 import { useOverlay } from "./common";
-import { createShare, joinShare, leaveShare, parseShareId, shareLink } from "../sync/share";
+import {
+  createShare,
+  joinShare,
+  leaveShare,
+  parseShareId,
+  publicLink,
+  setSharePublic,
+  shareInfo,
+  shareLink,
+} from "../sync/share";
+import { PageEditor } from "../editor/PageEditor";
 
 const BUTTON = "h-8 rounded-md px-3 font-medium disabled:opacity-40";
 const FIELD = "h-8 w-full rounded-md bg-hover px-2 text-sm placeholder:text-faint";
@@ -48,8 +58,14 @@ export function ShareDialog({
   const [busy, setBusy] = useState(false);
   const [failed, setFailed] = useState(false);
 
+  const [info, setInfo] = useState<{ owner: boolean; public: boolean }>();
+  const [viewLink, setViewLink] = useState("");
+
   useEffect(() => {
-    if (page.share_id && connected) void shareLink(page.share_id).then(setLink);
+    if (!page.share_id || !connected) return;
+    void shareLink(page.share_id).then(setLink);
+    void publicLink(page.share_id).then(setViewLink);
+    void shareInfo(page.share_id).then(setInfo, () => undefined);
   }, [page.share_id, connected]);
 
   const run = async (action: () => Promise<unknown>) => {
@@ -94,6 +110,30 @@ export function ShareDialog({
           <p className={`mt-2 text-[13px] ${online ? "text-muted" : "text-danger"}`}>
             {online ? `${t("shareOnline")} · ${peers} ${t("sharePeers")}` : t("shareOffline")}
           </p>
+          {info?.owner && (
+            <div className="mt-4 pt-3 shadow-[inset_0_1px_0_var(--color-line)]">
+              <p className="font-medium">{t("publicLink")}</p>
+              <p className="mt-1 text-[13px] leading-5 text-muted">{t("publicIntro")}</p>
+              {info.public && (
+                <input
+                  readOnly
+                  aria-label={t("publicLink")}
+                  value={viewLink}
+                  onFocus={(e) => e.currentTarget.select()}
+                  className={`${FIELD} mt-2`}
+                />
+              )}
+              <button
+                className={`${BUTTON} mt-2 shadow-[0_0_0_1px_var(--color-line)] hover:bg-hover`}
+                disabled={busy}
+                onClick={() =>
+                  run(async () => setInfo({ owner: true, ...(await setSharePublic(page.share_id!, !info.public)) }))
+                }
+              >
+                {t(info.public ? "publicDisable" : "publicEnable")}
+              </button>
+            </div>
+          )}
           <div className="mt-4 flex justify-between gap-2">
             <button
               className={`${BUTTON} text-danger hover:bg-hover`}
@@ -197,6 +237,40 @@ export function JoinView({ id }: { id: string }) {
       ) : (
         <p className={failed ? "text-danger" : "text-muted"}>{t(failed ? "joinFailed" : "joining")}</p>
       )}
+    </div>
+  );
+}
+
+/** Page publique en lecture seule : affichée sans compte, rien n'est enregistré sur l'appareil. */
+export function PublicView({ id }: { id: string }) {
+  const t = useT();
+  const [page, setPage] = useState<{ title: string; ydoc: string | null } | null>();
+
+  useEffect(() => {
+    fetch(`${location.origin}/api/public/${id}`)
+      .then((res) => (res.ok ? res.json() : null))
+      .then(setPage, () => setPage(null));
+  }, [id]);
+
+  if (page === undefined) return null;
+  if (page === null) return <p className="px-6 pt-[18vh] text-center text-muted">{t("publicMissing")}</p>;
+  return (
+    <div className="mx-auto max-w-[900px] pb-32 pt-12">
+      <div className="px-(--page-pad)">
+        <p className="mb-2 text-xs font-medium text-muted">Nautila · {t("publicView")}</p>
+        <h1 className="mb-2 text-[40px] font-bold leading-[1.2]">{page.title || t("untitled")}</h1>
+      </div>
+      <PageEditor
+        pageId={`public:${id}`}
+        initialDoc={page.ydoc}
+        editable={false}
+        ephemeral
+        fileResolver={async (url) =>
+          url.startsWith("nautila-file:")
+            ? `${location.origin}/api/public/${id}/file/${url.slice("nautila-file:".length)}`
+            : url
+        }
+      />
     </div>
   );
 }

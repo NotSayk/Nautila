@@ -139,7 +139,8 @@ function sortKey(row: Row, propId: string, props: Prop[]): string | number | nul
   const value = row.props[propId];
   if (!prop || isEmpty(value)) return prop?.type === "checkbox" ? 0 : null;
   if (prop.type === "checkbox") return value === true ? 1 : 0;
-  if (prop.type === "number" || prop.type === "formula") return value as number;
+  if (prop.type === "number") return value as number;
+  if (prop.type === "formula") return typeof value === "number" ? value : String(value).toLowerCase();
   if (prop.type === "select" || prop.type === "multi_select") {
     const first = Array.isArray(value) ? value[0] : value;
     // Ordre des options tel que défini dans la propriété.
@@ -162,49 +163,148 @@ export function applyView(rows: Row[], view: DbView, props: Prop[]): Row[] {
   });
 }
 
+type FormulaValue = number | string | boolean;
+
+const FORMULA_FUNCTIONS: Record<string, (args: FormulaValue[]) => FormulaValue> = {
+  if: ([condition, yes, no]) => (condition ? yes : no),
+  round: ([x, digits = 0]) => {
+    const factor = 10 ** Number(digits);
+    return Math.round(Number(x) * factor) / factor;
+  },
+  abs: ([x]) => Math.abs(Number(x)),
+  min: (args) => Math.min(...args.map(Number)),
+  max: (args) => Math.max(...args.map(Number)),
+  concat: (args) => args.map(String).join(""),
+  length: ([text]) => String(text).length,
+  upper: ([text]) => String(text).toUpperCase(),
+  lower: ([text]) => String(text).toLowerCase(),
+  today: () => {
+    const d = new Date();
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+  },
+  // Nombre de jours de la première date à la seconde.
+  days: ([from, to]) => Math.round((Date.parse(`${to}T12:00:00`) - Date.parse(`${from}T12:00:00`)) / 86_400_000),
+};
+
+/** Découpe une formule ; dans les arguments d'une fonction, la virgule sépare au lieu de servir de décimale. */
+function formulaTokens(expression: string): string[] {
+  const tokens: string[] = [];
+  const parens: boolean[] = []; // vrai pour une parenthèse ouverte par un appel de fonction
+  const pattern = /\{[^}]*\}|"[^"]*"|\d+(?:\.\d+)?|[A-Za-z_]+|==|!=|>=|<=|\S/g;
+  for (let match = pattern.exec(expression); match; match = pattern.exec(expression)) {
+    let token = match[0];
+    const previous = tokens[tokens.length - 1];
+    if (token === "(") parens.push(/^[A-Za-z_]+$/.test(previous ?? ""));
+    else if (token === ")") parens.pop();
+    else if (token === "," && !parens[parens.length - 1] && /^\d+$/.test(previous ?? "")) {
+      // « 1,5 » hors d'un appel de fonction : virgule décimale.
+      const decimals = /^\d+/.exec(expression.slice(pattern.lastIndex))?.[0];
+      if (decimals) {
+        pattern.lastIndex += decimals.length;
+        tokens[tokens.length - 1] = `${previous}.${decimals}`;
+        continue;
+      }
+    } else if (token === ";") token = ",";
+    tokens.push(token);
+  }
+  return tokens;
+}
+
 /**
- * Évalue une formule numérique : nombres, + - * /, parenthèses et propriétés
- * entre accolades. Renvoie null si la formule est invalide ou qu'une valeur manque.
+ * Évalue une formule : nombres, textes entre guillemets, propriétés entre
+ * accolades, + - * /, comparaisons et quelques fonctions (if, round, concat,
+ * days, today…). Renvoie null si elle est invalide ou qu'une valeur manque.
  */
-export function evalFormula(expression: string, values: Record<string, Value>, props: Prop[]): number | null {
-  const tokens = expression.match(/\{[^}]*\}|\d+(?:[.,]\d+)?|[-+*/()]|\S/g) ?? [];
+export function evalFormula(expression: string, values: Record<string, Value>, props: Prop[]): number | string | null {
+  const tokens = formulaTokens(expression);
   let i = 0;
-  const fail = () => {
+  const fail = (): never => {
     throw new Error("formula");
   };
-  const atom = (): number => {
+  const num = (v: FormulaValue): number => (typeof v === "number" ? v : typeof v === "boolean" ? Number(v) : fail());
+
+  const atom = (): FormulaValue => {
     const tok = tokens[i++];
     if (tok === undefined) return fail();
     if (tok === "(") {
-      const v = sum();
+      const v = comparison();
       if (tokens[i++] !== ")") fail();
       return v;
     }
-    if (tok === "-") return -atom();
+    if (tok === "-") return -num(atom());
+    if (tok.startsWith('"')) return tok.slice(1, -1);
     if (tok.startsWith("{")) {
       const name = tok.slice(1, -1).trim().toLowerCase();
       const prop = props.find((p) => p.name.trim().toLowerCase() === name);
       const value = prop && values[prop.id];
-      if (typeof value === "number") return value;
-      if (typeof value === "boolean") return value ? 1 : 0;
+      if (prop?.type === "checkbox") return value === true;
+      if (typeof value === "number" || (typeof value === "string" && value !== "")) return value;
       return fail();
     }
-    const n = Number(tok.replace(",", "."));
+    if (/^[A-Za-z_]+$/.test(tok)) {
+      const fn = FORMULA_FUNCTIONS[tok.toLowerCase()];
+      if (!fn || tokens[i++] !== "(") return fail();
+      const args: FormulaValue[] = [];
+      while (tokens[i] !== ")") {
+        args.push(comparison());
+        if (tokens[i] === ",") i++;
+        else if (tokens[i] !== ")") fail();
+      }
+      i++;
+      return fn(args);
+    }
+    const n = Number(tok);
     return Number.isNaN(n) ? fail() : n;
   };
-  const product = (): number => {
+  const product = (): FormulaValue => {
     let v = atom();
-    while (tokens[i] === "*" || tokens[i] === "/") v = tokens[i++] === "*" ? v * atom() : v / atom();
+    while (tokens[i] === "*" || tokens[i] === "/")
+      v = tokens[i++] === "*" ? num(v) * num(atom()) : num(v) / num(atom());
     return v;
   };
-  const sum = (): number => {
+  const sum = (): FormulaValue => {
     let v = product();
-    while (tokens[i] === "+" || tokens[i] === "-") v = tokens[i++] === "+" ? v + product() : v - product();
+    while (tokens[i] === "+" || tokens[i] === "-") {
+      const plus = tokens[i++] === "+";
+      const right = product();
+      // « + » colle deux textes ; avec deux nombres, il additionne.
+      v =
+        plus && (typeof v === "string" || typeof right === "string")
+          ? String(v) + String(right)
+          : plus
+            ? num(v) + num(right)
+            : num(v) - num(right);
+    }
     return v;
   };
+  const comparison = (): FormulaValue => {
+    const left = sum();
+    const op = tokens[i];
+    if (!["==", "!=", ">", "<", ">=", "<="].includes(op)) return left;
+    i++;
+    const right = sum();
+    switch (op) {
+      case "==":
+        return left === right;
+      case "!=":
+        return left !== right;
+      case ">":
+        return left > right;
+      case "<":
+        return left < right;
+      case ">=":
+        return left >= right;
+      default:
+        return left <= right;
+    }
+  };
+
   try {
-    const result = sum();
-    return i === tokens.length && Number.isFinite(result) ? Math.round(result * 1e6) / 1e6 : null;
+    const result = comparison();
+    if (i !== tokens.length) return null;
+    if (typeof result === "string") return result;
+    const n = Number(result);
+    return Number.isFinite(n) ? Math.round(n * 1e6) / 1e6 : null;
   } catch {
     return null;
   }

@@ -257,7 +257,7 @@ export function PropEditor({
     case "formula":
       return (
         <span className="flex h-full min-h-8 items-center px-2 tabular-nums text-muted">
-          {typeof value === "number" ? value : ""}
+          {typeof value === "number" || typeof value === "string" ? value : ""}
         </span>
       );
     case "relation":

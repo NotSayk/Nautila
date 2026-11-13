@@ -595,3 +595,67 @@ textarea:focus-visible,
     scroll-behavior: auto !important;
   }
 }
+
+/* ---------- Citations, équations numérotées, blocs synchronisés, commentaires ---------- */
+.cite {
+  cursor: pointer;
+  border-radius: 3px;
+  padding: 0 1px;
+  color: var(--color-muted);
+}
+.cite:hover {
+  background: var(--color-hover);
+}
+.bibliography p {
+  margin: 0 0 6px;
+  padding-left: 1.5em;
+  text-indent: -1.5em;
+}
+.bn-editor {
+  counter-reset: equation;
+}
+.math-block {
+  position: relative;
+}
+.math-block[data-numbered] {
+  counter-increment: equation;
+}
+.math-block[data-numbered]::after {
+  content: "(" counter(equation) ")";
+  position: absolute;
+  top: 50%;
+  right: 8px;
+  translate: 0 -50%;
+  color: var(--color-muted);
+  pointer-events: none;
+}
+.math-number-toggle {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  border-radius: 4px;
+  padding: 0 5px;
+  color: var(--color-faint);
+  font-size: 12px;
+  opacity: 0;
+}
+.math-block:hover .math-number-toggle,
+.math-number-toggle:focus-visible {
+  opacity: 1;
+}
+.math-number-toggle:hover {
+  background: var(--color-hover);
+}
+.synced {
+  width: 100%;
+  border-radius: 4px;
+  box-shadow: inset 2px 0 0 #d9730d55;
+  padding-left: 12px;
+}
+.synced:hover,
+.synced:focus-within {
+  box-shadow: 0 0 0 1px #d9730d88;
+}
+.synced .bn-editor {
+  padding-inline: 0;
+}

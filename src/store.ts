@@ -11,11 +11,12 @@ export type Route =
   | { view: "timetable" }
   | { view: "grades" }
   | { view: "join"; id: string }
+  | { view: "view"; id: string }
   | { view: "page"; id: string };
 
 function parseHash(): Route {
   const [view, id] = location.hash.replace(/^#\/?/, "").split("/");
-  if ((view === "page" || view === "join") && id) return { view, id };
+  if ((view === "page" || view === "join" || view === "view") && id) return { view, id };
   if (view === "review" || view === "tasks" || view === "trash" || view === "timetable" || view === "grades")
     return { view };
   return { view: "home" };
@@ -45,9 +46,11 @@ type State = {
   lang: Lang;
   dark: boolean;
   searchOpen: boolean;
+  /** Texte prérempli à l'ouverture de la recherche (ex. « #étiquette »). */
+  searchSeed: string;
+  /** Pages en cours de déplacement (boîte « Déplacer vers »). */
+  moveIds: string[] | null;
   sidebarOpen: boolean;
-  /** Page en cours de déplacement (boîte « Déplacer vers »). */
-  moveId: string | null;
   /** Minuteur Pomodoro : `endsAt` défini quand il tourne, `left` (ms) quand il est en pause. */
   sync: { status: "off" | "idle" | "syncing" | "error"; username?: string; error?: string; lastSync?: number };
   syncOpen: boolean;
@@ -79,7 +82,8 @@ export const useStore = create<State>((set, get) => ({
           : "en",
   dark: stored("nautila.dark") ? stored("nautila.dark") === "1" : matchMedia("(prefers-color-scheme: dark)").matches,
   searchOpen: false,
-  moveId: null,
+  searchSeed: "",
+  moveIds: null,
   sync: { status: "off" },
   syncOpen: false,
   shortcutsOpen: false,
@@ -89,7 +93,7 @@ export const useStore = create<State>((set, get) => ({
 
   navigate: (route) => {
     location.hash =
-      route.view === "page" || route.view === "join"
+      route.view === "page" || route.view === "join" || route.view === "view"
         ? `/${route.view}/${route.id}`
         : route.view === "home"
           ? "/"
@@ -113,7 +117,7 @@ export const useStore = create<State>((set, get) => ({
     store("nautila.dark", dark ? "1" : "0");
     set({ dark });
   },
-  setSearchOpen: (searchOpen) => set({ searchOpen }),
+  setSearchOpen: (searchOpen) => set({ searchOpen, searchSeed: "" }),
   setSidebarOpen: (sidebarOpen) => {
     if (isDesktop()) store("nautila.sidebar", sidebarOpen ? "1" : "0");
     set({ sidebarOpen });

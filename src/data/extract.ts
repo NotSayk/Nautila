@@ -30,6 +30,8 @@ function inlineText(content: unknown, links: Set<string>): string {
       return "";
     case "math":
       return node.props?.latex ?? "";
+    case "cite":
+      return node.props?.key ? `[@${node.props.key}]` : "";
     case "tableContent":
       return (node.rows ?? [])
         .map((r: any) => (r.cells ?? []).map((c: unknown) => inlineText(c, links)).join(" "))

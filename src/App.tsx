@@ -7,7 +7,7 @@ import { Grades } from "./views/Grades";
 import { Timetable } from "./views/Timetable";
 import { notifyDueTasks } from "./reminders";
 import { startSync } from "./sync/engine";
-import { JoinView } from "./views/ShareDialog";
+import { JoinView, PublicView } from "./views/ShareDialog";
 import { ShortcutsDialog, Toast, useGlobalShortcuts } from "./views/Overlays";
 import { SyncDialog } from "./views/SyncDialog";
 import { MoveDialog } from "./views/MoveDialog";
@@ -30,7 +30,7 @@ export function App() {
   const dark = useStore((s) => s.dark);
   const lang = useStore((s) => s.lang);
   const searchOpen = useStore((s) => s.searchOpen);
-  const moveId = useStore((s) => s.moveId);
+  const moveIds = useStore((s) => s.moveIds);
   const syncOpen = useStore((s) => s.syncOpen);
   const shortcutsOpen = useStore((s) => s.shortcutsOpen);
 
@@ -66,7 +66,7 @@ export function App() {
 
   return (
     <div className="flex h-full">
-      <Sidebar />
+      {route.view !== "view" && <Sidebar />}
       <main className="min-w-0 flex-1 overflow-y-auto">
         {!status.persistent && (
           <div className="bg-[#fbf3db] px-4 py-2 text-[#402c1b] dark:bg-[#564328] dark:text-white/85">
@@ -81,9 +81,10 @@ export function App() {
         {route.view === "timetable" && <Timetable />}
         {route.view === "grades" && <Grades />}
         {route.view === "join" && <JoinView id={route.id} />}
+        {route.view === "view" && <PublicView id={route.id} />}
       </main>
       {searchOpen && <SearchDialog />}
-      {moveId && <MoveDialog id={moveId} />}
+      {moveIds && <MoveDialog ids={moveIds} />}
       {syncOpen && <SyncDialog />}
       {shortcutsOpen && <ShortcutsDialog />}
       <Toast />

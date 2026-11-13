@@ -84,6 +84,21 @@ describe("formules", () => {
     expect(evalFormula("", {}, props)).toBeNull();
   });
 
+  it("gère textes, dates, comparaisons et fonctions", () => {
+    const all: Prop[] = [...props, { id: "t", name: "Titre", type: "text" }, { id: "fin", name: "Fin", type: "date" }];
+    const v = { n: 12.345, d: "2026-01-10", fin: "2026-01-17", t: "Chapitre", ok: false };
+    expect(evalFormula('{Titre} + " " + {Note}', v, all)).toBe("Chapitre 12.345");
+    expect(evalFormula('concat(upper({Titre}), "-", length({Titre}))', v, all)).toBe("CHAPITRE-8");
+    expect(evalFormula("days({Date}, {Fin})", v, all)).toBe(7);
+    expect(evalFormula("round({Note}, 1)", v, all)).toBe(12.3);
+    expect(evalFormula("round(2,5)", v, all)).toBe(2);
+    expect(evalFormula("2,5 * 2", v, all)).toBe(5);
+    expect(evalFormula('if({Note} >= 10, "Admis", "Refusé")', v, all)).toBe("Admis");
+    expect(evalFormula("if({Rendu}, 1, 0) + max(1; 4)", v, all)).toBe(4);
+    expect(evalFormula('"a" * 2', v, all)).toBeNull();
+    expect(evalFormula("inconnue(1)", v, all)).toBeNull();
+  });
+
   it("ajoute les valeurs calculées aux lignes, utilisables pour le tri", () => {
     const all: Prop[] = [...props, { id: "f", name: "Double", type: "formula", formula: "{Note} * 2" }];
     const computed = withFormulas(rows, all);

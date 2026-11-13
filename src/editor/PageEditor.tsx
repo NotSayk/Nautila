@@ -16,11 +16,24 @@ import {
   locales as columnLocales,
   multiColumnDropCursor,
 } from "@blocknote/xl-multi-column";
-import { FileText, Layers, ListTree, Mic, PenLine, MessageSquareQuote, Sigma, Table2 } from "lucide-react";
+import {
+  FileText,
+  Layers,
+  ListTree,
+  Mic,
+  PenLine,
+  MessageSquareQuote,
+  LibraryBig,
+  Quote,
+  RefreshCw,
+  Sigma,
+  Table2,
+} from "lucide-react";
 import { forwardRef, useEffect, useImperativeHandle, useMemo, useRef } from "react";
 import { Awareness } from "y-protocols/awareness";
 import * as Y from "yjs";
 import { extract } from "../data/extract";
+import { Comments } from "./Comments";
 import { resolveFileUrl, saveFile } from "../data/files";
 import { createPage, savePageContent } from "../data/pages";
 import { pendingHtml, pendingMarkdown } from "../data/templates";
@@ -39,6 +52,9 @@ function knownLanguages<T extends { type: string; props?: any; children?: T[] }>
     children: b.children ? knownLanguages(b.children) : b.children,
   }));
 }
+
+/** Origine des modifications reçues d'un autre exemplaire du même contenu. */
+const LOCAL_ECHO = "local-echo";
 
 const CURSOR_COLORS = ["#2383e2", "#d44c47", "#448361", "#9065b0", "#d9730d", "#c14c8a", "#0b6e99"];
 /** Couleur de curseur stable pour un identifiant donné. */
@@ -71,12 +87,36 @@ type Props = {
   /** Page partagée en direct : identifiant de la salle, et retour d'état pour l'en-tête. */
   shareId?: string | null;
   onShareState?: (state: { online: boolean; peers: number }) => void;
+  /** Intégré dans un autre contenu (bloc synchronisé) : sans marge ni zone de clic en bas. */
+  embedded?: boolean;
+  /** Affichage seul d'un contenu qui n'appartient pas à cet appareil : rien n'est enregistré. */
+  ephemeral?: boolean;
+  /** Remplace la résolution des fichiers joints (page publique). */
+  fileResolver?: (url: string) => Promise<string>;
+  /** Panneau des commentaires ouvert, et retour du nombre de commentaires non résolus. */
+  commentsOpen?: boolean;
+  onCommentCount?: (count: number) => void;
+  onCloseComments?: () => void;
   /** Appelé à la première modification du contenu. */
   onFirstEdit?: () => void;
 };
 
 export const PageEditor = forwardRef<PageEditorHandle, Props>(function PageEditor(
-  { pageId, initialDoc, editable = true, saveOnMount, shareId, onShareState, onFirstEdit },
+  {
+    pageId,
+    initialDoc,
+    editable = true,
+    saveOnMount,
+    shareId,
+    onShareState,
+    embedded,
+    ephemeral,
+    fileResolver,
+    commentsOpen,
+    onCommentCount,
+    onCloseComments,
+    onFirstEdit,
+  },
   ref,
 ) {
   const t = useT();
@@ -128,7 +168,7 @@ export const PageEditor = forwardRef<PageEditorHandle, Props>(function PageEdito
           throw err;
         }
       },
-      resolveFileUrl,
+      resolveFileUrl: fileResolver ?? resolveFileUrl,
       collaboration: {
         fragment: doc.getXmlFragment("doc"),
         user: { name: username ?? "…", color: userColor(username ?? "") },
@@ -164,16 +204,24 @@ export const PageEditor = forwardRef<PageEditorHandle, Props>(function PageEdito
   const onFirstEditRef = useRef(onFirstEdit);
   onFirstEditRef.current = onFirstEdit;
   useEffect(() => {
+    const instance = {};
     let timer: ReturnType<typeof setTimeout> | undefined;
     const save = async () => {
       clearTimeout(timer);
       timer = undefined;
+      if (ephemeral) return;
       await savePageContent(pageId, toBase64(Y.encodeStateAsUpdate(doc)), extract(editorRef.current.document as never));
       void useStore.getState().refreshDue();
     };
     const flush = () => timer && void save();
     let edited = false;
-    const onUpdate = () => {
+    const onUpdate = (update: Uint8Array, origin: unknown) => {
+      // Le même contenu peut être affiché deux fois (bloc synchronisé) : les autres exemplaires
+      // reçoivent la modification tout de suite, sans attendre l'enregistrement.
+      if (origin !== LOCAL_ECHO)
+        window.dispatchEvent(
+          new CustomEvent(REMOTE_DOC_EVENT, { detail: { id: pageId, ydoc: toBase64(update), from: instance } }),
+        );
       if (!edited) onFirstEditRef.current?.();
       edited = true;
       clearTimeout(timer);
@@ -183,8 +231,8 @@ export const PageEditor = forwardRef<PageEditorHandle, Props>(function PageEdito
 
     // Modifications de la même page arrivées d'un autre appareil : fusion en direct.
     const onRemote = (e: Event) => {
-      const { id, ydoc } = (e as CustomEvent<{ id: string; ydoc: string }>).detail;
-      if (id === pageId) Y.applyUpdate(doc, fromBase64(ydoc));
+      const { id, ydoc, from } = (e as CustomEvent<{ id: string; ydoc: string; from?: object }>).detail;
+      if (id === pageId && from !== instance) Y.applyUpdate(doc, fromBase64(ydoc), LOCAL_ECHO);
     };
     window.addEventListener(REMOTE_DOC_EVENT, onRemote);
     doc.on("update", onUpdate);
@@ -253,6 +301,33 @@ export const PageEditor = forwardRef<PageEditorHandle, Props>(function PageEdito
       group: t("groupLayout"),
       icon: <ListTree size={18} />,
       onItemClick: () => insertOrUpdateBlockForSlashMenu(editor, { type: "toc" }),
+    },
+    {
+      title: t("syncedBlock"),
+      subtext: t("syncedBlockSub"),
+      aliases: ["sync", "synchronise", "synced", "miroir"],
+      group: t("groupLayout"),
+      icon: <RefreshCw size={18} />,
+      onItemClick: async () => {
+        const source = await createPage({ kind: "synced" });
+        insertOrUpdateBlockForSlashMenu(editor, { type: "syncedBlock", props: { sourceId: source.id } });
+      },
+    },
+    {
+      title: t("citation"),
+      subtext: t("citationSub"),
+      aliases: ["cite", "citer", "bibtex", "reference", "source"],
+      group: t("groupStudy"),
+      icon: <Quote size={18} />,
+      onItemClick: () => editor.insertInlineContent([{ type: "cite", props: { key: "" } }, " "]),
+    },
+    {
+      title: t("bibliography"),
+      subtext: t("bibliographySub"),
+      aliases: ["bibliographie", "bibliography", "references", "sources"],
+      group: t("groupStudy"),
+      icon: <LibraryBig size={18} />,
+      onItemClick: () => insertOrUpdateBlockForSlashMenu(editor, { type: "bibliography" }),
     },
     {
       title: t("sketch"),
@@ -330,7 +405,18 @@ export const PageEditor = forwardRef<PageEditorHandle, Props>(function PageEdito
           getItems={async (query) => filterSuggestionItems(pageItems(), query).slice(0, 12)}
         />
       </BlockNoteView>
-      {editable && <div className="h-[24vh] cursor-text" onClick={focusEnd} />}
+      {editable && !embedded && <div className="h-[24vh] cursor-text" onClick={focusEnd} />}
+      {!embedded && !ephemeral && (
+        <Comments
+          doc={doc}
+          editor={editor}
+          open={!!commentsOpen}
+          author={username ?? t("me")}
+          editable={editable}
+          onCount={onCommentCount}
+          onClose={onCloseComments}
+        />
+      )}
     </>
   );
 });

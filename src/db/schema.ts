@@ -13,6 +13,7 @@ export const SYNC_TABLES: Record<string, string[]> = {
   links: ["source_id", "target_id"],
   page_files: ["page_id", "file_id"],
   quizzes: ["id"],
+  refs: ["key"],
 };
 
 /** Chaque écriture locale note la ligne dans sync_log, sauf pendant l'application de changements distants. */
@@ -85,7 +86,7 @@ const MIGRATIONS: string[][] = [
   ],
   [
     // L'identifiant d'une carte inclut sa page : une page dupliquée a ses propres cartes.
-    `UPDATE cards SET id = page_id || ':' || id`,
+    `UPDATE cards SET id = page_id || ':' || id WHERE id NOT LIKE page_id || ':%'`,
     `ALTER TABLE pages ADD COLUMN cover TEXT`,
     `ALTER TABLE pages ADD COLUMN locked INTEGER NOT NULL DEFAULT 0`,
     `ALTER TABLE pages ADD COLUMN font TEXT NOT NULL DEFAULT 'sans'`,
@@ -137,7 +138,7 @@ const MIGRATIONS: string[][] = [
     // Quels fichiers une page (ou un modèle) utilise : sert à supprimer les
     // fichiers devenus orphelins. Les fichiers déjà présents sont conservés.
     `CREATE TABLE page_files (page_id TEXT NOT NULL, file_id TEXT NOT NULL, PRIMARY KEY (page_id, file_id))`,
-    `INSERT INTO page_files (page_id, file_id) SELECT 'legacy', id FROM files`,
+    `INSERT OR IGNORE INTO page_files (page_id, file_id) SELECT 'legacy', id FROM files`,
     // Synchronisation : journal des lignes modifiées localement, alimenté par
     // des déclencheurs, et état de la connexion au serveur.
     `CREATE TABLE sync_log (tbl TEXT NOT NULL, id TEXT NOT NULL, at INTEGER NOT NULL, PRIMARY KEY (tbl, id))`,
@@ -150,7 +151,7 @@ const MIGRATIONS: string[][] = [
       seq INTEGER NOT NULL DEFAULT 0,
       last_sync INTEGER
     )`,
-    `INSERT INTO sync_state (one) VALUES (1)`,
+    `INSERT OR IGNORE INTO sync_state (one) VALUES (1)`,
     ...syncTriggers([
       "pages",
       "tasks",
@@ -178,12 +179,36 @@ const MIGRATIONS: string[][] = [
     )`,
     ...syncTriggers(["quizzes"]),
   ],
+  [
+    // Étiquettes d'une page (tableau JSON) et références bibliographiques (BibTeX).
+    `ALTER TABLE pages ADD COLUMN tags TEXT`,
+    `CREATE TABLE refs (
+      key TEXT PRIMARY KEY,
+      title TEXT NOT NULL DEFAULT '',
+      author TEXT NOT NULL DEFAULT '',
+      year TEXT NOT NULL DEFAULT '',
+      bibtex TEXT NOT NULL,
+      created_at INTEGER NOT NULL
+    )`,
+    ...syncTriggers(["refs"]),
+  ],
 ];
 
+/**
+ * Applique les migrations manquantes. Chacune est rejouable : si l'application
+ * est fermée au milieu d'une migration, la suivante reprend sans erreur là où
+ * des colonnes, tables ou déclencheurs existent déjà.
+ */
 export async function migrate(db: Db): Promise<void> {
   const [{ user_version }] = await db.all<{ user_version: number }>("PRAGMA user_version");
   for (let v = user_version; v < MIGRATIONS.length; v++) {
-    for (const sql of MIGRATIONS[v]) await db.run(sql);
+    for (const sql of MIGRATIONS[v]) {
+      try {
+        await db.run(sql);
+      } catch (err) {
+        if (!/duplicate column name|already exists/i.test(String(err instanceof Error ? err.message : err))) throw err;
+      }
+    }
     await db.run(`PRAGMA user_version = ${v + 1}`);
   }
 }

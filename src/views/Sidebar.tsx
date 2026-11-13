@@ -1,5 +1,6 @@
 import {
   Bell,
+  X,
   Keyboard,
   Users,
   Cloud,
@@ -32,7 +33,7 @@ import {
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { download, exportBackup, importBackup } from "../data/backup";
-import { duplicatePage, movePage, updatePageMeta, type PageMeta } from "../data/pages";
+import { duplicatePage, movePage, restorePage, trashPage, updatePageMeta, type PageMeta } from "../data/pages";
 import { importFiles } from "../data/importer";
 import { enableReminders } from "../reminders";
 import { useT } from "../i18n";
@@ -99,6 +100,7 @@ function PageRow({
   open,
   onToggle,
   drag,
+  selection,
 }: {
   page: PageMeta;
   depth: number;
@@ -107,6 +109,8 @@ function PageRow({
   open: Set<string>;
   onToggle: (id: string, force?: boolean) => void;
   drag?: Drag;
+  /** Sélection multiple (Ctrl ou Maj + clic), dans l'arbre seulement. */
+  selection?: { ids: Set<string>; toggle: (id: string) => void };
 }) {
   const t = useT();
   const [renaming, setRenaming] = useState(false);
@@ -147,7 +151,7 @@ function PageRow({
         }}
         onDragEnd={() => drag?.end(false)}
         className={`group relative flex h-[30px] items-center rounded-md pr-1.5 font-medium hover:bg-hover ${
-          active ? "bg-hover text-ink" : "text-muted"
+          selection?.ids.has(page.id) ? "bg-accent/15 text-ink" : active ? "bg-hover text-ink" : "text-muted"
         } ${zone === "inside" ? "bg-accent/15" : ""} ${drag?.dragId === page.id ? "opacity-40" : ""}`}
         style={{ paddingLeft: 6 + depth * 12 }}
       >
@@ -185,7 +189,10 @@ function PageRow({
           </span>
         ) : (
           <button
-            onClick={() => navigate({ view: "page", id: page.id })}
+            onClick={(e) => {
+              if (selection && (e.ctrlKey || e.metaKey || e.shiftKey)) selection.toggle(page.id);
+              else navigate({ view: "page", id: page.id });
+            }}
             onDoubleClick={() => setRenaming(true)}
             className="flex h-full min-w-0 flex-1 items-center gap-2 text-left"
           >
@@ -207,7 +214,7 @@ function PageRow({
               {
                 icon: <CornerUpRight size={16} />,
                 label: t("moveTo"),
-                onClick: () => useStore.setState({ moveId: page.id }),
+                onClick: () => useStore.setState({ moveIds: [page.id] }),
               },
               "separator",
               { icon: <Trash2 size={16} />, label: t("moveToTrash"), onClick: () => moveToTrash(page) },
@@ -230,7 +237,16 @@ function PageRow({
       </div>
       {expanded &&
         kids.map((k) => (
-          <PageRow key={k.id} page={k} depth={depth + 1} tree={tree} open={open} onToggle={onToggle} drag={drag} />
+          <PageRow
+            key={k.id}
+            page={k}
+            depth={depth + 1}
+            tree={tree}
+            open={open}
+            onToggle={onToggle}
+            drag={drag}
+            selection={selection}
+          />
         ))}
     </>
   );
@@ -318,6 +334,39 @@ export function Sidebar() {
       }
       await useStore.getState().refreshPages();
     },
+  };
+
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const selection = {
+    ids: selected,
+    toggle: (id: string) =>
+      setSelected((prev) => {
+        const next = new Set(prev);
+        if (!next.delete(id)) next.add(id);
+        return next;
+      }),
+  };
+  // Une page supprimée ou déplacée ailleurs sort de la sélection.
+  const chosen = pages.filter((p) => selected.has(p.id));
+  const trashSelected = async () => {
+    for (const page of chosen) await trashPage(page.id);
+    setSelected(new Set());
+    await useStore.getState().refreshPages();
+    await useStore.getState().refreshDue();
+    if (route.view === "page" && selected.has(route.id)) navigate({ view: "home" });
+    useStore.setState({
+      toast: {
+        message: `${chosen.length} × ${t("trashed").toLowerCase()}`,
+        action: {
+          label: t("undoAction"),
+          run: async () => {
+            for (const page of chosen) await restorePage(page.id);
+            await useStore.getState().refreshPages();
+            await useStore.getState().refreshDue();
+          },
+        },
+      },
+    });
   };
 
   const go = (r: Route) => () => navigate(r);
@@ -449,10 +498,35 @@ export function Sidebar() {
           </SectionHeader>
           {roots.length === 0 && <p className="px-2 py-1 text-[13px] leading-5 text-faint">{t("emptyTree")}</p>}
           {roots.map((p) => (
-            <PageRow key={p.id} page={p} depth={0} tree={tree} open={open} onToggle={toggle} drag={drag} />
+            <PageRow
+              key={p.id}
+              page={p}
+              depth={0}
+              tree={tree}
+              open={open}
+              onToggle={toggle}
+              drag={drag}
+              selection={selection}
+            />
           ))}
         </div>
 
+        {chosen.length > 0 && (
+          <div className="mx-1.5 mb-1 flex h-9 items-center gap-0.5 rounded-md bg-pop px-2 shadow-pop">
+            <span className="flex-1 truncate font-medium">
+              {chosen.length} {t("selected")}
+            </span>
+            <IconButton label={t("moveTo")} onClick={() => useStore.setState({ moveIds: chosen.map((p) => p.id) })}>
+              <CornerUpRight size={15} />
+            </IconButton>
+            <IconButton label={t("moveToTrash")} onClick={trashSelected}>
+              <Trash2 size={15} />
+            </IconButton>
+            <IconButton label={t("clearSelection")} onClick={() => setSelected(new Set())}>
+              <X size={15} />
+            </IconButton>
+          </div>
+        )}
         <div className="px-1.5 pb-2 pt-1 shadow-[inset_0_1px_0_var(--color-line)]">
           <Pomodoro />
           <Menu

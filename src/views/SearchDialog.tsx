@@ -1,6 +1,6 @@
 import { Search } from "lucide-react";
 import { useEffect, useState } from "react";
-import { searchPages, type PageKind, type SearchHit } from "../data/pages";
+import { pageTags, searchPages, type PageKind, type SearchHit } from "../data/pages";
 import type { Key } from "../i18n";
 import { useT } from "../i18n";
 import { useStore } from "../store";
@@ -36,7 +36,7 @@ export function SearchDialog() {
   const navigate = useStore((s) => s.navigate);
   const close = () => useStore.getState().setSearchOpen(false);
   useOverlay(close);
-  const [query, setQuery] = useState("");
+  const [query, setQuery] = useState(() => useStore.getState().searchSeed);
   const [allHits, setHits] = useState<SearchHit[]>([]);
   const [index, setIndex] = useState(0);
   const [kind, setKind] = useState<PageKind | null>(null);
@@ -52,7 +52,14 @@ export function SearchDialog() {
   useEffect(() => {
     let live = true;
     const timer = setTimeout(async () => {
-      const rows = await searchPages(query);
+      // « #étiquette » liste les pages qui la portent ; sinon recherche dans le texte.
+      const tag = /^#(.+)/.exec(query.trim())?.[1].toLowerCase();
+      const rows = tag
+        ? useStore
+            .getState()
+            .pages.filter((p) => pageTags(p).some((x) => x.toLowerCase() === tag))
+            .map((p) => ({ id: p.id, title: p.title, icon: p.icon, kind: p.kind, snippet: "" }))
+        : await searchPages(query);
       if (live) {
         setHits(rows);
         setIndex(0);

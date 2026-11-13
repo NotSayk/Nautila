@@ -172,3 +172,14 @@ export function startShareSession(shareId: string, doc: Y.Doc, awareness: Awaren
     );
   };
 }
+
+/** Réglages d'une page partagée, vus par ce compte. */
+export const shareInfo = (shareId: string) => post<{ owner: boolean; public: boolean }>(`share/${shareId}`, {});
+
+/** Active ou coupe le lien public en lecture seule (propriétaire seulement). */
+export const setSharePublic = (shareId: string, enabled: boolean) =>
+  post<{ public: boolean }>(`share/${shareId}/public`, { public: enabled });
+
+export async function publicLink(shareId: string) {
+  return `${(await account()).server}/#/view/${shareId}`;
+}

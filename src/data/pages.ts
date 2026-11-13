@@ -4,7 +4,8 @@ import { snapshot } from "./versions";
 import { toFtsQuery, type Extracted } from "./extract";
 import { collectFiles, fileId, linkFiles } from "./files";
 
-export type PageKind = "note" | "course" | "semester" | "database";
+/** « synced » : contenu d'un bloc synchronisé, jamais listé comme une page. */
+export type PageKind = "note" | "course" | "semester" | "database" | "synced";
 export type PageFont = "sans" | "serif" | "mono";
 
 export type PageMeta = {
@@ -22,19 +23,25 @@ export type PageMeta = {
   small_text: number;
   /** Identifiant de la page partagée sur le serveur, si elle est partagée en direct. */
   share_id: string | null;
+  /** Étiquettes, sous forme de tableau JSON. */
+  tags: string | null;
   created_at: number;
   updated_at: number;
   deleted_at: number | null;
 };
 
 const META =
-  "id, parent_id, kind, title, icon, position, favorite, full_width, cover, locked, font, small_text, share_id, created_at, updated_at, deleted_at";
+  "id, parent_id, kind, title, icon, position, favorite, full_width, cover, locked, font, small_text, share_id, tags, created_at, updated_at, deleted_at";
 
 export const listPages = () =>
-  db().all<PageMeta>(`SELECT ${META} FROM pages WHERE deleted_at IS NULL ORDER BY position, created_at`);
+  db().all<PageMeta>(
+    `SELECT ${META} FROM pages WHERE deleted_at IS NULL AND kind != 'synced' ORDER BY position, created_at`,
+  );
 
 export const listTrash = () =>
-  db().all<PageMeta>(`SELECT ${META} FROM pages WHERE deleted_at IS NOT NULL ORDER BY deleted_at DESC`);
+  db().all<PageMeta>(
+    `SELECT ${META} FROM pages WHERE deleted_at IS NOT NULL AND kind != 'synced' ORDER BY deleted_at DESC`,
+  );
 
 /** Contenu d'une page : son état Yjs, ou du Markdown à mettre en forme si elle a été créée ailleurs. */
 export async function getPageDoc(id: string): Promise<{ ydoc: string | null; markdown: string | null }> {
@@ -74,6 +81,7 @@ export async function createPage(input: {
     font: "sans",
     small_text: 0,
     share_id: null,
+    tags: null,
     created_at: now,
     updated_at: now,
     deleted_at: null,
@@ -90,6 +98,7 @@ export type PagePatch = {
   title?: string;
   kind?: PageKind;
   share_id?: string | null;
+  tags?: string | null;
   icon?: string | null;
   cover?: string | null;
   font?: PageFont;
@@ -250,7 +259,7 @@ export async function searchPages(query: string): Promise<SearchHit[]> {
     `SELECT p.id, p.title, p.icon, p.kind,
             snippet(pages_fts, 2, char(1), char(2), '…', 14) AS snippet
      FROM pages_fts JOIN pages p ON p.id = pages_fts.page_id
-     WHERE pages_fts MATCH ? ORDER BY bm25(pages_fts, 0, 8, 1) LIMIT 60`,
+     WHERE pages_fts MATCH ? AND p.kind != 'synced' ORDER BY bm25(pages_fts, 0, 8, 1) LIMIT 60`,
     [fts],
   );
 }
@@ -266,4 +275,14 @@ export const backlinks = (id: string) =>
 export async function replacePageDoc(id: string, ydoc: string, body = "") {
   await db().run("UPDATE pages SET ydoc = ?, body = ?, updated_at = ? WHERE id = ?", [ydoc, body, Date.now(), id]);
   await reindex(id);
+}
+
+/** Étiquettes d'une page, lues depuis leur colonne JSON. */
+export function pageTags(page: Pick<PageMeta, "tags">): string[] {
+  try {
+    const tags = JSON.parse(page.tags ?? "[]");
+    return Array.isArray(tags) ? tags.map(String) : [];
+  } catch {
+    return [];
+  }
 }

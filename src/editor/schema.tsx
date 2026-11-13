@@ -10,6 +10,7 @@ import { useT } from "../i18n";
 import { useStore } from "../store";
 import { EmojiPicker } from "../views/EmojiPicker";
 import { DatabaseView } from "../views/database/DatabaseView";
+import { Bibliography, Cite, SyncedBlock } from "./extras";
 import { AudioNote, PdfBlock, Sketch } from "./media";
 
 function renderLatex(latex: string, displayMode: boolean) {
@@ -29,14 +30,25 @@ function AutoTextarea(props: React.TextareaHTMLAttributes<HTMLTextAreaElement>) 
 }
 
 const MathBlock = createReactBlockSpec(
-  { type: "mathBlock", propSchema: { latex: { default: "" } }, content: "none" },
+  { type: "mathBlock", propSchema: { latex: { default: "" }, numbered: { default: false } }, content: "none" },
   {
     render: ({ block, editor }) => {
       const t = useT();
       const latex = block.props.latex;
       const [editing, setEditing] = useState(latex === "" && editor.isEditable);
       return (
-        <div className="math-block" contentEditable={false}>
+        <div className="math-block" data-numbered={block.props.numbered || undefined} contentEditable={false}>
+          {editor.isEditable && (
+            <button
+              className="math-number-toggle"
+              title={t("numberEquation")}
+              aria-label={t("numberEquation")}
+              aria-pressed={block.props.numbered}
+              onClick={() => editor.updateBlock(block, { props: { numbered: !block.props.numbered } })}
+            >
+              (n)
+            </button>
+          )}
           <div
             className="math-block-preview"
             onClick={() => editor.isEditable && setEditing(true)}
@@ -296,8 +308,10 @@ export const schema = withMultiColumn(
       pdf: PdfBlock(),
       sketch: Sketch(),
       databaseEmbed: DatabaseEmbed(),
+      bibliography: Bibliography(),
+      syncedBlock: SyncedBlock(),
     },
-    inlineContentSpecs: { ...defaultInlineContentSpecs, math: InlineMath, pageLink: PageLink },
+    inlineContentSpecs: { ...defaultInlineContentSpecs, math: InlineMath, pageLink: PageLink, cite: Cite },
   }),
 );
 
