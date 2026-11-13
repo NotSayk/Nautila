@@ -1,6 +1,6 @@
 {
   "name": "nautila",
-  "version": "0.2.4",
+  "version": "0.2.5",
   "description": "Espace de notes hors connexion, gratuit et open source, pensé pour les étudiants.",
   "scripts": {
     "dev": "vite",
