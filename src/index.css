@@ -21,7 +21,14 @@
   --shadow-pop: 0 0 0 1px rgb(15 15 15 / 0.05), 0 3px 6px rgb(15 15 15 / 0.1), 0 9px 24px rgb(15 15 15 / 0.2);
 }
 
+/* Indique au navigateur le thème en cours : les contrôles natifs (listes déroulantes,
+   sélecteurs de date, barres de défilement) suivent alors le thème clair ou sombre. */
+:root {
+  color-scheme: light;
+}
+
 .dark {
+  color-scheme: dark;
   --color-bg: #191919;
   --color-panel: #202020;
   --color-pop: #252525;
