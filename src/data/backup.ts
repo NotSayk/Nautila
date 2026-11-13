@@ -1,4 +1,6 @@
-import { db } from "../db";
+import { db, isTauri } from "../db";
+import { translate as tr } from "../i18n";
+import { useStore } from "../store";
 import type { SqlValue } from "../db/types";
 
 const TABLES = [
@@ -44,7 +46,19 @@ export async function importBackup(json: string): Promise<void> {
   );
 }
 
+const translate = (key: Parameters<typeof tr>[1]) => tr(useStore.getState().lang, key);
+
 export function download(filename: string, content: string, type: string) {
+  if (isTauri()) {
+    // Dans la fenêtre de bureau un lien de téléchargement ne fait rien : le fichier est écrit dans Téléchargements.
+    void import("@tauri-apps/api/core")
+      .then(({ invoke }) => invoke<string>("save_download", { name: filename, content }))
+      .then(
+        (path) => useStore.setState({ toast: { message: `${translate("savedTo")} ${path}` } }),
+        () => useStore.setState({ toast: { message: translate("saveFailed") } }),
+      );
+    return;
+  }
   const url = URL.createObjectURL(new Blob([content], { type }));
   const a = document.createElement("a");
   a.href = url;

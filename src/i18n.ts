@@ -374,6 +374,8 @@ const fr = {
   undo: "Annuler le dernier trait",
   clear: "Tout effacer",
   forward: "Suivant",
+  savedTo: "Enregistré :",
+  saveFailed: "Impossible d’enregistrer le fichier.",
 };
 
 const en: typeof fr = {
@@ -748,6 +750,8 @@ const en: typeof fr = {
   undo: "Undo last stroke",
   clear: "Clear all",
   forward: "Forward",
+  savedTo: "Saved:",
+  saveFailed: "Could not save the file.",
 };
 
 export type Key = keyof typeof fr;
