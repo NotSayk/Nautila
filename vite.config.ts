@@ -9,5 +9,5 @@ export default defineConfig({
   worker: { format: "es" },
   clearScreen: false,
   server: { port: 5173, strictPort: true },
-  test: { environment: "node" },
+  test: { environment: "node", exclude: ["**/node_modules/**", "**/dist/**", ".claude/**", "src-tauri/**"] },
 });
