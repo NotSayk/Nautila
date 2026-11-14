@@ -3,6 +3,7 @@ import {
   CalendarDays,
   Columns3,
   Copy,
+  Download,
   GanttChart,
   Layers,
   LayoutGrid,
@@ -15,15 +16,21 @@ import {
   SlidersHorizontal,
   Table2,
   Trash2,
+  Upload,
   X,
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { download } from "../../data/backup";
+import { parseCsv } from "../../data/csv";
+import { exportTable, planImport, toCsv } from "../../data/dbcsv";
 import { rollupTargets, withComputed, type RelatedBase } from "../../data/dbcalc";
 import { convertColumn, convertTargets } from "../../data/dbconvert";
 import {
   addMirror,
   createRow,
+  createRows,
   duplicateRow,
+  fileInfos,
   getDatabase,
   listRows,
   loadRelated,
@@ -106,6 +113,7 @@ export function DatabaseView({ page, embedded }: { page: PageMeta; embedded?: bo
   const configRef = useRef<DbConfig | null>(null);
   const rowsRef = useRef<Row[]>([]);
   const loadSeq = useRef(0);
+  const fileInput = useRef<HTMLInputElement>(null);
 
   const putRows = useCallback((next: Row[] | ((list: Row[]) => Row[])) => {
     rowsRef.current = typeof next === "function" ? next(rowsRef.current) : next;
@@ -467,6 +475,43 @@ export function DatabaseView({ page, embedded }: { page: PageMeta; embedded?: bo
     });
   };
 
+  /** Écrit les lignes visibles de la vue (filtres, tri et recherche compris) et ses propriétés affichées. */
+  const exportCsv = async () => {
+    const shown = visibleProps(config.props, view);
+    const urls = shown
+      .filter((p) => p.type === "files")
+      .flatMap((p) => visible.flatMap((r) => (Array.isArray(r.props[p.id]) ? (r.props[p.id] as string[]) : [])));
+    const infos = await fileInfos(urls);
+    const table = exportTable(shown, visible, {
+      labels: { title: t("name"), yes: t("csvYes"), no: t("csvNo") },
+      titleOf,
+      fileName: (url) => infos.get(url)?.name ?? null,
+    });
+    const name = (page.title || t("database")).replace(/[\\/:*?"<>|]+/g, "_");
+    download(`${name}.csv`, toCsv(table), "text/csv;charset=utf-8");
+  };
+
+  /** Ajoute les lignes d'un fichier CSV à la base ; les colonnes inconnues deviennent des propriétés. */
+  const importCsv = async (file: File) => {
+    const say = (message: string) => useStore.setState({ toast: { message } });
+    try {
+      const plan = planImport(parseCsv(await file.text()), configRef.current?.props ?? config.props, uid);
+      if (!plan) return say(t("csvEmpty"));
+      setConfig((c) => ({ ...c, props: plan.props }));
+      const ids = await createRows(page.id, plan.items);
+      await reload();
+      await refreshPages();
+      const skipped = plan.skipped.length ? ` · ${plan.skipped.length} ${t("csvSkipped")}` : "";
+      toastUndo(`${ids.length} ${t("csvImported")}${skipped}`, t("undoAction"), async () => {
+        for (const id of ids) await trashPage(id);
+        await reload();
+        await refreshPages();
+      });
+    } catch {
+      say(t("csvError"));
+    }
+  };
+
   // Type de vue inconnu (base plus récente, import) : repli sur le tableau.
   const layout: ViewType = VIEW_TYPES.some(([type]) => type === view.type) ? view.type : "table";
   const dated = layout === "calendar" || layout === "timeline";
@@ -623,6 +668,28 @@ export function DatabaseView({ page, embedded }: { page: PageMeta; embedded?: bo
               <PropertiesEditor api={api} />
             </PopButton>
           )}
+          <Menu
+            label={t("moreActions")}
+            className="grid size-7 place-items-center rounded-md text-muted hover:bg-hover"
+            trigger={<MoreHorizontal size={15} />}
+            align="right"
+            items={[
+              { icon: <Download size={16} />, label: t("exportCsv"), onClick: () => void exportCsv() },
+              { icon: <Upload size={16} />, label: t("importCsv"), onClick: () => fileInput.current?.click() },
+            ]}
+          />
+          <input
+            ref={fileInput}
+            type="file"
+            accept=".csv,text/csv"
+            hidden
+            aria-label={t("importCsv")}
+            onChange={(e) => {
+              const file = e.target.files?.[0];
+              e.target.value = "";
+              if (file) void importCsv(file);
+            }}
+          />
           <button
             onClick={() => api.add()}
             className="ml-1 h-7 rounded-md bg-accent px-2.5 font-medium text-white hover:brightness-95"

@@ -663,6 +663,10 @@ const fr = {
   csvError: "Ce fichier CSV n'a pas pu être importé.",
   csvEmpty: "Ce fichier CSV ne contient aucune ligne.",
   rowsCount: "lignes",
+  csvYes: "Oui",
+  csvNo: "Non",
+  csvSkipped: "colonnes ignorées (calculées ou liées)",
+  moreActions: "Plus d'actions",
 };
 
 const en: typeof fr = {
@@ -1325,6 +1329,10 @@ const en: typeof fr = {
   csvError: "This CSV file could not be imported.",
   csvEmpty: "This CSV file has no rows.",
   rowsCount: "rows",
+  csvYes: "Yes",
+  csvNo: "No",
+  csvSkipped: "columns skipped (computed or linked)",
+  moreActions: "More actions",
 };
 
 export type Key = keyof typeof fr;

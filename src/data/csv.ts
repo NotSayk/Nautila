@@ -1,3 +1,4 @@
+import { parseDateValue } from "./dbdate";
 import { OPTION_COLORS, type Prop, type Value } from "./dbquery";
 
 /** Lit un CSV (guillemets, virgules et retours à la ligne dans les champs compris). */
@@ -31,7 +32,9 @@ export function parseCsv(text: string): string[][] {
   return rows.filter((r) => r.some((cell) => cell.trim() !== ""));
 }
 
-const isoDate = (value: string): string | null => {
+/** Date d'une cellule : valeur déjà écrite par Nautila (jour, heure, plage) ou date lisible au format Notion. */
+export const isoDate = (value: string): string | null => {
+  if (parseDateValue(value.trim())) return value.trim();
   // Notion écrit « January 5, 2024 » et, pour une période, « début → fin » : on garde le début.
   const first = value.split("→")[0].trim();
   if (!/\d{4}/.test(first)) return null;
