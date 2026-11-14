@@ -29,11 +29,15 @@ import {
   Sigma,
   Table2,
 } from "lucide-react";
-import { forwardRef, useEffect, useImperativeHandle, useMemo, useRef } from "react";
+import { forwardRef, useContext, useEffect, useImperativeHandle, useMemo, useRef } from "react";
 import { Awareness } from "y-protocols/awareness";
 import * as Y from "yjs";
-import { extract } from "../data/extract";
+import { countWords, extract, type Extracted } from "../data/extract";
 import { Comments } from "./Comments";
+import { askCitePicker, SyncChain } from "./extras";
+import { shrinkImage } from "./image";
+import { mathInput } from "./mathInput";
+import { lastTextBlock } from "./parse";
 import { resolveFileUrl, saveFile, watchSharedFiles } from "../data/files";
 import { createPage, savePageContent } from "../data/pages";
 import { PAGE_LINK } from "../data/importer";
@@ -74,6 +78,26 @@ function userColor(name: string) {
   let hash = 0;
   for (const ch of name) hash = (hash * 31 + ch.charCodeAt(0)) >>> 0;
   return CURSOR_COLORS[hash % CURSOR_COLORS.length];
+}
+
+/**
+ * Libération d'un document et de sa présence (le second lance un minuteur). Différée : le même document
+ * peut être remonté aussitôt (double montage de React en développement), et l'enregistrement de sortie
+ * doit pouvoir finir.
+ */
+const pendingDestroy = new WeakMap<Y.Doc, ReturnType<typeof setTimeout>>();
+function releaseDoc(doc: Y.Doc, awareness: Awareness) {
+  pendingDestroy.set(
+    doc,
+    setTimeout(() => {
+      try {
+        awareness.destroy();
+        doc.destroy();
+      } catch {
+        /* déjà détruits */
+      }
+    }, 1000),
+  );
 }
 
 export type PageEditorHandle = {
@@ -146,7 +170,15 @@ export const PageEditor = forwardRef<PageEditorHandle, Props>(function PageEdito
     return d;
   }, [initialDoc]);
   const awareness = useMemo(() => new Awareness(doc), [doc]);
+  useEffect(() => {
+    clearTimeout(pendingDestroy.get(doc));
+    return () => releaseDoc(doc, awareness);
+  }, [doc, awareness]);
   const username = useStore((s) => s.sync.username);
+  const initialName = useRef(username);
+  initialName.current = username;
+  const chain = useContext(SyncChain);
+  const syncChain = useMemo(() => [...chain, pageId], [chain, pageId]);
   const connected = useStore((s) => s.sync.status !== "off");
 
   // Fichiers de la page partagée ajoutés par les autres participants : demandés au serveur.
@@ -184,11 +216,12 @@ export const PageEditor = forwardRef<PageEditorHandle, Props>(function PageEdito
         ...(lang === "fr" ? fr : en),
         multi_column: columnLocales[lang],
       },
-      extensions: [syntaxHighlighter],
+      extensions: [syntaxHighlighter, mathInput],
       dropCursor: multiColumnDropCursor,
       uploadFile: async (file: File) => {
         try {
-          return await saveFile(file);
+          // Les très grandes images sont réduites avant d'être gardées dans la base.
+          return await saveFile(await shrinkImage(file));
         } catch (err) {
           alert(t("fileTooLarge"));
           throw err;
@@ -197,12 +230,16 @@ export const PageEditor = forwardRef<PageEditorHandle, Props>(function PageEdito
       resolveFileUrl: fileResolver ?? resolveFileUrl,
       collaboration: {
         fragment: doc.getXmlFragment("doc"),
-        user: { name: username ?? "…", color: userColor(username ?? "") },
+        // Le nom est mis à jour plus bas, sans recréer l'éditeur (ce qui ferait perdre le curseur).
+        user: { name: initialName.current ?? "…", color: userColor(initialName.current ?? "") },
         provider: { awareness },
       },
     }),
-    [doc, lang, awareness, username],
+    [doc, lang, awareness],
   );
+  useEffect(() => {
+    awareness.setLocalStateField("user", { name: username ?? "…", color: userColor(username ?? "") });
+  }, [awareness, username]);
 
   useImperativeHandle(
     ref,
@@ -222,10 +259,7 @@ export const PageEditor = forwardRef<PageEditorHandle, Props>(function PageEdito
       },
       bodyText: () => extract(editor.document as never).body,
       docState: () => toBase64(Y.encodeStateAsUpdate(doc)),
-      wordCount: () =>
-        extract(editor.document as never)
-          .body.split(/\s+/)
-          .filter(Boolean).length,
+      wordCount: () => countWords(editor.document as never),
     }),
     [editor, doc],
   );
@@ -235,27 +269,68 @@ export const PageEditor = forwardRef<PageEditorHandle, Props>(function PageEdito
   editorRef.current = editor;
   const onFirstEditRef = useRef(onFirstEdit);
   onFirstEditRef.current = onFirstEdit;
+  const tRef = useRef(t);
+  tRef.current = t;
   useEffect(() => {
     const instance = {};
+    // `timer` sert au délai d'enregistrement comme aux nouveaux essais ; `dirty` : du contenu n'est pas encore gardé.
     let timer: ReturnType<typeof setTimeout> | undefined;
+    let dirty = false;
+    let running = false;
+    let again = false;
+    let failures = 0;
+    let disposed = false;
+    let lastExtracted: Extracted | undefined;
     const save = async () => {
       clearTimeout(timer);
       timer = undefined;
-      if (ephemeral) return;
-      await savePageContent(pageId, toBase64(Y.encodeStateAsUpdate(doc)), extract(editorRef.current.document as never));
-      void useStore.getState().refreshDue();
+      if (ephemeral || !dirty) return;
+      // Un enregistrement est déjà en cours : il recommencera quand il aura fini.
+      if (running) {
+        again = true;
+        return;
+      }
+      running = true;
+      try {
+        do {
+          again = false;
+          dirty = false;
+          try {
+            // Le contenu est relu à chaque essai ; après la fermeture de l'éditeur, le dernier relevé sert.
+            if (!disposed || !lastExtracted) lastExtracted = extract(editorRef.current.document as never);
+            // (pendant la fermeture, `disposed` n'est pas encore posé : le relevé est refait à jour)
+            await savePageContent(pageId, toBase64(Y.encodeStateAsUpdate(doc)), lastExtracted);
+            failures = 0;
+          } catch (err) {
+            // La modification n'est jamais abandonnée : nouvel essai avec un délai croissant (1 s, 2 s, 4 s… 30 s max).
+            console.error("Enregistrement de la page impossible", err);
+            dirty = true;
+            failures++;
+            if (failures === 1 || failures % 5 === 0)
+              useStore.setState({ toast: { message: tRef.current("saveRetry") } });
+            if (!disposed || failures < 10) timer = setTimeout(save, Math.min(30_000, 1000 * 2 ** (failures - 1)));
+            return;
+          }
+        } while (again);
+        void useStore.getState().refreshDue();
+      } finally {
+        running = false;
+      }
     };
-    const flush = () => timer && void save();
+    const flush = () => (timer || dirty) && void save();
     let edited = false;
     const onUpdate = (update: Uint8Array, origin: unknown) => {
+      // Les modifications reçues d'un autre exemplaire du même contenu (autre appareil, bloc synchronisé)
+      // sont déjà gardées par celui qui les a faites : ni version, ni enregistrement, ni « première modification ».
+      if (origin === LOCAL_ECHO) return;
       // Le même contenu peut être affiché deux fois (bloc synchronisé) : les autres exemplaires
       // reçoivent la modification tout de suite, sans attendre l'enregistrement.
-      if (origin !== LOCAL_ECHO)
-        window.dispatchEvent(
-          new CustomEvent(REMOTE_DOC_EVENT, { detail: { id: pageId, ydoc: toBase64(update), from: instance } }),
-        );
+      window.dispatchEvent(
+        new CustomEvent(REMOTE_DOC_EVENT, { detail: { id: pageId, ydoc: toBase64(update), from: instance } }),
+      );
       if (!edited) onFirstEditRef.current?.();
       edited = true;
+      dirty = true;
       clearTimeout(timer);
       timer = setTimeout(save, 600);
     };
@@ -284,7 +359,10 @@ export const PageEditor = forwardRef<PageEditorHandle, Props>(function PageEdito
       pendingMarkdown.delete(pageId);
       const current = editorRef.current;
       current.replaceBlocks(current.document, knownLanguages(current.tryParseMarkdownToBlocks(markdown)));
-    } else if (saveOnMount) void save();
+    } else if (saveOnMount) {
+      dirty = true;
+      void save();
+    }
     document.addEventListener("visibilitychange", onHide);
     window.addEventListener("pagehide", flush);
     return () => {
@@ -292,7 +370,14 @@ export const PageEditor = forwardRef<PageEditorHandle, Props>(function PageEdito
       window.removeEventListener(REMOTE_DOC_EVENT, onRemote);
       document.removeEventListener("visibilitychange", onHide);
       window.removeEventListener("pagehide", flush);
+      // Dernier relevé du texte, tant que l'éditeur existe : les éventuels nouveaux essais s'en serviront.
+      try {
+        if (dirty) lastExtracted = extract(editorRef.current.document as never);
+      } catch {
+        /* éditeur déjà démonté : le relevé précédent reste */
+      }
       flush();
+      disposed = true;
     };
   }, [doc, pageId]);
 
@@ -357,7 +442,11 @@ export const PageEditor = forwardRef<PageEditorHandle, Props>(function PageEdito
       aliases: ["cite", "citer", "bibtex", "reference", "source"],
       group: t("groupStudy"),
       icon: <Quote size={18} />,
-      onItemClick: () => editor.insertInlineContent([{ type: "cite", props: { key: "" } }, " "]),
+      onItemClick: () => {
+        // Seule cette insertion locale ouvre le choix de la référence.
+        askCitePicker();
+        editor.insertInlineContent([{ type: "cite", props: { key: "" } }, " "]);
+      },
     },
     {
       title: t("bibliography"),
@@ -419,18 +508,19 @@ export const PageEditor = forwardRef<PageEditorHandle, Props>(function PageEdito
         onItemClick: () => editor.insertInlineContent([{ type: "pageLink", props: { pageId: p.id } }, " "]),
       }));
 
-  // Cliquer sous le dernier bloc place le curseur à la fin, en ajoutant une
-  // ligne vide si la page se termine par un bloc non textuel (code, image…).
+  // Cliquer sous le dernier bloc place le curseur à la fin de ce bloc ; une ligne vide n'est
+  // ajoutée que si la page se termine par un bloc non textuel (code, image, tableau…).
   const focusEnd = () => {
-    const last = editor.document[editor.document.length - 1];
-    const empty = last.type === "paragraph" && Array.isArray(last.content) && last.content.length === 0;
-    const target = empty ? last : editor.insertBlocks([{ type: "paragraph" }], last, "after")[0];
-    editor.setTextCursorPosition(target, "end");
+    const blocks = editor.document;
+    const target =
+      lastTextBlock(blocks as never) ??
+      editor.insertBlocks([{ type: "paragraph" }], blocks[blocks.length - 1], "after")[0];
+    editor.setTextCursorPosition(target as never, "end");
     editor.focus();
   };
 
   return (
-    <>
+    <SyncChain.Provider value={syncChain}>
       <BlockNoteView editor={editor} editable={editable} theme={dark ? "dark" : "light"} slashMenu={false}>
         <SuggestionMenuController
           triggerCharacter="/"
@@ -455,6 +545,6 @@ export const PageEditor = forwardRef<PageEditorHandle, Props>(function PageEdito
           onClose={onCloseComments}
         />
       )}
-    </>
+    </SyncChain.Provider>
   );
 });

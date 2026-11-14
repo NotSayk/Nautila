@@ -251,7 +251,8 @@ const TableOfContents = createReactBlockSpec(
         refresh();
         return editor.onChange(refresh);
       }, [editor]);
-      const top = Math.min(3, ...headings.map((h) => h.level));
+      // Le niveau le plus haut présent n'est pas indenté (même s'il n'y a que des titres de niveau 4, 5…).
+      const top = headings.length ? Math.min(...headings.map((h) => h.level)) : 1;
       return (
         <nav className="toc" contentEditable={false}>
           {headings.length === 0 && <span className="math-empty">{t("tocEmpty")}</span>}
@@ -260,7 +261,9 @@ const TableOfContents = createReactBlockSpec(
               key={h.id}
               style={{ paddingLeft: 6 + (h.level - top) * 20 }}
               onClick={() =>
-                document.querySelector(`[data-id="${h.id}"]`)?.scrollIntoView({ behavior: "smooth", block: "start" })
+                document
+                  .querySelector(`[data-id="${CSS.escape(h.id)}"]`)
+                  ?.scrollIntoView({ behavior: "smooth", block: "start" })
               }
             >
               {h.text}
