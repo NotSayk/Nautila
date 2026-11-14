@@ -1,6 +1,11 @@
 import {
   ArrowLeft,
   BookOpenCheck,
+  Brackets,
+  CalendarClock,
+  ChartColumn,
+  ClipboardCheck,
+  Download,
   Keyboard,
   Layers,
   ListChecks,
@@ -9,10 +14,13 @@ import {
   Puzzle,
   RefreshCcw,
   Trash2,
+  Upload,
   X,
 } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { Grade } from "ts-fsrs";
+import { parseAnkiText, toAnkiText } from "../data/anki";
+import { download } from "../data/backup";
 import {
   addCard,
   addCards,
@@ -20,6 +28,7 @@ import {
   deckCards,
   deleteCard,
   dueCards,
+  expandLooseClozes,
   gradeCard,
   isExtraCard,
   listDecks,
@@ -29,13 +38,20 @@ import {
   type CardRow,
   type Deck,
 } from "../data/cards";
+import { clozeOf, groupNotes, hasCloze, wrapCloze } from "../data/cloze";
 import { createPage } from "../data/pages";
+import { examSessionCards, upcomingExams } from "../data/plan";
+import { listTasks, type Task } from "../data/tasks";
 import { cleanQuestions, deleteQuiz, listQuizzes, saveQuiz, type Question, type Quiz } from "../data/quizzes";
 import { useT, type Key } from "../i18n";
 import { useStore } from "../store";
-import { IconButton, PageIcon, SectionTitle, TopBar, useOverlay } from "./common";
-import { confirmDialog } from "./dialogs";
+import { daysUntil, IconButton, PageIcon, SectionTitle, TopBar, useOverlay } from "./common";
+import { confirmDialog, notify } from "./dialogs";
+import { CardFront, ClozeText, MathText } from "./study/CardText";
 import { ChoiceMode, FlipMode, MatchMode, questionsFromCards, WriteMode } from "./study/modes";
+import { StatsView } from "./study/Stats";
+import { daysLeftLabel, ExamPlanView, useStudyIntent } from "./study/ExamPlan";
+import { MockExamView } from "./study/MockExam";
 
 const GRADES: [Grade, Key][] = [
   [1, "again"],
@@ -64,6 +80,43 @@ function submitOnCtrlEnter(e: React.KeyboardEvent<HTMLTextAreaElement>) {
     e.preventDefault();
     e.currentTarget.form?.requestSubmit();
   }
+}
+
+/**
+ * Bouton « Trou » : entoure la sélection du champ visé de `{{cN::…}}`. Le clic ne prend pas le focus,
+ * pour garder la sélection ; le curseur est ensuite replacé dans le champ.
+ */
+function ClozeButton({
+  target,
+  value,
+  onChange,
+}: {
+  target: React.RefObject<HTMLTextAreaElement | null>;
+  value: string;
+  onChange: (value: string) => void;
+}) {
+  const t = useT();
+  return (
+    <button
+      type="button"
+      title={t("clozeButtonHint")}
+      onMouseDown={(e) => e.preventDefault()}
+      onClick={() => {
+        const el = target.current;
+        const at = el ? { a: el.selectionStart, b: el.selectionEnd } : { a: value.length, b: value.length };
+        const next = wrapCloze(value, at.a, at.b);
+        onChange(next.text);
+        requestAnimationFrame(() => {
+          el?.focus();
+          el?.setSelectionRange(next.start, next.end);
+        });
+      }}
+      className="flex h-8 items-center gap-1.5 rounded-md px-2 text-muted hover:bg-hover"
+    >
+      <Brackets size={14} />
+      {t("clozeButton")}
+    </button>
+  );
 }
 
 /** Choix de la page qui portera un nouveau paquet : une page existante, ou une page créée pour l'occasion. */
@@ -293,21 +346,33 @@ function interval(due: Date, now: Date, lang: string): string {
   return `${Math.round(min / 43_200)} ${lang === "fr" ? "mois" : "mo"}`;
 }
 
-/** Révision espacée : les cartes dues, notées de « à revoir » à « facile ». */
-function Spaced({ pageId, onExit }: { pageId?: string; onExit: () => void }) {
+/**
+ * Révision espacée : les cartes dues, notées de « à revoir » à « facile ». Avec `pageIds` (révision
+ * pour un examen), les cartes dues de ces pages d'abord, puis leurs nouvelles cartes.
+ */
+function Spaced({ pageId, pageIds, onExit }: { pageId?: string; pageIds?: string[]; onExit: () => void }) {
   const t = useT();
   const lang = useStore((s) => s.lang);
   const pages = useStore((s) => s.pages);
   const navigate = useStore((s) => s.navigate);
   const [queue, setQueue] = useState<CardRow[] | undefined>();
   const [revealed, setRevealed] = useState(false);
+  const load = useCallback(
+    (at: number) => (pageIds ? examSessionCards(pageIds, at) : dueCards(at, pageId)),
+    [pageId, pageIds],
+  );
 
   useEffect(() => {
-    dueCards(Date.now(), pageId).then(setQueue);
-  }, [pageId]);
+    void load(Date.now()).then(setQueue);
+  }, [load]);
 
   const card = queue?.[0];
   const now = new Date();
+  // Temps de réponse : depuis l'affichage de la carte jusqu'à la note (au-delà de 10 min, non significatif).
+  const shownAt = useRef(Date.now());
+  useEffect(() => {
+    shownAt.current = Date.now();
+  }, [card?.id, queue]);
 
   // Verrou : un double appui ne note pas deux fois la même carte.
   const grading = useRef(false);
@@ -315,12 +380,13 @@ function Spaced({ pageId, onExit }: { pageId?: string; onExit: () => void }) {
     if (!card || grading.current) return;
     grading.current = true;
     try {
-      await gradeCard(card, g, now);
+      const spent = Date.now() - shownAt.current;
+      await gradeCard(card, g, now, spent <= 600_000 ? spent : null);
       setRevealed(false);
       // Quand la file est vide, on avance les cartes dues dans les 10 minutes
       // (étapes d'apprentissage) pour finir la séance sans attendre.
-      const next = await dueCards(Date.now(), pageId);
-      setQueue(next.length ? next : await dueCards(Date.now() + 10 * 60_000, pageId));
+      const next = await load(Date.now());
+      setQueue(next.length ? next : await load(Date.now() + 10 * 60_000));
       void useStore.getState().refreshDue();
     } finally {
       grading.current = false;
@@ -357,6 +423,7 @@ function Spaced({ pageId, onExit }: { pageId?: string; onExit: () => void }) {
 
   const preview = previewIntervals(card, now);
   const source = pages.find((p) => p.id === card.page_id);
+  const { cloze } = clozeOf(card);
   return (
     <>
       <p className="mb-3 text-right text-xs text-faint">
@@ -373,12 +440,13 @@ function Spaced({ pageId, onExit }: { pageId?: string; onExit: () => void }) {
         </button>
       )}
       <div className="rounded-xl bg-pop shadow-[0_0_0_1px_var(--color-line),0_2px_8px_rgb(0_0_0/0.05)]">
+        {/* Carte à trous : le recto dévoilé remplace le recto, et le verso facultatif vient dessous. */}
         <div className="whitespace-pre-wrap px-8 py-14 text-center text-2xl font-semibold leading-snug">
-          {card.front}
+          {revealed && cloze ? <ClozeText text={card.front} gap={clozeOf(card).n} reveal /> : <CardFront card={card} />}
         </div>
-        {revealed && (
+        {revealed && (!cloze || card.back.trim()) && (
           <div className="whitespace-pre-wrap px-8 py-10 text-center text-lg shadow-[inset_0_1px_0_var(--color-line)]">
-            {card.back}
+            <MathText text={card.back} />
           </div>
         )}
       </div>
@@ -405,7 +473,15 @@ function Spaced({ pageId, onExit }: { pageId?: string; onExit: () => void }) {
 }
 
 /** Écran d'un paquet : choix du mode d'étude et liste des cartes. */
-function DeckView({ pageId, onStart }: { pageId: string; onStart: (mode: Mode, cards: CardRow[]) => void }) {
+function DeckView({
+  pageId,
+  onStart,
+  onMock,
+}: {
+  pageId: string;
+  onStart: (mode: Mode, cards: CardRow[]) => void;
+  onMock: (title: string) => void;
+}) {
   const t = useT();
   const page = useStore((s) => s.pages.find((p) => p.id === pageId));
   const navigate = useStore((s) => s.navigate);
@@ -416,9 +492,32 @@ function DeckView({ pageId, onStart }: { pageId: string; onStart: (mode: Mode, c
   const [bulkText, setBulkText] = useState("");
   const [editing, setEditing] = useState<{ id: string; front: string; back: string } | null>(null);
   const frontRef = useRef<HTMLTextAreaElement>(null);
+  const bulkRef = useRef<HTMLTextAreaElement>(null);
+  const editRef = useRef<HTMLTextAreaElement>(null);
+  const ankiInput = useRef<HTMLInputElement>(null);
   const reload = useCallback(() => deckCards(pageId).then(setCards), [pageId]);
   useEffect(() => void reload(), [reload]);
   const due = cards.filter((c) => c.due <= Date.now()).length;
+  const notes = groupNotes(cards);
+  const complete = (f: string, b: string) => !!f.trim() && (!!b.trim() || hasCloze(f));
+
+  const importAnki = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    if (!file) return;
+    const list = parseAnkiText(await file.text());
+    if (!list.length) return notify(t("ankiNothing"));
+    await addCards(pageId, list);
+    await reload();
+    void useStore.getState().refreshDue();
+    notify(`${list.length} ${t("ankiImported")}`);
+  };
+  const exportAnki = () =>
+    download(
+      `${(page?.title || t("untitled")).replace(/[\\/:*?"<>|]+/g, "_")}.txt`,
+      toAnkiText(notes.map((n) => ({ front: n.front, back: n.back }))),
+      "text/plain",
+    );
 
   return (
     <>
@@ -456,6 +555,17 @@ function DeckView({ pageId, onStart }: { pageId: string; onStart: (mode: Mode, c
             </button>
           );
         })}
+        <button
+          disabled={cards.length === 0}
+          onClick={() => onMock(page?.title || t("untitled"))}
+          className="flex items-center gap-3 rounded-lg bg-pop p-3 text-left shadow-[0_0_0_1px_var(--color-line)] enabled:hover:bg-hover disabled:opacity-45"
+        >
+          <ClipboardCheck size={20} strokeWidth={1.75} className="shrink-0 text-muted" />
+          <span>
+            <span className="block font-medium">{t("mockExam")}</span>
+            <span className="block text-xs text-muted">{t("mockSub")}</span>
+          </span>
+        </button>
       </div>
 
       <SectionTitle>{t("allCards")}</SectionTitle>
@@ -470,7 +580,7 @@ function DeckView({ pageId, onStart }: { pageId: string; onStart: (mode: Mode, c
             setBulkText("");
             setBulk(false);
           } else {
-            if (!front.trim() || !back.trim()) return;
+            if (!complete(front, back)) return;
             await addCard(pageId, front.trim(), back.trim());
             setFront("");
             setBack("");
@@ -484,6 +594,7 @@ function DeckView({ pageId, onStart }: { pageId: string; onStart: (mode: Mode, c
           <>
             <textarea
               autoFocus
+              ref={bulkRef}
               value={bulkText}
               onChange={(e) => setBulkText(e.target.value)}
               rows={6}
@@ -512,13 +623,13 @@ function DeckView({ pageId, onStart }: { pageId: string; onStart: (mode: Mode, c
               onChange={(e) => setBack(e.target.value)}
               onKeyDown={submitOnCtrlEnter}
               rows={2}
-              placeholder={t("answer")}
+              placeholder={hasCloze(front) ? t("answerOptional") : t("answer")}
               aria-label={t("answer")}
               className={area}
             />
           </div>
         )}
-        <div className="mt-2 flex items-center gap-2">
+        <div className="mt-2 flex flex-wrap items-center gap-x-2 gap-y-1">
           <button
             type="button"
             className="h-8 rounded-md px-2 text-muted hover:bg-hover"
@@ -526,31 +637,55 @@ function DeckView({ pageId, onStart }: { pageId: string; onStart: (mode: Mode, c
           >
             {t(bulk ? "addOneCard" : "bulkImport")}
           </button>
+          {bulk ? (
+            <ClozeButton target={bulkRef} value={bulkText} onChange={setBulkText} />
+          ) : (
+            <ClozeButton target={frontRef} value={front} onChange={setFront} />
+          )}
           <span className="flex-1" />
           <button
-            disabled={bulk ? parseCardList(bulkText).length === 0 : !front.trim() || !back.trim()}
+            disabled={bulk ? parseCardList(bulkText).length === 0 : !complete(front, back)}
             className="h-8 rounded-md bg-accent px-3 font-medium text-white hover:brightness-95 disabled:opacity-40"
           >
             {t(bulk ? "addCards" : "addCard")}
           </button>
         </div>
+        <p className="mt-1 px-1 text-xs text-muted">{t("clozeHint")}</p>
       </form>
+      <div className="mb-2 flex flex-wrap justify-end gap-1">
+        <button type="button" className="flex h-7 items-center gap-1.5 rounded-md px-2 text-muted hover:bg-hover" onClick={() => ankiInput.current?.click()}>
+          <Upload size={14} />
+          {t("ankiImport")}
+        </button>
+        <button
+          type="button"
+          disabled={cards.length === 0}
+          className="flex h-7 items-center gap-1.5 rounded-md px-2 text-muted enabled:hover:bg-hover disabled:opacity-45"
+          onClick={exportAnki}
+        >
+          <Download size={14} />
+          {t("ankiExport")}
+        </button>
+        <input ref={ankiInput} type="file" accept=".txt,.tsv,.csv,text/plain,text/tab-separated-values" hidden onChange={importAnki} />
+      </div>
       {cards.length === 0 && <p className="py-4 text-muted">{t("deckEmpty")}</p>}
-      {cards.map((c) =>
+      {notes.map((c) =>
         editing?.id === c.id ? (
           <form
             key={c.id}
             className="grid gap-2 py-2 shadow-[inset_0_-1px_0_var(--color-line)] sm:grid-cols-2"
             onSubmit={async (e) => {
               e.preventDefault();
-              if (!editing.front.trim() || !editing.back.trim()) return;
+              if (!complete(editing.front, editing.back)) return;
               await updateCard(c.id, editing.front.trim(), editing.back.trim());
               setEditing(null);
               await reload();
+              void useStore.getState().refreshDue();
             }}
           >
             <textarea
               autoFocus
+              ref={editRef}
               value={editing.front}
               onChange={(e) => setEditing({ ...editing, front: e.target.value })}
               onKeyDown={submitOnCtrlEnter}
@@ -567,6 +702,8 @@ function DeckView({ pageId, onStart }: { pageId: string; onStart: (mode: Mode, c
               className={area}
             />
             <div className="flex justify-end gap-2 sm:col-span-2">
+              <ClozeButton target={editRef} value={editing.front} onChange={(front) => setEditing({ ...editing, front })} />
+              <span className="flex-1" />
               <button type="button" className="h-8 rounded-md px-3 hover:bg-hover" onClick={() => setEditing(null)}>
                 {t("cancel")}
               </button>
@@ -580,8 +717,17 @@ function DeckView({ pageId, onStart }: { pageId: string; onStart: (mode: Mode, c
             key={c.id}
             className="group grid grid-cols-[1fr_1fr_auto] items-start gap-3 py-2 shadow-[inset_0_-1px_0_var(--color-line)]"
           >
-            <span className="whitespace-pre-wrap font-medium">{c.front}</span>
-            <span className="whitespace-pre-wrap text-muted">{c.back}</span>
+            <span className="min-w-0 whitespace-pre-wrap break-words font-medium">
+              <ClozeText text={c.front} />
+              {c.gaps > 1 && (
+                <span className="ml-2 whitespace-nowrap align-middle text-xs font-normal text-faint">
+                  {c.gaps} {t("clozeCount")}
+                </span>
+              )}
+            </span>
+            <span className="min-w-0 whitespace-pre-wrap break-words text-muted">
+              <MathText text={c.back} />
+            </span>
             {isExtraCard(c.id) ? (
               <span className="flex opacity-0 focus-within:opacity-100 group-hover:opacity-100 max-md:opacity-100">
                 <IconButton label={t("edit")} onClick={() => setEditing({ id: c.id, front: c.front, back: c.back })}>
@@ -617,21 +763,43 @@ function DeckView({ pageId, onStart }: { pageId: string; onStart: (mode: Mode, c
 type Screen =
   | { name: "home" }
   | { name: "deck"; pageId: string }
-  | { name: "study"; mode: Mode; cards: CardRow[]; pageId?: string; questions?: Question[] }
+  | {
+      name: "study";
+      mode: Mode;
+      cards: CardRow[];
+      pageId?: string;
+      questions?: Question[];
+      /** Révision pour un examen : pages de la matière, et examen auquel revenir. */
+      pageIds?: string[];
+      examId?: string;
+    }
+  | { name: "exam"; taskId: string }
+  /** Examen blanc ; sans `pageIds`, la source se choisit dans les réglages. `from` : écran où revenir. */
+  | { name: "mock"; pageIds?: string[]; title?: string; from?: Screen }
   | { name: "quiz"; quiz: Quiz }
-  | { name: "editQuiz"; quiz: Quiz | null };
+  | { name: "editQuiz"; quiz: Quiz | null }
+  | { name: "stats" };
 
 export function Review() {
   const t = useT();
   const pages = useStore((s) => s.pages);
-  const [screen, setScreen] = useState<Screen>({ name: "home" });
+  // Ouverture depuis l'accueil ou les devoirs : directement sur le plan d'un examen.
+  const [screen, setScreen] = useState<Screen>(() => {
+    const exam = useStudyIntent.getState().exam;
+    useStudyIntent.setState({ exam: null });
+    return exam ? { name: "exam", taskId: exam } : { name: "home" };
+  });
+  const [exams, setExams] = useState<Task[]>([]);
   const [decks, setDecks] = useState<Deck[]>([]);
   const [quizzes, setQuizzes] = useState<Quiz[]>([]);
   const [stats, setStats] = useState({ due: 0, total: 0 });
   const [newDeck, setNewDeck] = useState(false);
 
-  const reload = useCallback(() => {
+  const reload = useCallback(async () => {
+    // Cartes à trous arrivées d'un seul tenant (connecteur MCP) : un trou par entrée planifiée.
+    if (await expandLooseClozes().catch(() => 0)) void useStore.getState().refreshDue();
     void listDecks().then(setDecks);
+    void listTasks().then((all) => setExams(upcomingExams(all)));
     void listQuizzes().then(setQuizzes);
     void cardStats().then(setStats);
   }, []);
@@ -640,7 +808,15 @@ export function Review() {
   }, [screen.name, reload]);
 
   const back = () =>
-    setScreen(screen.name === "study" && screen.pageId ? { name: "deck", pageId: screen.pageId } : { name: "home" });
+    setScreen(
+      screen.name === "mock" && screen.from
+        ? screen.from
+        : screen.name === "study" && screen.examId
+        ? { name: "exam", taskId: screen.examId }
+        : screen.name === "study" && screen.pageId
+          ? { name: "deck", pageId: screen.pageId }
+          : { name: "home" },
+    );
   const title = (id: string | null) => pages.find((p) => p.id === id);
 
   return (
@@ -683,7 +859,38 @@ export function Review() {
                 <Plus size={15} />
                 {t("newQuiz")}
               </button>
+              <button className={SECONDARY} onClick={() => setScreen({ name: "mock" })}>
+                <ClipboardCheck size={15} />
+                {t("mockExam")}
+              </button>
+              <button className={SECONDARY} onClick={() => setScreen({ name: "stats" })}>
+                <ChartColumn size={15} />
+                {t("statsTitle")}
+              </button>
             </div>
+
+            {exams.length > 0 && (
+              <>
+                <SectionTitle>
+                  <CalendarClock size={14} />
+                  {t("upcomingExams")}
+                </SectionTitle>
+                <div className="mb-10">
+                  {exams.map((exam) => (
+                    <button
+                      key={exam.id}
+                      onClick={() => setScreen({ name: "exam", taskId: exam.id })}
+                      className="flex min-h-11 w-full items-center gap-2.5 rounded-md px-2 text-left shadow-[inset_0_-1px_0_var(--color-line)] hover:bg-hover"
+                    >
+                      <span className="tag tag-red">{t("exam")}</span>
+                      <span className="min-w-0 flex-1 truncate font-medium">{exam.title}</span>
+                      <span className="truncate text-muted max-sm:hidden">{title(exam.course_id)?.title}</span>
+                      <span className="text-muted">{daysLeftLabel(daysUntil(exam.due_at!), t)}</span>
+                    </button>
+                  ))}
+                </div>
+              </>
+            )}
 
             <SectionTitle>
               <Layers size={14} />
@@ -764,6 +971,7 @@ export function Review() {
         {screen.name === "deck" && (
           <DeckView
             pageId={screen.pageId}
+            onMock={(title) => setScreen({ name: "mock", pageIds: [screen.pageId], title, from: screen })}
             onStart={(mode, cards) =>
               setScreen({
                 name: "study",
@@ -776,7 +984,25 @@ export function Review() {
             }
           />
         )}
-        {screen.name === "study" && screen.mode === "spaced" && <Spaced pageId={screen.pageId} onExit={back} />}
+        {screen.name === "study" && screen.mode === "spaced" && (
+          <Spaced pageId={screen.pageId} pageIds={screen.pageIds} onExit={back} />
+        )}
+        {screen.name === "exam" && (
+          <ExamPlanView
+            key={screen.taskId}
+            taskId={screen.taskId}
+            onReview={(pageIds) => setScreen({ name: "study", mode: "spaced", cards: [], pageIds, examId: screen.taskId })}
+            onMock={(pageIds, title) => setScreen({ name: "mock", pageIds, title, from: screen })}
+          />
+        )}
+        {screen.name === "mock" && (
+          <MockExamView
+            key={screen.pageIds?.join(",") ?? "choose"}
+            pageIds={screen.pageIds}
+            title={screen.title}
+            onExit={back}
+          />
+        )}
         {screen.name === "study" && screen.mode === "flip" && <FlipMode cards={screen.cards} onExit={back} />}
         {screen.name === "study" && screen.mode === "choice" && (
           <ChoiceMode questions={screen.questions ?? []} onExit={back} />
@@ -785,6 +1011,7 @@ export function Review() {
         {screen.name === "study" && screen.mode === "match" && <MatchMode cards={screen.cards} onExit={back} />}
         {screen.name === "quiz" && <ChoiceMode questions={screen.quiz.questions} onExit={back} />}
         {screen.name === "editQuiz" && <QuizEditor quiz={screen.quiz} onDone={() => setScreen({ name: "home" })} />}
+        {screen.name === "stats" && <StatsView />}
       </div>
       {newDeck && (
         <NewDeckDialog

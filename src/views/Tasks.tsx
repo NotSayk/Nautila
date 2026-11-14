@@ -1,29 +1,54 @@
-import { Pencil, Trash2 } from "lucide-react";
+import { CalendarClock, Pencil, Repeat, Trash2 } from "lucide-react";
 import { useEffect, useState } from "react";
 import {
   addTask,
   deleteTask,
+  isRecurrence,
   listTasks,
+  RECURRENCES,
   restoreTask,
   setTaskDone,
   updateTask,
+  type Recurrence,
   type Task,
   type TaskKind,
 } from "../data/tasks";
-import { useT } from "../i18n";
+import { useT, type Key } from "../i18n";
 import { useStore } from "../store";
 import { daysUntil, formatDue, IconButton, View } from "./common";
 import { notify } from "./dialogs";
+import { openExamPlan } from "./study/ExamPlan";
 
 const COLS =
-  "grid grid-cols-[20px_minmax(0,1fr)_auto_auto_60px] items-center gap-3 sm:grid-cols-[20px_minmax(0,1fr)_84px_150px_120px_60px]";
+  "grid grid-cols-[20px_minmax(0,1fr)_auto_auto_60px] items-center gap-2 sm:gap-3 sm:grid-cols-[20px_minmax(0,1fr)_84px_150px_120px_88px]";
 const field = "h-8 rounded-md bg-transparent px-2 hover:bg-hover focus:bg-hover";
 /** Midi, heure locale : la date choisie reste la même quel que soit le fuseau. */
 const toTimestamp = (day: string) => (day ? new Date(`${day}T12:00:00`).getTime() : null);
 const toDay = (ts: number | null) => (ts === null ? "" : new Date(ts).toLocaleDateString("sv-SE"));
 const HIDE_UNTIL_HOVER = "opacity-0 focus:opacity-100 group-hover:opacity-100 group-focus-within:opacity-100 [@media(hover:none)]:opacity-100";
+const REPEAT_LABEL: Record<Recurrence, Key> = {
+  daily: "repeatDaily",
+  weekly: "repeatWeekly",
+  biweekly: "repeatBiweekly",
+  monthly: "repeatMonthly",
+};
 
-/** Ligne en cours de modification : titre, type, matière et date. */
+/** Choix de la répétition ("" : une seule fois). */
+function RepeatSelect({ value, onChange }: { value: string; onChange: (value: string) => void }) {
+  const t = useT();
+  return (
+    <select aria-label={t("repeat")} value={value} onChange={(e) => onChange(e.target.value)} className={field}>
+      <option value="">{t("repeatNone")}</option>
+      {RECURRENCES.map((r) => (
+        <option key={r} value={r}>
+          {t(REPEAT_LABEL[r])}
+        </option>
+      ))}
+    </select>
+  );
+}
+
+/** Ligne en cours de modification : titre, type, matière, date et répétition. */
 function EditRow({ task, onDone }: { task: Task; onDone: (saved: boolean) => void }) {
   const t = useT();
   const courses = useStore((s) => s.pages).filter((p) => p.kind === "course");
@@ -31,10 +56,17 @@ function EditRow({ task, onDone }: { task: Task; onDone: (saved: boolean) => voi
   const [kind, setKind] = useState<TaskKind>(task.kind);
   const [course, setCourse] = useState(task.course_id ?? "");
   const [due, setDue] = useState(toDay(task.due_at));
+  const [repeat, setRepeat] = useState(isRecurrence(task.recurrence) ? task.recurrence : "");
   const save = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!title.trim()) return;
-    await updateTask(task.id, { title: title.trim(), kind, course_id: course || null, due_at: toTimestamp(due) });
+    await updateTask(task.id, {
+      title: title.trim(),
+      kind,
+      course_id: course || null,
+      due_at: toTimestamp(due),
+      recurrence: isRecurrence(repeat) ? repeat : null,
+    });
     onDone(true);
   };
   return (
@@ -63,6 +95,7 @@ function EditRow({ task, onDone }: { task: Task; onDone: (saved: boolean) => voi
         ))}
       </select>
       <input type="date" aria-label={t("dueDate")} value={due} onChange={(e) => setDue(e.target.value)} className={field} />
+      <RepeatSelect value={repeat} onChange={setRepeat} />
       <button className="h-8 rounded-md bg-accent px-3 font-medium text-white hover:brightness-95">{t("save")}</button>
       <button type="button" onClick={() => onDone(false)} className="h-8 rounded-md px-3 hover:bg-hover">
         {t("cancel")}
@@ -82,6 +115,7 @@ export function Tasks() {
   const [kind, setKind] = useState<TaskKind>("homework");
   const [course, setCourse] = useState("");
   const [due, setDue] = useState("");
+  const [repeat, setRepeat] = useState("");
   const [editing, setEditing] = useState<string | null>(null);
 
   const reload = () => listTasks().then(setTasks);
@@ -90,7 +124,13 @@ export function Tasks() {
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!title.trim()) return;
-    await addTask({ title: title.trim(), kind, course_id: course || null, due_at: toTimestamp(due) });
+    await addTask({
+      title: title.trim(),
+      kind,
+      course_id: course || null,
+      due_at: toTimestamp(due),
+      recurrence: isRecurrence(repeat) ? repeat : null,
+    });
     setTitle("");
     await reload();
   };
@@ -138,12 +178,23 @@ export function Tasks() {
           aria-label={task.title}
           checked={!!task.done}
           onChange={async (e) => {
-            await setTaskDone(task.id, e.target.checked);
-            await reload();
+            const next = await setTaskDone(task, e.target.checked);
+            const rows = await listTasks();
+            setTasks(rows);
+            const created = rows.find((r) => r.id === next);
+            if (created?.due_at != null) notify(`${t("nextOccurrence")} ${formatDue(created.due_at, lang)}`);
           }}
           className="size-4 accent-(--color-accent)"
         />
-        <span className={`truncate font-medium ${task.done ? "text-faint line-through" : ""}`}>{task.title}</span>
+        <span className="flex min-w-0 items-center gap-1.5">
+          <span className={`truncate font-medium ${task.done ? "text-faint line-through" : ""}`}>{task.title}</span>
+          {isRecurrence(task.recurrence) && (
+            <span title={t(REPEAT_LABEL[task.recurrence])} className="shrink-0 text-faint">
+              <Repeat size={12} aria-hidden />
+              <span className="sr-only">{t(REPEAT_LABEL[task.recurrence])}</span>
+            </span>
+          )}
+        </span>
         <span>
           <span className={`tag ${task.kind === "exam" ? "tag-red" : "tag-blue"}`}>{t(task.kind)}</span>
         </span>
@@ -152,6 +203,12 @@ export function Tasks() {
           {task.due_at !== null && formatDue(task.due_at, lang)}
         </span>
         <span className="flex">
+          {task.kind === "exam" && !task.done && (
+            // Sur un téléphone, la place manque : le plan reste accessible depuis l'accueil.
+            <IconButton label={t("examPlan")} onClick={() => openExamPlan(task.id)} className={`${HIDE_UNTIL_HOVER} max-sm:hidden`}>
+              <CalendarClock size={14} />
+            </IconButton>
+          )}
           <IconButton label={t("editTask")} onClick={() => setEditing(task.id)} className={HIDE_UNTIL_HOVER}>
             <Pencil size={14} />
           </IconButton>
@@ -194,6 +251,7 @@ export function Tasks() {
           ))}
         </select>
         <input type="date" aria-label={t("dueDate")} value={due} onChange={(e) => setDue(e.target.value)} className={field} />
+        <RepeatSelect value={repeat} onChange={setRepeat} />
         <button className="h-8 rounded-md bg-accent px-3 font-medium text-white hover:brightness-95">{t("newTask")}</button>
       </form>
 

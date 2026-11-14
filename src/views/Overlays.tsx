@@ -2,6 +2,7 @@ import { useEffect } from "react";
 import { useT, type Key } from "../i18n";
 import { fmtKeys } from "../util/platform";
 import { useStore } from "../store";
+import { openDailyNote } from "./daily";
 import { Modal } from "./dialogs";
 
 // `{mod}`, `{shift}`, `{alt}` et `{space}` s'adaptent à la plateforme et à la langue (voir fmtKeys).
@@ -11,6 +12,7 @@ const SHORTCUTS: [Key, [Key, string][]][] = [
     [
       ["scSearch", "{mod} K"],
       ["scNewPage", "{mod} {alt} N"],
+      ["dailyNote", "{mod} {alt} J"],
       ["scSidebar", "{mod} \\"],
       ["scTheme", "{mod} {shift} L"],
       ["scNewTab", "{mod} {alt} T"],
@@ -118,6 +120,7 @@ export function useGlobalShortcuts() {
       }
       // Ctrl+N seul est réservé par les navigateurs (nouvelle fenêtre).
       if (e.code === "KeyN") run(() => void store.newPage({}).catch(() => undefined));
+      else if (e.code === "KeyJ") run(() => void openDailyNote());
       // Ctrl+T et Ctrl+W seuls appartiennent au navigateur : les onglets passent par Ctrl+Alt.
       else if (key === "t" || e.code === "KeyT") run(() => store.openTab());
       else if (key === "w" || e.code === "KeyW") run(() => store.closeTab(store.tab));

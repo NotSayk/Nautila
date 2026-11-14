@@ -1,5 +1,5 @@
 import { db } from "../db";
-import { SYNC_TABLES } from "../db/schema";
+import { NEWER_SYNC_TABLES, SYNC_TABLES } from "../db/schema";
 import type { SqlValue } from "../db/types";
 import { useStore } from "../store";
 import { nextBatch, onPushError, pendingMark, PUSH_ROWS, type Pending } from "./batch";
@@ -47,6 +47,19 @@ export async function retrySkipped() {
   setSkipped([]);
   await syncNow();
 }
+
+/**
+ * Tables annoncées par le serveur à la dernière synchronisation (null : pas encore de réponse, ou serveur
+ * trop ancien pour les annoncer). Les tables récentes qu'il ne connaît pas restent en attente sur
+ * l'appareil, sans erreur, et partiront quand il sera mis à jour.
+ */
+let serverTables: Set<string> | null = null;
+const heldTables = () => NEWER_SYNC_TABLES.filter((t) => !serverTables?.has(t));
+/** Filtre SQL du journal : sans les tables retenues. */
+const notHeld = () => {
+  const held = heldTables();
+  return held.length ? `WHERE tbl NOT IN (${held.map((t) => `'${t}'`).join(",")})` : "";
+};
 
 export class SyncError extends Error {
   constructor(
@@ -98,6 +111,7 @@ export async function connect(input: {
     res.token,
   ]);
   setSkipped([]);
+  serverTables = null;
   const now = Date.now();
   for (const [table, key] of Object.entries(SYNC_TABLES)) {
     // Les pages gardent leur date de modification, pour ne pas écraser une version plus récente du compte.
@@ -142,6 +156,7 @@ export async function disconnect() {
   await db().run("UPDATE sync_state SET token = NULL, seq = 0, last_sync = NULL");
   await db().run("DELETE FROM sync_log");
   setSkipped([]);
+  serverTables = null;
   useStore.setState({ sync: { status: "off" } });
 }
 
@@ -255,12 +270,15 @@ async function cycle() {
       // Une ligne remodifiée depuis son refus a une autre date : elle n'est plus exclue et repart.
       const excluded = new Set([...skipped.map(pendingMark), ...deferred]);
       const limit = solo ? 1 : PUSH_ROWS;
-      const rows = await db().all<Pending>(`SELECT tbl, id, at FROM sync_log ORDER BY at LIMIT ${limit + excluded.size}`);
+      const heldBefore = heldTables().length;
+      const rows = await db().all<Pending>(
+        `SELECT tbl, id, at FROM sync_log ${notHeld()} ORDER BY at LIMIT ${limit + excluded.size}`,
+      );
       const pending = rows.filter((p) => !excluded.has(pendingMark(p)));
       const { changes, oversized, consumed } = await nextBatch(pending, load, limit);
       if (oversized.length > 0) skip(oversized, "tooLarge");
 
-      let res: { seq: number; changes: Change[]; more: boolean };
+      let res: { seq: number; changes: Change[]; more: boolean; tables?: unknown };
       try {
         res = await api(state.server, "sync", { since: seq, changes }, state.token);
       } catch (err) {
@@ -285,6 +303,9 @@ async function cycle() {
       }
       seq = res.seq;
       await db().run("UPDATE sync_state SET seq = ?, last_sync = ?", [seq, Date.now()]);
+      if (Array.isArray(res.tables)) serverTables = new Set(res.tables.filter((t) => typeof t === "string"));
+      // Le serveur vient d'annoncer des tables retenues jusque-là : un tour de plus pour les envoyer.
+      if (heldTables().length < heldBefore) continue;
       if (!res.more && consumed === pending.length && pending.length < limit) break;
     }
 
@@ -347,7 +368,8 @@ export async function startSync() {
   let lastPull = 0;
   const tick = async () => {
     if (useStore.getState().sync.status === "off" || document.visibilityState === "hidden") return;
-    const [{ n }] = await db().all<{ n: number }>("SELECT COUNT(*) AS n FROM sync_log");
+    // Les lignes retenues pour un serveur trop ancien ne relancent pas la synchronisation non plus.
+    const [{ n }] = await db().all<{ n: number }>(`SELECT COUNT(*) AS n FROM sync_log ${notHeld()}`);
     // Les modifications mises de côté ne relancent pas la synchronisation toutes les six secondes.
     if (n <= skippedChanges().length && Date.now() - lastPull < 25_000) return;
     lastPull = Date.now();

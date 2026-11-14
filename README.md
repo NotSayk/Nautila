@@ -28,6 +28,10 @@ Tes notes restent sur ton appareil : pas de compte, pas de télémétrie.
 - Formules sur nombres, textes et dates : `if`, `round`, `concat`, `days`, `today`, comparaisons.
 - Vues tableau, kanban, calendrier, liste, galerie et chronologie, avec filtres, tri et regroupement.
 - Une base peut être intégrée dans une page.
+- Colonnes redimensionnables, réordonnables et masquables par vue ; calculs en pied de colonne ; tris
+  multiples, filtres ET/OU, dates relatives ; groupes repliables ; import et export CSV.
+- Types supplémentaires : date avec heure ou plage, URL, e-mail, téléphone, dates de création et de
+  modification, format des nombres, cumul à travers une relation, fichier joint, relation bidirectionnelle.
 
 **Études**
 - Flashcards à répétition espacée (FSRS), rangées en paquets par page : créées dans les notes (`/flashcard`)
@@ -38,7 +42,15 @@ Tes notes restent sur ton appareil : pas de compte, pas de télémétrie.
 - Emploi du temps semaine par semaine, comme un agenda : import d'un fichier iCal (.ics) exporté d'ADE,
   HyperPlanning, Celcat ou d'un agenda, avec les vacances, les cours annulés, la salle, l'enseignant et le
   type de séance. Réimporter le fichier met le calendrier à jour ; les cours du jour sont sur l'accueil.
-- Minuteur Pomodoro, tableau de bord du jour.
+- Minuteur Pomodoro (avec choix de la matière), tableau de bord du jour.
+- Cartes à trous : `{{c1::réponse}}` ou `{{c1::réponse::indice}}`, une révision par numéro de trou.
+  Formules `$…$` et `$$…$$` rendues dans les cartes et les quiz. Import et export au format texte d'Anki.
+- Statistiques : série de jours et record, carte des révisions sur 26 semaines, réussite globale et par
+  paquet, prévision sur 14 jours, temps d'étude par matière ; objectif du jour réglable sur l'accueil.
+- Examens : compte à rebours sur l'accueil, plan de révision (charge quotidienne jusqu'à l'examen) et
+  séance « Réviser pour cet examen ». Examen blanc chronométré tiré des cartes et des quiz, corrigé à la
+  fin, sans effet sur la répétition espacée sauf option.
+- Devoirs récurrents (jour, semaine, deux semaines, mois) ; note du jour (`Ctrl Alt J`), rangée dans « Journal ».
 
 **Données**
 - Tout est stocké sur l'appareil. Export Markdown, HTML autonome (images et formules intégrées) et PDF par page.
