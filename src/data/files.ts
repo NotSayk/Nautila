@@ -1,4 +1,5 @@
 import { db } from "../db";
+import type { Statement } from "../db/types";
 
 /** Préfixe des adresses de fichiers stockés dans la base locale. */
 export const FILE_SCHEME = "nautila-file:";
@@ -68,9 +69,7 @@ export function resolveFileUrl(url: string): Promise<string> {
   if (!pending) {
     pending = (async () => {
       const [row] = await db().all<{ mime: string; data: string }>("SELECT mime, data FROM files WHERE id = ?", [id]);
-      const blob = row
-        ? await (await fetch(`data:${row.mime};base64,${row.data}`)).blob()
-        : await fetchSharedFile(id);
+      const blob = row ? await (await fetch(`data:${row.mime};base64,${row.data}`)).blob() : await fetchSharedFile(id);
       // Introuvable pour l'instant : on réessaiera à la prochaine demande.
       if (!blob) urls.delete(id);
       return blob ? URL.createObjectURL(blob) : "";
@@ -80,20 +79,79 @@ export function resolveFileUrl(url: string): Promise<string> {
   return pending;
 }
 
-const HOUR = 3_600_000;
+/** Un fichier récent est épargné : il peut être joint à une page pas encore enregistrée ou pas encore reçue par synchro. */
+const GRACE = 3 * 24 * 3_600_000;
 
 export const fileId = (url: string | null | undefined) =>
   url?.startsWith(FILE_SCHEME) ? url.slice(FILE_SCHEME.length) : null;
 
+/** Instructions qui notent qu'une page (ou un modèle) utilise ces fichiers. */
+export const linkStatements = (ownerId: string, ids: (string | null)[]): Statement[] =>
+  ids.flatMap((id) =>
+    id ? [{ sql: "INSERT OR IGNORE INTO page_files (page_id, file_id) VALUES (?, ?)", params: [ownerId, id] }] : [],
+  );
+
 /** Note qu'une page (ou un modèle) utilise ces fichiers. */
 export async function linkFiles(ownerId: string, ids: (string | null)[]) {
-  for (const id of ids)
-    if (id) await db().run("INSERT OR IGNORE INTO page_files (page_id, file_id) VALUES (?, ?)", [ownerId, id]);
+  const statements = linkStatements(ownerId, ids);
+  if (statements.length) await db().batch(statements);
+}
+
+/** Le texte brut d'un état Yjs (base64) contient les adresses des fichiers en clair : on y cherche leurs identifiants. */
+function decodedText(base64: string): string {
+  try {
+    return atob(base64);
+  } catch {
+    return "";
+  }
 }
 
 /**
- * Supprime les fichiers que plus aucune page ni modèle n'utilise. Un fichier
- * récent est épargné : il peut être joint à une page pas encore enregistrée.
+ * Supprime les fichiers que plus aucune page ni modèle n'utilise. Sont épargnés :
+ * - les fichiers récents (GRACE) ;
+ * - ceux encore cités par un contenu en attente (`import_md` d'une page importée jamais ouverte),
+ *   une couverture, ou le document d'une page ou d'un modèle, même sans lien `page_files`
+ *   (fichier arrivé par synchro avant son lien). Ces liens manquants sont alors rétablis.
  */
-export const collectFiles = (now = Date.now()) =>
-  db().run("DELETE FROM files WHERE created_at < ? AND id NOT IN (SELECT file_id FROM page_files)", [now - HOUR]);
+export async function collectFiles(now = Date.now()) {
+  const candidates = (
+    await db().all<{ id: string }>(
+      "SELECT id FROM files WHERE created_at < ? AND id NOT IN (SELECT file_id FROM page_files)",
+      [now - GRACE],
+    )
+  ).map((r) => r.id);
+  if (candidates.length === 0) return;
+
+  const doomed = new Set(candidates);
+  const links: Statement[] = [];
+  const spare = (id: string, owner: string) => {
+    if (doomed.delete(id)) links.push(...linkStatements(owner, [id]));
+  };
+
+  // Contenus en attente, couvertures, propriétés : des champs de texte, interrogés fichier par fichier.
+  for (const id of candidates) {
+    const [owner] = await db().all<{ id: string }>(
+      `SELECT id FROM pages WHERE instr(COALESCE(import_md, ''), ?1) > 0 OR instr(COALESCE(cover, ''), ?1) > 0
+         OR instr(COALESCE(props, ''), ?1) > 0 LIMIT 1`,
+      [id],
+    );
+    if (owner) spare(id, owner.id);
+  }
+
+  // Documents Yjs des pages et des modèles, un par un pour ne pas tout charger en mémoire.
+  for (const table of ["pages", "templates"] as const) {
+    const owners = await db().all<{ id: string }>(
+      `SELECT id FROM ${table} ${table === "pages" ? "WHERE ydoc IS NOT NULL" : ""}`,
+    );
+    for (const owner of owners) {
+      if (doomed.size === 0) break;
+      const [row] = await db().all<{ ydoc: string | null }>(`SELECT ydoc FROM ${table} WHERE id = ?`, [owner.id]);
+      const text = decodedText(row?.ydoc ?? "");
+      for (const id of [...doomed]) if (text.includes(id)) spare(id, owner.id);
+    }
+  }
+
+  const statements: Statement[] = [...links];
+  for (const id of doomed) statements.push({ sql: "DELETE FROM files WHERE id = ?", params: [id] });
+  if (statements.length) await db().batch(statements);
+}
