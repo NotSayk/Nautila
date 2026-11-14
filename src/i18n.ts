@@ -528,6 +528,23 @@ const fr = {
   eraser: "Gomme : toucher un trait pour l’effacer",
   pen: "Crayon",
   versionPreviewError: "Cette version ne peut pas être affichée.",
+  downloadApp: "Télécharger l'application",
+  updateAvailable: "Nautila {version} est disponible",
+  updateNotes: "Notes de version",
+  updateNow: "Mettre à jour",
+  updateLater: "Plus tard",
+  updateViewRelease: "Voir la version",
+  updateDownloading: "Téléchargement…",
+  updateInstalled: "Mise à jour installée.",
+  updateRestart: "Redémarrer maintenant",
+  updateCheck: "Rechercher des mises à jour",
+  updateUpToDate: "Nautila est à jour",
+  updateCurrent: "Version {version}",
+  updateReleasesPage: "Page des versions",
+  updateCheckFailed: "Impossible de vérifier les mises à jour. Vérifie ta connexion, ou consulte la page des versions.",
+  updateInstallFailed:
+    "La mise à jour a échoué (téléchargement interrompu ou signature invalide). Tu peux télécharger la nouvelle version à la main.",
+  updateRestartFailed: "Impossible de redémarrer. Ferme puis relance Nautila pour terminer la mise à jour.",
 };
 
 const en: typeof fr = {
@@ -1055,6 +1072,23 @@ const en: typeof fr = {
   eraser: "Eraser: touch a stroke to erase it",
   pen: "Pen",
   versionPreviewError: "This version cannot be displayed.",
+  downloadApp: "Download the app",
+  updateAvailable: "Nautila {version} is available",
+  updateNotes: "Release notes",
+  updateNow: "Update",
+  updateLater: "Later",
+  updateViewRelease: "View release",
+  updateDownloading: "Downloading…",
+  updateInstalled: "Update installed.",
+  updateRestart: "Restart now",
+  updateCheck: "Check for updates",
+  updateUpToDate: "Nautila is up to date",
+  updateCurrent: "Version {version}",
+  updateReleasesPage: "Releases page",
+  updateCheckFailed: "Couldn't check for updates. Check your connection, or open the releases page.",
+  updateInstallFailed:
+    "The update failed (download interrupted or invalid signature). You can download the new version manually.",
+  updateRestartFailed: "Couldn't restart. Quit and reopen Nautila to finish the update.",
 };
 
 export type Key = keyof typeof fr;

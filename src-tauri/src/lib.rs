@@ -71,11 +71,34 @@ fn save_download(app: tauri::AppHandle, name: String, content: String) -> Result
     Ok(path.to_string_lossy().into_owned())
 }
 
+/// Vrai si l'installation actuelle peut se mettre à jour toute seule. Sous Linux, le greffon ne sait
+/// remplacer qu'une AppImage (variable `APPIMAGE` fournie par son lanceur) : pour un .deb ou un .rpm,
+/// l'interface propose d'ouvrir la page des versions à la place.
+#[tauri::command]
+fn self_update_supported() -> bool {
+    if cfg!(target_os = "linux") {
+        std::env::var_os("APPIMAGE").is_some()
+    } else {
+        true
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_sql::Builder::default().build())
-        .invoke_handler(tauri::generate_handler![save_download, db_transaction])
+        .setup(|app| {
+            // Mise à jour signée (clé publique dans tauri.conf.json) et relance : bureau seulement.
+            #[cfg(desktop)]
+            {
+                app.handle().plugin(tauri_plugin_updater::Builder::new().build())?;
+                app.handle().plugin(tauri_plugin_process::init())?;
+                app.handle().plugin(tauri_plugin_opener::init())?;
+            }
+            let _ = app;
+            Ok(())
+        })
+        .invoke_handler(tauri::generate_handler![save_download, db_transaction, self_update_supported])
         .run(tauri::generate_context!())
         .expect("erreur au lancement de Nautila");
 }

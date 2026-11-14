@@ -69,9 +69,20 @@ Les installateurs Windows (`.exe`, `.msi`), macOS (`.dmg`, Intel et Apple Silico
 signés : Windows demande « Informations complémentaires → Exécuter quand même », et macOS un clic droit
 sur l'application puis « Ouvrir » la première fois.
 
-Pour publier une nouvelle version : change le numéro dans `package.json`, `src-tauri/tauri.conf.json` et
-`src-tauri/Cargo.toml`, puis lance « Publier les applications de bureau » dans l'onglet Actions (ou pousse
-une étiquette `v…`).
+Pour publier une nouvelle version : `npm run version:set -- X.Y.Z`, commit, puis pousse l'étiquette `vX.Y.Z`.
+Le secret GitHub `TAURI_SIGNING_PRIVATE_KEY` doit exister, et le workflow échoue si l'étiquette ne
+correspond pas aux versions des fichiers.
+
+## Mises à jour
+
+- **Navigateur** : la version web se met à jour toute seule. Le bouton « Télécharger l'application » de la
+  barre latérale ouvre la page des versions.
+- **Application de bureau** : Nautila cherche une mise à jour au lancement puis toutes les 6 heures et
+  affiche une carte en bas de la barre latérale (« Mettre à jour » ou « Plus tard »). On peut aussi la
+  chercher à la main : Paramètres, « Rechercher des mises à jour ». Les mises à jour sont vérifiées par une
+  signature propre à Nautila, mais les installateurs restent non signés au sens de Windows et de macOS.
+  Avec un `.deb` ou un `.rpm`, la mise à jour intégrée n'est pas disponible : télécharge la nouvelle
+  version depuis la page des versions.
 
 ## Développement
 

@@ -24,7 +24,28 @@ jobs:
             args: "--target universal-apple-darwin"
     runs-on: ${{ matrix.os }}
     steps:
+      # Sans clé de signature, les installateurs seraient construits mais aucune mise à jour ne serait publiée.
+      - name: Vérifier la clé de signature des mises à jour
+        shell: bash
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+        run: |
+          if [ -z "$TAURI_SIGNING_PRIVATE_KEY" ]; then
+            echo "::error title=Clé de signature manquante::Le secret GitHub TAURI_SIGNING_PRIVATE_KEY est vide ou absent. Ajoute-le dans Settings > Secrets and variables > Actions (contenu du fichier de clé privée générée par « tauri signer generate »), puis relance le workflow."
+            exit 1
+          fi
+
       - uses: actions/checkout@v4
+
+      # L'étiquette « v… » doit correspondre à la version de package.json, tauri.conf.json et Cargo.toml.
+      - name: Vérifier la version
+        shell: bash
+        run: |
+          if [ "$GITHUB_REF_TYPE" = "tag" ]; then
+            node scripts/version.mjs check "$GITHUB_REF_NAME"
+          else
+            node scripts/version.mjs check
+          fi
 
       - name: Dépendances système (Linux)
         if: startsWith(matrix.os, 'ubuntu')
@@ -50,6 +71,9 @@ jobs:
       - uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Signature des mises à jour (la clé n'a pas de mot de passe : le second secret peut rester absent).
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
           tagName: v__VERSION__
           releaseName: Nautila v__VERSION__
@@ -62,6 +86,12 @@ jobs:
 
             Les installateurs ne sont pas signés : Windows affiche « Informations complémentaires → Exécuter quand même »,
             et sur macOS il faut un clic droit sur l'application puis « Ouvrir » la première fois.
+
+            Une fois installée, l'application de bureau se met à jour toute seule (Windows, macOS et Linux AppImage) : les
+            mises à jour sont vérifiées par une signature propre à Nautila, mais les installateurs restent non signés au
+            sens de Windows et de macOS. Avec un `.deb` ou un `.rpm`, télécharge la nouvelle version ici.
+          uploadUpdaterJson: true
+          updaterJsonPreferNsis: true
           releaseDraft: false
           prerelease: false
           args: ${{ matrix.args }}
