@@ -55,6 +55,7 @@ import { markdownBlocks } from "../export/markdown";
 import { prepareExport } from "../export/prepare";
 import { printHtml } from "../export/print";
 import { Cover, IconButton, Menu, PageIcon, Popover, relativeTime, SectionTitle, TopBar } from "./common";
+import { notify } from "./dialogs";
 import { DatabaseView, RowProperties } from "./database/DatabaseView";
 import { EmojiPicker } from "./EmojiPicker";
 import { moveToTrash } from "./actions";
@@ -450,7 +451,7 @@ export function PageView({ id }: { id: string }) {
           try {
             await saveMeta({ cover: await saveFile(file) });
           } catch {
-            alert(t("fileTooLarge"));
+            notify(t("fileTooLarge"));
           }
         }}
       />

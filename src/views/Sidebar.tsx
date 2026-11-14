@@ -20,7 +20,9 @@ import {
   Home,
   Languages,
   Layers,
+  Monitor,
   Moon,
+  Sun,
   MoreHorizontal,
   Pencil,
   Plus,
@@ -37,15 +39,19 @@ import { duplicatePage, movePage, restorePage, trashPage, updatePageMeta, type P
 import { importFiles } from "../data/importer";
 import { enableReminders } from "../reminders";
 import { useT } from "../i18n";
+import { fmtKeys } from "../util/platform";
 import { useStore, type Route } from "../store";
 import { moveToTrash } from "./actions";
 import { IconButton, Menu, PageIcon } from "./common";
+import { confirmDialog, notify } from "./dialogs";
 import { Pomodoro } from "./Pomodoro";
 import { JoinDialog } from "./ShareDialog";
 
 const ICON = { size: 18, strokeWidth: 1.75 } as const;
 const ROW = "flex h-[30px] w-full items-center gap-2 rounded-md px-2 text-left font-medium text-muted hover:bg-hover";
-const ROW_ACTION = "grid size-5 shrink-0 place-items-center rounded text-muted hover:bg-active";
+// Un peu plus grand au doigt que le pointeur de souris.
+const ROW_ACTION =
+  "grid size-5 shrink-0 place-items-center rounded text-muted hover:bg-active [@media(pointer:coarse)]:size-7";
 
 function NavItem(props: {
   icon: React.ReactNode;
@@ -110,7 +116,7 @@ function PageRow({
   onToggle: (id: string, force?: boolean) => void;
   drag?: Drag;
   /** Sélection multiple (Ctrl ou Maj + clic), dans l'arbre seulement. */
-  selection?: { ids: Set<string>; toggle: (id: string) => void };
+  selection?: { ids: Set<string>; toggle: (id: string) => void; range: (id: string) => void };
 }) {
   const t = useT();
   const [renaming, setRenaming] = useState(false);
@@ -163,7 +169,7 @@ function PageRow({
         )}
         {tree && (
           <button
-            aria-label="toggle"
+            aria-label={expanded ? t("collapsePage") : t("expandPage")}
             aria-expanded={expanded}
             onClick={() => onToggle(page.id)}
             className={`${ROW_ACTION} mr-0.5 ${kids.length ? "" : "invisible"}`}
@@ -190,7 +196,8 @@ function PageRow({
         ) : (
           <button
             onClick={(e) => {
-              if (selection && (e.ctrlKey || e.metaKey || e.shiftKey)) selection.toggle(page.id);
+              if (selection && e.shiftKey) selection.range(page.id);
+              else if (selection && (e.ctrlKey || e.metaKey)) selection.toggle(page.id);
               else navigate({ view: "page", id: page.id });
             }}
             onAuxClick={(e) => e.button === 1 && useStore.getState().openTab({ view: "page", id: page.id })}
@@ -201,7 +208,7 @@ function PageRow({
             <span className="truncate">{page.title || t("untitled")}</span>
           </button>
         )}
-        <span className="hidden gap-0.5 group-focus-within:flex group-hover:flex">
+        <span className="flex max-w-0 gap-0.5 overflow-hidden group-focus-within:max-w-16 group-hover:max-w-16 [@media(hover:none)]:max-w-16 [@media(pointer:coarse)]:max-w-24">
           <Menu
             label={t("more")}
             className={ROW_ACTION}
@@ -260,8 +267,20 @@ function PageRow({
 
 export function Sidebar() {
   const t = useT();
-  const { route, pages, dueCount, dark, lang, sidebarOpen, sync } = useStore();
-  const { navigate, newPage, toggleDark, setLang, setSearchOpen, setSidebarOpen } = useStore();
+  const route = useStore((s) => s.route);
+  const pages = useStore((s) => s.pages);
+  const dueCount = useStore((s) => s.dueCount);
+  const theme = useStore((s) => s.theme);
+  const lang = useStore((s) => s.lang);
+  const sidebarOpen = useStore((s) => s.sidebarOpen);
+  const sync = useStore((s) => s.sync);
+  const moveCount = useStore((s) => s.moveCount);
+  const navigate = useStore((s) => s.navigate);
+  const newPage = useStore((s) => s.newPage);
+  const setTheme = useStore((s) => s.setTheme);
+  const setLang = useStore((s) => s.setLang);
+  const setSearchOpen = useStore((s) => s.setSearchOpen);
+  const setSidebarOpen = useStore((s) => s.setSidebarOpen);
   // L'état déplié de l'arbre est mémorisé d'une session à l'autre.
   const [open, setOpen] = useState<Set<string>>(() => {
     try {
@@ -343,15 +362,42 @@ export function Sidebar() {
   };
 
   const [selected, setSelected] = useState<Set<string>>(new Set());
+  // Pages visibles dans l'arbre, dans l'ordre d'affichage : sert à la sélection d'une plage (Maj + clic).
+  const visibleIds = useMemo(() => {
+    const out: string[] = [];
+    const walk = (list: PageMeta[]) => {
+      for (const p of list) {
+        out.push(p.id);
+        if (open.has(p.id)) walk(tree.get(p.id) ?? []);
+      }
+    };
+    walk(tree.get(null) ?? []);
+    return out;
+  }, [tree, open]);
+  const anchor = useRef<string | null>(null);
   const selection = {
     ids: selected,
-    toggle: (id: string) =>
+    toggle: (id: string) => {
+      anchor.current = id;
       setSelected((prev) => {
         const next = new Set(prev);
         if (!next.delete(id)) next.add(id);
         return next;
-      }),
+      });
+    },
+    range: (id: string) => {
+      const from = anchor.current ? visibleIds.indexOf(anchor.current) : -1;
+      const to = visibleIds.indexOf(id);
+      // Sans point de départ (ou s'il est replié), Maj + clic équivaut à Ctrl + clic.
+      if (from < 0 || to < 0) return selection.toggle(id);
+      const [a, b] = from < to ? [from, to] : [to, from];
+      setSelected((prev) => new Set([...prev, ...visibleIds.slice(a, b + 1)]));
+    },
   };
+  // Une fois les pages déplacées, la sélection multiple est vidée.
+  useEffect(() => {
+    if (moveCount > 0) setSelected(new Set());
+  }, [moveCount]);
   // Une page supprimée ou déplacée ailleurs sort de la sélection.
   const chosen = pages.filter((p) => selected.has(p.id));
   const trashSelected = async () => {
@@ -385,18 +431,19 @@ export function Sidebar() {
     e.target.value = "";
     const { open, failed } = await importFiles(files);
     await useStore.getState().refreshPages();
-    if (failed.length > 0) alert(`${t("importFailedFile")} ${failed.join(", ")}`);
+    if (failed.length > 0) notify(`${t("importFailedFile")} ${failed.join(", ")}`);
     if (open) navigate({ view: "page", id: open });
   };
 
   const onImport = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     e.target.value = "";
-    if (!file || !confirm(t("confirmImport"))) return;
+    if (!file || !(await confirmDialog({ message: t("confirmImport"), confirmLabel: t("importBackup"), danger: true })))
+      return;
     try {
       await importBackup(await file.text());
     } catch {
-      alert(t("importFailed"));
+      notify(t("importFailed"));
     }
     await useStore.getState().refreshPages();
     await useStore.getState().refreshDue();
@@ -409,6 +456,10 @@ export function Sidebar() {
         <div className="fixed inset-0 z-30 bg-black/40 md:hidden" onClick={() => setSidebarOpen(false)} />
       )}
       <aside
+        // Fermée, elle n'est que décalée hors écran : inert la retire du clavier et des lecteurs d'écran.
+        inert={!sidebarOpen}
+        aria-hidden={!sidebarOpen}
+        aria-label="Nautila"
         className={`group/side fixed inset-y-0 left-0 z-40 flex w-60 shrink-0 flex-col bg-panel shadow-[inset_-1px_0_0_var(--color-line)] transition-[translate,margin] duration-200 md:static ${
           sidebarOpen ? "" : "-translate-x-full md:-ml-60"
         }`}
@@ -444,7 +495,7 @@ export function Sidebar() {
           <button onClick={() => setSearchOpen(true)} className={ROW}>
             <Search {...ICON} />
             <span className="flex-1">{t("search")}</span>
-            <kbd className="font-sans text-xs text-faint">Ctrl K</kbd>
+            <kbd className="font-sans text-xs text-faint">{fmtKeys("{mod} K", lang)}</kbd>
           </button>
           <NavItem
             icon={<Home {...ICON} />}
@@ -539,7 +590,10 @@ export function Sidebar() {
               </>
             }
             items={[
-              { icon: <Moon size={16} />, label: t("darkTheme"), checked: dark, onClick: toggleDark },
+              { note: t("theme") },
+              { icon: <Monitor size={16} />, label: t("themeSystem"), checked: theme === "system", onClick: () => setTheme("system") },
+              { icon: <Sun size={16} />, label: t("themeLight"), checked: theme === "light", onClick: () => setTheme("light") },
+              { icon: <Moon size={16} />, label: t("themeDark"), checked: theme === "dark", onClick: () => setTheme("dark") },
               {
                 icon: <Languages size={16} />,
                 label: t("switchLang"),
@@ -568,7 +622,7 @@ export function Sidebar() {
               {
                 icon: <Bell size={16} />,
                 label: t("enableReminders"),
-                onClick: async () => alert(t((await enableReminders()) ? "remindersOn" : "remindersBlocked")),
+                onClick: async () => notify(t((await enableReminders()) ? "remindersOn" : "remindersBlocked")),
               },
             ]}
           />

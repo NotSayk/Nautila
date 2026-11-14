@@ -69,14 +69,18 @@ export function IconButton({
  * Pour une fenêtre ou un menu : Échap le ferme, et le focus revient à l'élément
  * qui l'avait ouvert, pour ne pas perdre sa place en naviguant au clavier.
  */
+const overlays: object[] = [];
 export function useOverlay(onClose: () => void) {
   const close = useRef(onClose);
   close.current = onClose;
+  const self = useRef({}).current;
   // Relevé dès le premier rendu, avant que le contenu de la fenêtre ne prenne le focus.
   const opener = useRef(document.activeElement as HTMLElement | null).current;
   useEffect(() => {
+    overlays.push(self);
     const onKey = (e: KeyboardEvent) => {
-      if (e.key !== "Escape") return;
+      // Seule la fenêtre du dessus réagit à Échap.
+      if (e.key !== "Escape" || overlays[overlays.length - 1] !== self) return;
       e.stopPropagation();
       close.current();
     };
@@ -84,6 +88,7 @@ export function useOverlay(onClose: () => void) {
     window.addEventListener("keydown", onKey, true);
     return () => {
       window.removeEventListener("keydown", onKey, true);
+      overlays.splice(overlays.indexOf(self), 1);
       if (opener?.isConnected) opener.focus({ preventScroll: true });
     };
   }, []);
@@ -95,38 +100,49 @@ export function Popover({
   onClose,
   width,
   align = "left",
+  role,
   children,
 }: {
   anchor: DOMRect;
   onClose: () => void;
   width: number;
   align?: "left" | "right";
+  /** "menu" seulement pour une liste d'entrées ; un panneau avec des champs n'a pas de rôle. */
+  role?: "menu";
   children: React.ReactNode;
 }) {
   const ref = useRef<HTMLDivElement>(null);
   useOverlay(onClose);
   const [pos, setPos] = useState<{ top: number; left: number } | null>(null);
+  const [viewport, setViewport] = useState(0);
+  useEffect(() => {
+    const onResize = () => setViewport(innerWidth * 10_000 + innerHeight);
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
+  }, []);
+  // Jamais plus large que la fenêtre (marge de 8 px de chaque côté).
+  const fit = Math.min(width, innerWidth - 16);
 
   useLayoutEffect(() => {
     const height = ref.current?.offsetHeight ?? 0;
-    const left = align === "right" ? anchor.right - width : anchor.left;
+    const left = align === "right" ? anchor.right - fit : anchor.left;
     const below = anchor.bottom + 4;
     setPos({
-      left: Math.max(8, Math.min(left, innerWidth - width - 8)),
+      left: Math.max(8, Math.min(left, innerWidth - fit - 8)),
       // (Invisible mais focalisable tant que la position est inconnue.)
       // Bascule au-dessus de l'ancre s'il n'y a pas la place en dessous.
       top: below + height > innerHeight - 8 ? Math.max(8, anchor.top - height - 4) : below,
     });
-  }, [anchor, width, align]);
+  }, [anchor, fit, align, viewport]);
 
   return createPortal(
     <div className="fixed inset-0 z-50" onClick={onClose}>
       <div
         ref={ref}
-        role="menu"
+        role={role}
         onClick={(e) => e.stopPropagation()}
-        style={{ width, ...(pos ?? { top: 0, left: 0, opacity: 0 }) }}
-        className="fixed rounded-lg bg-pop p-1 text-sm shadow-pop"
+        style={{ width: fit, maxHeight: "calc(100dvh - 16px)", ...(pos ?? { top: 0, left: 0, opacity: 0 }) }}
+        className="fixed overflow-y-auto rounded-lg bg-pop p-1 text-sm shadow-pop"
       >
         {children}
       </div>
@@ -196,7 +212,7 @@ export function Menu({
         {trigger}
       </button>
       {anchor && (
-        <Popover anchor={anchor} onClose={() => setAnchor(null)} width={230} align={align}>
+        <Popover anchor={anchor} onClose={() => setAnchor(null)} width={230} align={align} role="menu">
           <MenuList>
             {items.map((item, i) =>
               item === "separator" ? (

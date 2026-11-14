@@ -74,10 +74,21 @@ button {
   outline: 2px solid var(--color-accent);
   outline-offset: -1px;
 }
-input:focus-visible,
-textarea:focus-visible,
-.bn-editor:focus-visible {
+/* Champs de saisie : l'anneau reste visible (le clavier comme un clic dans un champ le justifient).
+   Seuls l'éditeur et les champs qui portent déjà leur propre cadre (`no-ring`) s'en passent. */
+.bn-editor:focus-visible,
+.no-ring:focus-visible {
   outline: none;
+}
+input[type="checkbox"]:focus-visible,
+input[type="radio"]:focus-visible {
+  outline-offset: 2px;
+}
+@keyframes splash {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
 }
 
 /* Étiquettes de type (devoir, examen). */

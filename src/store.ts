@@ -1,7 +1,7 @@
 import { create } from "zustand";
 import { cardStats } from "./data/cards";
 import { createPage, listPages, type PageKind, type PageMeta } from "./data/pages";
-import type { Lang } from "./i18n";
+import { translate, type Lang } from "./i18n";
 
 export type Route =
   | { view: "home" }
@@ -69,6 +69,17 @@ const keepTabs = (tabs: Route[], tab: number) =>
     JSON.stringify({ tabs: tabs.map((r) => (r.view === "join" || r.view === "view" ? { view: "home" } : r)), tab }),
   );
 
+export type Theme = "system" | "light" | "dark";
+const systemDark = () => matchMedia("(prefers-color-scheme: dark)").matches;
+function initialTheme(): Theme {
+  const saved = stored("nautila.theme");
+  if (saved === "system" || saved === "light" || saved === "dark") return saved;
+  // Ancien réglage clair/sombre : on le conserve tel quel.
+  const old = stored("nautila.dark");
+  return old ? (old === "1" ? "dark" : "light") : "system";
+}
+const firstTheme = initialTheme();
+
 const isDesktop = () => matchMedia("(min-width: 768px)").matches;
 
 type State = {
@@ -79,12 +90,16 @@ type State = {
   pages: PageMeta[];
   dueCount: number;
   lang: Lang;
+  /** Choix de l'utilisateur ; `dark` en est le résultat effectif (le thème système change en direct). */
+  theme: Theme;
   dark: boolean;
   searchOpen: boolean;
   /** Texte prérempli à l'ouverture de la recherche (ex. « #étiquette »). */
   searchSeed: string;
   /** Pages en cours de déplacement (boîte « Déplacer vers »). */
   moveIds: string[] | null;
+  /** Incrémenté après chaque déplacement abouti (la barre latérale vide alors sa sélection). */
+  moveCount: number;
   sidebarOpen: boolean;
   /** Minuteur Pomodoro : `endsAt` défini quand il tourne, `left` (ms) quand il est en pause. */
   sync: { status: "off" | "idle" | "syncing" | "error"; username?: string; error?: string; lastSync?: number };
@@ -102,6 +117,7 @@ type State = {
   newPage: (input: { parentId?: string | null; kind?: PageKind }) => Promise<void>;
   setLang: (lang: Lang) => void;
   toggleDark: () => void;
+  setTheme: (theme: Theme) => void;
   setSearchOpen: (open: boolean) => void;
   setSidebarOpen: (open: boolean) => void;
 };
@@ -120,10 +136,12 @@ export const useStore = create<State>((set, get) => ({
         : navigator.language.startsWith("fr")
           ? "fr"
           : "en",
-  dark: stored("nautila.dark") ? stored("nautila.dark") === "1" : matchMedia("(prefers-color-scheme: dark)").matches,
+  theme: firstTheme,
+  dark: firstTheme === "system" ? systemDark() : firstTheme === "dark",
   searchOpen: false,
   searchSeed: "",
   moveIds: null,
+  moveCount: 0,
   sync: { status: "off" },
   syncOpen: false,
   shortcutsOpen: false,
@@ -154,11 +172,31 @@ export const useStore = create<State>((set, get) => ({
     location.hash = routeHash(route);
   },
   closeTab: (index) => {
-    const { tabs, tab } = get();
+    const { tabs, tab, lang } = get();
     if (tabs.length < 2 || !tabs[index]) return;
+    const closed = tabs[index];
     const next = tabs.filter((_, i) => i !== index);
     const active = index < tab || tab === next.length ? tab - 1 : tab;
-    set({ route: next[active], tabs: next, tab: active });
+    // Fermer un onglet est réversible : on propose de le rouvrir plutôt que de demander confirmation.
+    set({
+      route: next[active],
+      tabs: next,
+      tab: active,
+      toast: {
+        message: translate(lang, "tabClosed"),
+        action: {
+          label: translate(lang, "undoAction"),
+          run: () => {
+            const now = [...get().tabs];
+            now.splice(Math.min(index, now.length), 0, closed);
+            const at = Math.min(index, now.length - 1);
+            set({ route: closed, tabs: now, tab: at });
+            keepTabs(now, at);
+            location.hash = routeHash(closed);
+          },
+        },
+      },
+    });
     keepTabs(next, active);
     location.hash = routeHash(next[active]);
   },
@@ -173,10 +211,10 @@ export const useStore = create<State>((set, get) => ({
     store("nautila.lang", lang);
     set({ lang });
   },
-  toggleDark: () => {
-    const dark = !get().dark;
-    store("nautila.dark", dark ? "1" : "0");
-    set({ dark });
+  toggleDark: () => get().setTheme(get().dark ? "light" : "dark"),
+  setTheme: (theme) => {
+    store("nautila.theme", theme);
+    set({ theme, dark: theme === "system" ? systemDark() : theme === "dark" });
   },
   setSearchOpen: (searchOpen) => set({ searchOpen, searchSeed: "" }),
   setSidebarOpen: (sidebarOpen) => {
@@ -194,3 +232,17 @@ window.addEventListener("hashchange", () => {
   useStore.setState({ route, tabs: next });
   keepTabs(next, tab);
 });
+
+// Thème « système » : suit le réglage du système d'exploitation en direct.
+matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => {
+  if (useStore.getState().theme === "system") useStore.setState({ dark: systemDark() });
+});
+
+// Lancement sans adresse : l'onglet restauré s'écrit dans l'URL (sans entrée d'historique en plus),
+// pour que le bouton Retour et l'adresse restent d'accord avec ce qui est affiché.
+try {
+  if (routeHash(useStore.getState().route) !== routeHash(parseHash()))
+    history.replaceState(null, "", `#${routeHash(useStore.getState().route)}`);
+} catch {
+  /* adresse non modifiable (contexte restreint) */
+}
