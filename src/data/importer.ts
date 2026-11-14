@@ -3,7 +3,7 @@ import { db } from "../db";
 import { inferColumn, parseCsv, parseNotionRefs, type NotionRef } from "./csv";
 import { createRow, getDatabase, getRowProps, newView, saveDatabase, setRowProps } from "./databases";
 import type { Value } from "./dbquery";
-import { saveFile } from "./files";
+import { fileId, linkFiles, saveFile } from "./files";
 import { createPage } from "./pages";
 
 /** Adresse d'un lien vers une autre page, dans un contenu importé ; l'éditeur en fait une mention de page. */
@@ -63,9 +63,18 @@ const MIME: Record<string, string> = {
 };
 const dirname = (path: string) => (path.includes("/") ? path.slice(0, path.lastIndexOf("/")) : "");
 
-/** Remplace les images locales d'un fichier Markdown par des fichiers enregistrés dans la base. */
+/** Chemin d'une entrée d'archive, insensible à la forme Unicode (macOS écrit les noms décomposés). */
+const entryKey = (path: string) => path.normalize("NFC");
+
+/**
+ * Remplace les images locales d'un fichier Markdown par des fichiers enregistrés dans la base.
+ * Les chemins relatifs (`./img.png`, `../images/img.png`) sont résolus depuis le dossier de la page.
+ * Renvoie aussi les identifiants des fichiers créés, pour les lier à la page.
+ */
 async function inlineImages(markdown: string, folder: string, entries: Map<string, Uint8Array>) {
   const pattern = /!\[([^\]]*)\]\(([^)\s]+)\)/g;
+  const lookup = new Map([...entries].map(([path, bytes]) => [entryKey(path), bytes]));
+  const files: string[] = [];
   let out = "";
   let last = 0;
   for (const match of markdown.matchAll(pattern)) {
@@ -74,15 +83,18 @@ async function inlineImages(markdown: string, folder: string, entries: Map<strin
     let target: string | null = null;
     try {
       const relative = decodeURIComponent(match[2]);
-      const bytes = entries.get(folder ? `${folder}/${relative}` : relative);
+      const bytes = lookup.get(entryKey(resolvePath(folder, relative))) ?? lookup.get(entryKey(relative));
       const type = MIME[relative.split(".").pop()?.toLowerCase() ?? ""];
-      if (bytes && type) target = await saveFile(new File([bytes as BlobPart], relative.split("/").pop()!, { type }));
+      if (bytes && type) {
+        target = await saveFile(new File([bytes as BlobPart], relative.split("/").pop()!, { type }));
+        files.push(fileId(target)!);
+      }
     } catch {
       /* image illisible ou trop lourde : le lien d'origine est conservé */
     }
     out += target ? `![${match[1]}](${target})` : match[0];
   }
-  return out + markdown.slice(last);
+  return { markdown: out + markdown.slice(last), files };
 }
 
 /** Identifiant Notion (32 chiffres hexadécimaux) à la fin d'un nom de fichier ou d'une adresse. */
@@ -112,8 +124,10 @@ async function importZip(file: File): Promise<string> {
   const paths = [...entries.keys()].sort((a, b) => depth(a) - depth(b) || a.localeCompare(b));
   /** Chemin d'une page (sans extension) → identifiant ; sert à rattacher les sous-pages. */
   const byPath = new Map<string, string>();
-  /** Dossier d'une base de données → ses lignes, par titre. */
-  const databases = new Map<string, { id: string; rows: Map<string, string> }>();
+  /** Dossier d'une base de données → ses lignes, par titre (plusieurs lignes peuvent avoir le même titre). */
+  const databases = new Map<string, { id: string; rows: Map<string, string[]> }>();
+  /** Lignes de base déjà rattachées à leur fichier Markdown : deux fichiers de même titre ne se partagent pas une ligne. */
+  const claimed = new Set<string>();
   let first: string | undefined;
   /** Identifiant Notion → page créée, quand les fichiers de l'export portent encore leur identifiant. */
   const byNotionId = new Map<string, string>();
@@ -135,11 +149,16 @@ async function importZip(file: File): Promise<string> {
   const importMarkdown = async (path: string) => {
     const folder = dirname(path);
     const { title, body } = splitMarkdown(strFromU8(entries.get(path)!), notionTitle(path));
-    const content = await inlineImages(body, folder, entries);
+    const { markdown: content, files } = await inlineImages(body, folder, entries);
     const database = databases.get(folder);
-    let id = database?.rows.get(title.trim());
-    if (id) await setContent(id, content);
-    else id = await importPage(title, content, database?.id ?? byPath.get(folder) ?? null);
+    // Une ligne de base est retrouvée par son titre, mais chaque ligne n'est prise qu'une fois ;
+    // ensuite la page est connue par son chemin dans l'archive (voir `remember`).
+    let id = database?.rows.get(title.trim())?.find((row) => !claimed.has(row));
+    if (id) {
+      claimed.add(id);
+      await setContent(id, content);
+    } else id = await importPage(title, content, database?.id ?? byPath.get(folder) ?? null);
+    await linkFiles(id, files);
     remember(path, id);
     contents.push({ id, folder, content });
     first ??= id;
@@ -173,14 +192,15 @@ async function importZip(file: File): Promise<string> {
       parentId: byPath.get(dirname(path)) ?? null,
     });
     await saveDatabase(page.id, { props: columns.map((c) => c.prop), views: [newView("table", "Table")] });
-    const rows = new Map<string, string>();
+    const rows = new Map<string, string[]>();
     const rowIds: string[] = [];
     for (const [index, line] of lines.entries()) {
       const values: Record<string, Value> = {};
       columns.forEach((c, i) => (values[c.prop.id] = c.convert(line[i + 1] ?? "", index)));
       const rowId = await createRow(page.id, values);
       await db().run("UPDATE pages SET title = ? WHERE id = ?", [line[0] ?? "", rowId]);
-      rows.set((line[0] ?? "").trim(), rowId);
+      const key = (line[0] ?? "").trim();
+      rows.set(key, [...(rows.get(key) ?? []), rowId]);
       rowIds.push(rowId);
     }
     for (const column of columns)
@@ -210,7 +230,8 @@ async function importZip(file: File): Promise<string> {
 
   // Relations : chaque référence est rattachée à la ligne importée qu'elle désigne (à défaut, par son titre).
   const rowDatabase = new Map<string, string>();
-  for (const d of databases.values()) for (const id of d.rows.values()) rowDatabase.set(id, d.id);
+  for (const d of databases.values())
+    for (const ids of d.rows.values()) for (const id of ids) rowDatabase.set(id, d.id);
   for (const relation of relations) {
     const folder = dirname([...databases].find(([, d]) => d.id === relation.database)?.[0] ?? "");
     const resolved = relation.cells.map(({ row, refs }) => ({
@@ -218,7 +239,7 @@ async function importZip(file: File): Promise<string> {
       ids: refs.flatMap((ref) => {
         const direct = pageOf(ref.target, folder);
         if (direct && rowDatabase.has(direct)) return [direct];
-        const byTitle = [...databases.values()].flatMap((d) => d.rows.get(ref.title) ?? []);
+        const byTitle = [...databases.values()].flatMap((d) => d.rows.get(ref.title.trim()) ?? []);
         return byTitle.length === 1 ? byTitle : [];
       }),
     }));
@@ -255,8 +276,23 @@ async function importZip(file: File): Promise<string> {
 
 async function importDocx(file: File): Promise<string> {
   const mammoth = await import("mammoth/mammoth.browser");
-  const { value } = await mammoth.convertToHtml({ arrayBuffer: await file.arrayBuffer() });
-  return importPage(file.name.replace(/\.[^.]+$/, ""), HTML_MARK + value);
+  const files: string[] = [];
+  // Les images sont gardées comme fichiers de la base, pas intégrées en base64 dans le document.
+  const convertImage = mammoth.images.imgElement(async (image) => {
+    const data = await image.read("base64");
+    try {
+      const bytes = Uint8Array.from(atob(data), (c) => c.charCodeAt(0));
+      const url = await saveFile(new File([bytes], "image", { type: image.contentType }));
+      files.push(fileId(url)!);
+      return { src: url };
+    } catch {
+      return { src: `data:${image.contentType};base64,${data}` };
+    }
+  });
+  const { value } = await mammoth.convertToHtml({ arrayBuffer: await file.arrayBuffer() }, { convertImage });
+  const id = await importPage(file.name.replace(/\.[^.]+$/, ""), HTML_MARK + value);
+  await linkFiles(id, files);
+  return id;
 }
 
 /** Un PDF devient une page à son nom, qui affiche le document (surlignable) ; le fichier est gardé tel quel. */
@@ -270,8 +306,13 @@ async function importPdf(file: File): Promise<string> {
     title,
     page.id,
   ]);
+  await linkFiles(page.id, [fileId(url)]);
   return page.id;
 }
+
+/** Seuls les fichiers Markdown et texte brut sont lus comme du texte. */
+export const isTextFile = (file: { name: string; type: string }) =>
+  /\.(md|markdown|txt)$/i.test(file.name) || file.type.startsWith("text/");
 
 /** Importe des fichiers Markdown, Word, PDF ou des archives ; renvoie la page à ouvrir et les fichiers refusés. */
 export async function importFiles(files: File[]): Promise<{ open?: string; failed: string[] }> {
@@ -282,10 +323,10 @@ export async function importFiles(files: File[]): Promise<{ open?: string; faile
       if (/\.zip$/i.test(file.name)) open = await importZip(file);
       else if (/\.docx$/i.test(file.name)) open = await importDocx(file);
       else if (/\.pdf$/i.test(file.name) || file.type === "application/pdf") open = await importPdf(file);
-      else {
+      else if (isTextFile(file)) {
         const { title, body } = splitMarkdown(await file.text(), file.name.replace(/\.[^.]+$/, ""));
         open = await importPage(title, body);
-      }
+      } else failed.push(file.name); // ni Markdown ni texte : pas de page de caractères illisibles
     } catch {
       failed.push(file.name);
     }
