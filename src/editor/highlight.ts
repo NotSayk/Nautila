@@ -149,6 +149,26 @@ export const syntaxHighlighter = SyntaxHighlightingExtension({
   createHighlighter: () => createHighlighter({ themes: ["github-dark", "github-light"], langs: [] }),
 });
 
+export type CodeToken = { content: string; color?: string; fontStyle?: number };
+
+let exportHighlighter: ReturnType<typeof createHighlighter> | null = null;
+
+/** Code découpé en lignes de jetons colorés (thème clair), pour l'export ; null si le langage est inconnu. */
+export async function codeTokens(code: string, language: string): Promise<CodeToken[][] | null> {
+  if (!language || language === "text") return null;
+  try {
+    const highlighter = await (exportHighlighter ??= createHighlighter({ themes: ["github-light"], langs: [] }));
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    await highlighter.loadLanguage(language as any);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    return highlighter
+      .codeToTokens(code, { lang: language as any, theme: "github-light" })
+      .tokens.map((line) => line.map(({ content, color, fontStyle }) => ({ content, color, fontStyle })));
+  } catch {
+    return null;
+  }
+}
+
 export const codeBlockOptions = {
   defaultLanguage: "text",
   supportedLanguages: {

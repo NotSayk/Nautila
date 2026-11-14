@@ -1,7 +1,7 @@
 import { filterSuggestionItems, insertOrUpdateBlockForSlashMenu } from "@blocknote/core";
 import { syntaxHighlighter } from "./highlight";
 import { en, fr } from "@blocknote/core/locales";
-import { withCollaboration } from "@blocknote/core/yjs";
+import { withCollaboration, yDocToBlocks } from "@blocknote/core/yjs";
 import { BlockNoteView } from "@blocknote/mantine";
 import "@blocknote/mantine/style.css";
 import "@blocknote/core/fonts/inter.css";
@@ -77,10 +77,14 @@ function userColor(name: string) {
 }
 
 export type PageEditorHandle = {
-  toMarkdown: () => string;
+  /** Markdown du contenu, ou des blocs donnés (préparés pour l'export). */
+  toMarkdown: (blocks?: unknown[]) => string;
   applyTemplate: (blocks: NautilaBlock[]) => void;
   wordCount: () => number;
-  toHTML: () => string;
+  /** Blocs du contenu, pour l'export. */
+  blocks: () => unknown[];
+  /** Blocs d'un autre contenu Yjs enregistré (base64), lus avec le même schéma. */
+  readDoc: (ydoc: string) => unknown[];
   /** Place le curseur au début du contenu. */
   focus: () => void;
   /** Texte brut de la page. */
@@ -203,9 +207,15 @@ export const PageEditor = forwardRef<PageEditorHandle, Props>(function PageEdito
   useImperativeHandle(
     ref,
     () => ({
-      toMarkdown: () => editor.blocksToMarkdownLossy(),
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      toMarkdown: (blocks) => editor.blocksToMarkdownLossy(blocks as any),
       applyTemplate: (blocks) => void editor.replaceBlocks(editor.document, blocks),
-      toHTML: () => editor.blocksToHTMLLossy(),
+      blocks: () => editor.document,
+      readDoc: (ydoc) => {
+        const other = new Y.Doc();
+        Y.applyUpdate(other, fromBase64(ydoc));
+        return yDocToBlocks(editor, other, "doc");
+      },
       focus: () => {
         editor.setTextCursorPosition(editor.document[0], "start");
         editor.focus();
@@ -433,7 +443,7 @@ export const PageEditor = forwardRef<PageEditorHandle, Props>(function PageEdito
           getItems={async (query) => filterSuggestionItems(pageItems(), query).slice(0, 12)}
         />
       </BlockNoteView>
-      {editable && !embedded && <div className="h-[24vh] cursor-text" onClick={focusEnd} />}
+      {editable && !embedded && <div className="no-print h-[24vh] cursor-text" onClick={focusEnd} />}
       {!embedded && !ephemeral && (
         <Comments
           doc={doc}

@@ -85,6 +85,17 @@ const HOUR = 3_600_000;
 export const fileId = (url: string | null | undefined) =>
   url?.startsWith(FILE_SCHEME) ? url.slice(FILE_SCHEME.length) : null;
 
+/** Fichier stocké sur l'appareil (contenu en base64), pour l'intégrer à un export ; null s'il n'y est pas. */
+export async function readStoredFile(url: string): Promise<{ name: string; mime: string; data: string } | null> {
+  const id = fileId(url);
+  if (!id) return null;
+  const [row] = await db().all<{ name: string; mime: string; data: string }>(
+    "SELECT name, mime, data FROM files WHERE id = ?",
+    [id],
+  );
+  return row ?? null;
+}
+
 /** Note qu'une page (ou un modèle) utilise ces fichiers. */
 export async function linkFiles(ownerId: string, ids: (string | null)[]) {
   for (const id of ids)

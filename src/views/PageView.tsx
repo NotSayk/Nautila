@@ -50,6 +50,10 @@ import { PageEditor, type PageEditorHandle } from "../editor/PageEditor";
 import { template, type TemplateId } from "../editor/templates";
 import { useT, type Key } from "../i18n";
 import { useStore } from "../store";
+import { renderPageHtml, type ExportBlock } from "../export/html";
+import { markdownBlocks } from "../export/markdown";
+import { prepareExport } from "../export/prepare";
+import { printHtml } from "../export/print";
 import { Cover, IconButton, Menu, PageIcon, Popover, relativeTime, SectionTitle, TopBar } from "./common";
 import { DatabaseView, RowProperties } from "./database/DatabaseView";
 import { EmojiPicker } from "./EmojiPicker";
@@ -203,19 +207,71 @@ export function PageView({ id }: { id: string }) {
     setDoc((d) => ({ ydoc, rev: (d?.rev ?? 0) + 1 }));
   };
 
-  const exportHtml = () => {
-    const name = title || t("untitled");
-    const html = `<!doctype html><html><head><meta charset="utf-8"><title>${name.replace(/[<&]/g, "")}</title></head><body><h1>${name.replace(/[<&]/g, "")}</h1>${editor.current?.toHTML() ?? ""}</body></html>`;
-    download(`${name.replace(/[\\/:*?"<>|]/g, "-")}.html`, html, "text/html");
+  const fileName = (ext: string) => `${(title || t("untitled")).replace(/[\\/:*?"<>|]/g, "-")}.${ext}`;
+  const exportFailed = () => useStore.setState({ toast: { message: t("exportFailed") } });
+
+  /** Page en document HTML autonome (fichiers intégrés, styles compris). */
+  const standaloneHtml = async () => {
+    const current = editor.current;
+    if (!current) throw new Error("editor not ready");
+    const blocks = current.blocks() as ExportBlock[];
+    const sources = await prepareExport(blocks, {
+      pages,
+      cover: page.cover,
+      readDoc: (ydoc) => current.readDoc(ydoc) as ExportBlock[],
+    });
+    const meta = {
+      title,
+      icon: page.icon,
+      tags,
+      font: page.font,
+      small: !!page.small_text,
+      wide: !!page.full_width,
+      cover: page.cover,
+    };
+    return renderPageHtml(meta, blocks, sources, t, lang);
   };
 
-  const exportMarkdown = () => {
-    const name = title || t("untitled");
-    download(
-      `${name.replace(/[\\/:*?"<>|]/g, "-")}.md`,
-      `# ${name}\n\n${editor.current?.toMarkdown() ?? ""}`,
-      "text/markdown",
-    );
+  const exportHtml = async () => {
+    try {
+      download(fileName("html"), await standaloneHtml(), "text/html");
+    } catch {
+      exportFailed();
+    }
+  };
+
+  // Le PDF est le même document que l'export HTML, imprimé sans l'interface de l'application.
+  const exportPdf = async () => {
+    let html: string;
+    try {
+      html = await standaloneHtml();
+    } catch {
+      window.print();
+      return;
+    }
+    await printHtml(html);
+  };
+
+  const exportMarkdown = async () => {
+    const current = editor.current;
+    let body = "";
+    try {
+      if (current) {
+        const blocks = current.blocks() as ExportBlock[];
+        const sources = await prepareExport(blocks, {
+          pages,
+          cover: null,
+          readDoc: (ydoc) => current.readDoc(ydoc) as ExportBlock[],
+          embed: false,
+        });
+        const prepared = markdownBlocks(blocks, sources, t);
+        body = prepared.restore(current.toMarkdown(prepared.blocks));
+      }
+    } catch {
+      exportFailed();
+      return;
+    }
+    download(fileName("md"), `# ${title || t("untitled")}\n\n${body}`, "text/markdown");
   };
 
   return (
@@ -324,7 +380,7 @@ export function PageView({ id }: { id: string }) {
                     ? []
                     : [
                         { icon: <CodeXml size={16} />, label: t("exportHtml"), onClick: exportHtml },
-                        { icon: <Printer size={16} />, label: t("print"), onClick: () => window.print() },
+                        { icon: <Printer size={16} />, label: t("print"), onClick: exportPdf },
                         "separator" as const,
                         { icon: <History size={16} />, label: t("history"), onClick: () => setHistoryOpen(true) },
                         {
@@ -446,7 +502,7 @@ export function PageView({ id }: { id: string }) {
             </button>
           )}
           {!page.locked && (!page.icon || !page.cover) && (
-            <div className="-ml-1.5 mb-1 flex h-7 gap-1 text-faint opacity-0 focus-within:opacity-100 group-hover:opacity-100 max-md:opacity-100">
+            <div className="no-print -ml-1.5 mb-1 flex h-7 gap-1 text-faint opacity-0 focus-within:opacity-100 group-hover:opacity-100 max-md:opacity-100">
               {!page.icon && (
                 <button
                   onClick={(e) => setPicker(e.currentTarget.getBoundingClientRect())}
@@ -509,7 +565,7 @@ export function PageView({ id }: { id: string }) {
                   <button
                     aria-label={`${t("delete")} ${tag}`}
                     onClick={() => saveTags(tags.filter((x) => x !== tag))}
-                    className="opacity-60 hover:opacity-100"
+                    className="no-print opacity-60 hover:opacity-100"
                   >
                     ×
                   </button>
@@ -528,7 +584,7 @@ export function PageView({ id }: { id: string }) {
                 }}
                 placeholder={tags.length ? "+" : `+ ${t("addTag")}`}
                 aria-label={t("addTag")}
-                className={`h-6 rounded bg-transparent px-1 text-[13px] placeholder:text-faint hover:bg-hover focus:bg-hover ${
+                className={`no-print h-6 rounded bg-transparent px-1 text-[13px] placeholder:text-faint hover:bg-hover focus:bg-hover ${
                   tags.length ? "w-24" : "w-44 opacity-0 focus:opacity-100 group-hover:opacity-100 max-md:opacity-100"
                 }`}
               />
