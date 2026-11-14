@@ -40,6 +40,7 @@ import { useT } from "../i18n";
 import { useStore, type Route } from "../store";
 import { moveToTrash } from "./actions";
 import { IconButton, Menu, PageIcon } from "./common";
+import { AppUpdate, useUpdateMenuItems } from "./AppUpdate";
 import { Pomodoro } from "./Pomodoro";
 import { JoinDialog } from "./ShareDialog";
 
@@ -528,6 +529,7 @@ export function Sidebar() {
           </div>
         )}
         <div className="px-1.5 pb-2 pt-1 shadow-[inset_0_1px_0_var(--color-line)]">
+          <AppUpdate />
           <Pomodoro />
           <Menu
             label={t("settingsMenu")}
@@ -570,6 +572,7 @@ export function Sidebar() {
                 label: t("enableReminders"),
                 onClick: async () => alert(t((await enableReminders()) ? "remindersOn" : "remindersBlocked")),
               },
+              ...useUpdateMenuItems(t),
             ]}
           />
           <NavItem

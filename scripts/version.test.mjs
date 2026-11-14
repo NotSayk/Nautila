@@ -3,7 +3,15 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
-import { mismatches, readCargoToml, readVersions, setCargoLock, setCargoToml, setJson, setVersion } from "./version.mjs";
+import {
+  mismatches,
+  readCargoToml,
+  readVersions,
+  setCargoLock,
+  setCargoToml,
+  setJson,
+  setVersion,
+} from "./version.mjs";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -46,7 +54,13 @@ describe("réécriture de la version", () => {
     const dir = mkdtempSync(join(tmpdir(), "nautila-version-"));
     try {
       mkdirSync(join(dir, "src-tauri"));
-      for (const f of ["package.json", "package-lock.json", "src-tauri/tauri.conf.json", "src-tauri/Cargo.toml", "src-tauri/Cargo.lock"])
+      for (const f of [
+        "package.json",
+        "package-lock.json",
+        "src-tauri/tauri.conf.json",
+        "src-tauri/Cargo.toml",
+        "src-tauri/Cargo.lock",
+      ])
         cpSync(join(root, f), join(dir, f));
       expect(() => setVersion(dir, "trois")).toThrow();
       setVersion(dir, "9.8.7");
