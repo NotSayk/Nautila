@@ -24,6 +24,7 @@ import {
   Moon,
   Sun,
   MoreHorizontal,
+  NotebookPen,
   Pencil,
   Plus,
   Search,
@@ -37,6 +38,9 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { download, exportBackup, importBackup } from "../data/backup";
 import { duplicatePage, movePage, restorePage, trashPage, updatePageMeta, type PageMeta } from "../data/pages";
 import { importFiles } from "../data/importer";
+import { dailyId } from "../data/daily";
+import { dayKey } from "../data/stats";
+import { openDailyNote } from "./daily";
 import { enableReminders } from "../reminders";
 import { useT } from "../i18n";
 import { fmtKeys } from "../util/platform";
@@ -521,6 +525,12 @@ export function Sidebar() {
             label={t("timetable")}
             active={route.view === "timetable"}
             onClick={go({ view: "timetable" })}
+          />
+          <NavItem
+            icon={<NotebookPen {...ICON} />}
+            label={t("dailyNote")}
+            active={route.view === "page" && route.id === dailyId(dayKey(Date.now()))}
+            onClick={() => void openDailyNote()}
           />
         </nav>
 

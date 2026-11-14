@@ -68,15 +68,18 @@ export async function createPage(input: {
   kind?: PageKind;
   title?: string;
   icon?: string | null;
+  /** Identifiant imposé (pages déterministes comme la note du jour) et position dans le parent. */
+  id?: string;
+  position?: number;
 }): Promise<PageMeta> {
   const now = Date.now();
   const page: PageMeta = {
-    id: crypto.randomUUID(),
+    id: input.id ?? crypto.randomUUID(),
     parent_id: input.parentId ?? null,
     kind: input.kind ?? "note",
     title: input.title ?? "",
     icon: input.icon ?? null,
-    position: now,
+    position: input.position ?? now,
     favorite: 0,
     full_width: 0,
     cover: null,

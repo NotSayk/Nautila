@@ -608,6 +608,10 @@ const fr = {
   repeatBiweekly: "Toutes les deux semaines",
   repeatMonthly: "Chaque mois",
   nextOccurrence: "Prochaine occurrence :",
+  // Note du jour
+  journal: "Journal",
+  dailyNote: "Note du jour",
+  dailyNoteFailed: "Impossible d'ouvrir la note du jour.",
 };
 
 const en: typeof fr = {
@@ -1214,6 +1218,10 @@ const en: typeof fr = {
   repeatBiweekly: "Every two weeks",
   repeatMonthly: "Every month",
   nextOccurrence: "Next occurrence:",
+  // Note du jour
+  journal: "Journal",
+  dailyNote: "Daily note",
+  dailyNoteFailed: "Couldn't open today's note.",
 };
 
 export type Key = keyof typeof fr;
