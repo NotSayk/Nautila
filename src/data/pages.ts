@@ -1,8 +1,9 @@
 import { db } from "../db";
-import { syncCards } from "./cards";
-import { snapshot } from "./versions";
+import type { SqlValue, Statement } from "../db/types";
+import { cardStatements, insertCard } from "./cards";
+import { snapshotStatements } from "./versions";
 import { toFtsQuery, type Extracted } from "./extract";
-import { collectFiles, fileId, linkFiles } from "./files";
+import { collectFiles, fileId, linkStatements } from "./files";
 
 /** « synced » : contenu d'un bloc synchronisé, jamais listé comme une page. */
 export type PageKind = "note" | "course" | "semester" | "database" | "synced";
@@ -52,13 +53,14 @@ export async function getPageDoc(id: string): Promise<{ ydoc: string | null; mar
   return { ydoc: rows[0]?.ydoc ?? null, markdown: rows[0]?.import_md ?? null };
 }
 
-async function reindex(id: string) {
-  await db().run("DELETE FROM pages_fts WHERE page_id = ?", [id]);
-  await db().run(
-    "INSERT INTO pages_fts (page_id, title, body) SELECT id, title, body FROM pages WHERE id = ? AND deleted_at IS NULL",
-    [id],
-  );
-}
+/** Remet la page dans l'index de recherche (hors corbeille). */
+const reindexStatements = (id: string): Statement[] => [
+  { sql: "DELETE FROM pages_fts WHERE page_id = ?", params: [id] },
+  {
+    sql: "INSERT INTO pages_fts (page_id, title, body) SELECT id, title, body FROM pages WHERE id = ? AND deleted_at IS NULL",
+    params: [id],
+  },
+];
 
 export async function createPage(input: {
   parentId?: string | null;
@@ -86,11 +88,13 @@ export async function createPage(input: {
     updated_at: now,
     deleted_at: null,
   };
-  await db().run(
-    "INSERT INTO pages (id, parent_id, kind, title, icon, position, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?)",
-    [page.id, page.parent_id, page.kind, page.title, page.icon, page.position, now, now],
-  );
-  await reindex(page.id);
+  await db().batch([
+    {
+      sql: "INSERT INTO pages (id, parent_id, kind, title, icon, position, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?)",
+      params: [page.id, page.parent_id, page.kind, page.title, page.icon, page.position, now, now],
+    },
+    ...reindexStatements(page.id),
+  ]);
   return page;
 }
 
@@ -108,20 +112,42 @@ export type PagePatch = {
   small_text?: boolean;
 };
 
+const PATCH_COLUMNS = new Set([
+  "title",
+  "kind",
+  "share_id",
+  "tags",
+  "icon",
+  "cover",
+  "font",
+  "favorite",
+  "full_width",
+  "locked",
+  "small_text",
+]);
+
+/** Modifie les métadonnées d'une page ; sa date de modification n'avance que si une valeur change vraiment. */
 export async function updatePageMeta(id: string, patch: PagePatch) {
-  for (const [key, value] of Object.entries(patch)) {
-    if (value === undefined) continue;
-    // Les noms de colonnes viennent du type PagePatch, jamais d'une saisie.
-    await db().run(`UPDATE pages SET ${key} = ? WHERE id = ?`, [
-      typeof value === "boolean" ? Number(value) : value,
-      id,
-    ]);
-  }
-  if (patch.cover) await linkFiles(id, [fileId(patch.cover)]);
-  if (patch.title !== undefined) {
-    await db().run("UPDATE pages SET updated_at = ? WHERE id = ?", [Date.now(), id]);
-    await reindex(id);
-  }
+  const wanted = Object.entries(patch)
+    .filter(([key, value]) => value !== undefined && PATCH_COLUMNS.has(key))
+    .map(([key, value]) => [key, typeof value === "boolean" ? Number(value) : (value as SqlValue)] as const);
+  if (wanted.length === 0) return;
+  // Les noms de colonnes viennent de la liste ci-dessus, jamais d'une saisie.
+  const [current] = await db().all<Record<string, SqlValue>>(
+    `SELECT ${wanted.map(([key]) => key).join(", ")} FROM pages WHERE id = ?`,
+    [id],
+  );
+  if (!current) return;
+  const changed = wanted.filter(([key, value]) => current[key] !== value);
+  const statements: Statement[] = [];
+  if (changed.length > 0)
+    statements.push({
+      sql: `UPDATE pages SET ${changed.map(([key]) => `${key} = ?`).join(", ")}, updated_at = ? WHERE id = ?`,
+      params: [...changed.map(([, value]) => value), Date.now(), id],
+    });
+  if (patch.cover) statements.push(...linkStatements(id, [fileId(patch.cover)]));
+  if (changed.some(([key]) => key === "title")) statements.push(...reindexStatements(id));
+  if (statements.length > 0) await db().batch(statements);
 }
 
 /** Déplace une page ; refuse de la placer dans sa propre descendance. */
@@ -131,69 +157,106 @@ export async function movePage(id: string, parentId: string | null, position?: n
   return true;
 }
 
-/** Copie une page et ses sous-pages ; renvoie l'identifiant de la copie. */
+/** Copie une page et ses sous-pages (une seule transaction) ; renvoie l'identifiant de la copie. */
 export async function duplicatePage(id: string, suffix: string): Promise<string> {
-  const copy = async (sourceId: string, parentId: string | null, top: boolean): Promise<string> => {
-    const newId = crypto.randomUUID();
-    const now = Date.now();
-    await db().run(
-      `INSERT INTO pages (id, parent_id, kind, title, icon, position, ydoc, body, cover, font, small_text, full_width, props, created_at, updated_at)
-       SELECT ?, ?, kind, title || ?, icon, ?, ydoc, body, cover, font, small_text, full_width, props, ?, ? FROM pages WHERE id = ?`,
-      [newId, parentId, top ? suffix : "", top ? now : null, now, now, sourceId],
-    );
-    if (!top)
-      await db().run("UPDATE pages SET position = (SELECT position FROM pages WHERE id = ?) WHERE id = ?", [
-        sourceId,
-        newId,
-      ]);
-    await reindex(newId);
-    await db().run("INSERT INTO databases (page_id, config) SELECT ?, config FROM databases WHERE page_id = ?", [
-      newId,
-      sourceId,
-    ]);
-    await db().run("INSERT INTO page_files (page_id, file_id) SELECT ?, file_id FROM page_files WHERE page_id = ?", [
-      newId,
-      sourceId,
-    ]);
-    await db().run("INSERT INTO links (source_id, target_id) SELECT ?, target_id FROM links WHERE source_id = ?", [
-      newId,
-      sourceId,
-    ]);
-    // Les cartes repartent de zéro : la copie a sa propre progression.
-    const cards = await db().all<{ id: string; front: string; back: string }>(
-      "SELECT id, front, back FROM cards WHERE page_id = ?",
-      [sourceId],
-    );
-    await syncCards(
-      newId,
-      cards.map((c) => ({ ...c, id: c.id.slice(sourceId.length + 1) })),
-    );
-    const kids = await db().all<{ id: string }>("SELECT id FROM pages WHERE parent_id = ? AND deleted_at IS NULL", [
-      sourceId,
-    ]);
-    for (const k of kids) await copy(k.id, newId, false);
-    return newId;
-  };
   const [src] = await db().all<{ parent_id: string | null }>("SELECT parent_id FROM pages WHERE id = ?", [id]);
-  return copy(id, src?.parent_id ?? null, true);
+  if (!src) throw new Error("page not found");
+  const tree = await db().all<{ id: string; parent_id: string | null }>(
+    `WITH RECURSIVE tree(id, parent_id) AS (
+       SELECT id, parent_id FROM pages WHERE id = ?
+       UNION ALL SELECT p.id, p.parent_id FROM pages p JOIN tree t ON p.parent_id = t.id WHERE p.deleted_at IS NULL
+     ) SELECT id, parent_id FROM tree`,
+    [id],
+  );
+  const copyOf = new Map(tree.map((p) => [p.id, crypto.randomUUID()]));
+  const now = Date.now();
+  const statements: Statement[] = [];
+  for (const page of tree) {
+    const newId = copyOf.get(page.id)!;
+    const top = page.id === id;
+    // La copie racine passe en dernier de sa fratrie ; les sous-pages gardent leur position (colonne NOT NULL).
+    statements.push({
+      sql: `INSERT INTO pages (id, parent_id, kind, title, icon, position, ydoc, body, import_md, cover, font, small_text, full_width, props, tags, created_at, updated_at)
+       SELECT ?, ?, kind, title || ?, icon, ${top ? "?" : "position"}, ydoc, body, import_md, cover, font, small_text, full_width, props, tags, ?, ? FROM pages WHERE id = ?`,
+      params: [
+        newId,
+        top ? src.parent_id : (copyOf.get(page.parent_id ?? "") ?? null),
+        top ? suffix : "",
+        ...(top ? [now] : []),
+        now,
+        now,
+        page.id,
+      ],
+    });
+    statements.push(...reindexStatements(newId));
+    statements.push(
+      {
+        sql: "INSERT INTO databases (page_id, config) SELECT ?, config FROM databases WHERE page_id = ?",
+        params: [newId, page.id],
+      },
+      {
+        sql: "INSERT INTO page_files (page_id, file_id) SELECT ?, file_id FROM page_files WHERE page_id = ?",
+        params: [newId, page.id],
+      },
+      {
+        sql: "INSERT INTO links (source_id, target_id) SELECT ?, target_id FROM links WHERE source_id = ?",
+        params: [newId, page.id],
+      },
+    );
+    // Les cartes repartent de zéro : la copie a sa propre progression, dans le même ordre.
+    const cards = await db().all<{ id: string; front: string; back: string }>(
+      "SELECT id, front, back FROM cards WHERE page_id = ? ORDER BY created_at, id",
+      [page.id],
+    );
+    cards.forEach((c, i) =>
+      statements.push(insertCard(copiedCardId(page.id, newId, c.id), newId, c.front, c.back, now + i)),
+    );
+  }
+  await db().batch(statements);
+  return copyOf.get(id)!;
 }
 
+/**
+ * Identifiant d'une carte dans la copie. Une carte de bloc s'appelle « <page>:<bloc> » et suit sa page ;
+ * une carte ajoutée à la main ou par le connecteur MCP (« extra:<uuid> ») reçoit un nouvel uuid, car
+ * l'identifiant d'une carte est unique dans toute la base.
+ */
+function copiedCardId(sourceId: string, newId: string, cardId: string): string {
+  if (cardId.startsWith(`${sourceId}:`)) return `${newId}:${cardId.slice(sourceId.length + 1)}`;
+  return cardId.startsWith("extra:") ? `extra:${crypto.randomUUID()}` : `${newId}:${cardId}`;
+}
+
+/**
+ * Enregistre le contenu d'une page, son index, son historique, ses liens, ses cartes et ses fichiers
+ * dans une seule transaction. Les liens et les cartes ne sont réécrits que s'ils ont changé : chaque
+ * écriture alourdit le journal de synchronisation.
+ */
 export async function savePageContent(id: string, ydoc: string, extracted: Extracted) {
-  await db().run("UPDATE pages SET ydoc = ?, body = ?, import_md = NULL, updated_at = ? WHERE id = ?", [
-    ydoc,
-    extracted.body,
-    Date.now(),
-    id,
-  ]);
-  await reindex(id);
-  await snapshot(id, ydoc, extracted.body);
-  await db().run("DELETE FROM links WHERE source_id = ?", [id]);
-  for (const target of extracted.links)
-    await db().run("INSERT OR IGNORE INTO links (source_id, target_id) VALUES (?, ?)", [id, target]);
-  await syncCards(id, extracted.cards);
+  const known = await db().all<{ target_id: string }>("SELECT target_id FROM links WHERE source_id = ?", [id]);
+  const wanted = new Set(extracted.links);
+  const statements: Statement[] = [
+    {
+      sql: "UPDATE pages SET ydoc = ?, body = ?, import_md = NULL, updated_at = ? WHERE id = ?",
+      params: [ydoc, extracted.body, Date.now(), id],
+    },
+    ...reindexStatements(id),
+    ...(await snapshotStatements(id, ydoc, extracted.body)),
+  ];
+  for (const { target_id } of known)
+    if (!wanted.has(target_id))
+      statements.push({ sql: "DELETE FROM links WHERE source_id = ? AND target_id = ?", params: [id, target_id] });
+  const had = new Set(known.map((k) => k.target_id));
+  for (const target of wanted)
+    if (!had.has(target))
+      statements.push({
+        sql: "INSERT OR IGNORE INTO links (source_id, target_id) VALUES (?, ?)",
+        params: [id, target],
+      });
+  statements.push(...(await cardStatements(id, extracted.cards)));
   // Les liens vers les fichiers ne sont jamais retirés tant que la page existe :
   // une version de l'historique peut encore les utiliser.
-  await linkFiles(id, extracted.files);
+  statements.push(...linkStatements(id, extracted.files));
+  await db().batch(statements);
 }
 
 /** Identifiants de la page et de toute sa descendance. */
@@ -209,10 +272,13 @@ async function subtree(id: string): Promise<string[]> {
 
 export async function trashPage(id: string) {
   const now = Date.now();
-  for (const pid of await subtree(id)) {
-    await db().run("UPDATE pages SET deleted_at = ? WHERE id = ? AND deleted_at IS NULL", [now, pid]);
-    await db().run("DELETE FROM pages_fts WHERE page_id = ?", [pid]);
-  }
+  const statements: Statement[] = [];
+  for (const pid of await subtree(id))
+    statements.push(
+      { sql: "UPDATE pages SET deleted_at = ? WHERE id = ? AND deleted_at IS NULL", params: [now, pid] },
+      { sql: "DELETE FROM pages_fts WHERE page_id = ?", params: [pid] },
+    );
+  await db().batch(statements);
 }
 
 export async function restorePage(id: string) {
@@ -226,27 +292,38 @@ export async function restorePage(id: string) {
   const parent = rows[0].parent_id
     ? await db().all("SELECT id FROM pages WHERE id = ? AND deleted_at IS NULL", [rows[0].parent_id])
     : [];
-  if (rows[0].parent_id && parent.length === 0) await db().run("UPDATE pages SET parent_id = NULL WHERE id = ?", [id]);
-  for (const pid of await subtree(id)) {
-    await db().run("UPDATE pages SET deleted_at = NULL WHERE id = ? AND deleted_at = ?", [pid, stamp]);
-    await reindex(pid);
-  }
+  const statements: Statement[] = [];
+  if (rows[0].parent_id && parent.length === 0)
+    statements.push({ sql: "UPDATE pages SET parent_id = NULL WHERE id = ?", params: [id] });
+  for (const pid of await subtree(id))
+    statements.push(
+      { sql: "UPDATE pages SET deleted_at = NULL WHERE id = ? AND deleted_at = ?", params: [pid, stamp] },
+      ...reindexStatements(pid),
+    );
+  await db().batch(statements);
 }
 
 export async function deletePageForever(id: string) {
+  // La table des notes est retirée par une autre branche : on ne la touche que si elle existe.
+  const [grades] = await db().all("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'grades'");
+  const statements: Statement[] = [];
   for (const pid of await subtree(id)) {
-    await db().run("DELETE FROM pages WHERE id = ?", [pid]);
-    await db().run("DELETE FROM pages_fts WHERE page_id = ?", [pid]);
-    await db().run("DELETE FROM links WHERE source_id = ? OR target_id = ?", [pid, pid]);
-    await db().run("DELETE FROM cards WHERE page_id = ?", [pid]);
-    await db().run("DELETE FROM databases WHERE page_id = ?", [pid]);
-    await db().run("DELETE FROM versions WHERE page_id = ?", [pid]);
-    await db().run("DELETE FROM page_files WHERE page_id = ?", [pid]);
-    await db().run("DELETE FROM grades WHERE course_id = ?", [pid]);
-    await db().run("UPDATE slots SET course_id = NULL WHERE course_id = ?", [pid]);
-    await db().run("UPDATE events SET course_id = NULL WHERE course_id = ?", [pid]);
-    await db().run("UPDATE tasks SET course_id = NULL WHERE course_id = ?", [pid]);
+    const one = [pid];
+    statements.push(
+      { sql: "DELETE FROM pages WHERE id = ?", params: one },
+      { sql: "DELETE FROM pages_fts WHERE page_id = ?", params: one },
+      { sql: "DELETE FROM links WHERE source_id = ? OR target_id = ?", params: [pid, pid] },
+      { sql: "DELETE FROM cards WHERE page_id = ?", params: one },
+      { sql: "DELETE FROM databases WHERE page_id = ?", params: one },
+      { sql: "DELETE FROM versions WHERE page_id = ?", params: one },
+      { sql: "DELETE FROM page_files WHERE page_id = ?", params: one },
+      ...(grades ? [{ sql: "DELETE FROM grades WHERE course_id = ?", params: one }] : []),
+      { sql: "UPDATE slots SET course_id = NULL WHERE course_id = ?", params: one },
+      { sql: "UPDATE events SET course_id = NULL WHERE course_id = ?", params: one },
+      { sql: "UPDATE tasks SET course_id = NULL WHERE course_id = ?", params: one },
+    );
   }
+  await db().batch(statements);
   await collectFiles();
 }
 
@@ -274,8 +351,10 @@ export const backlinks = (id: string) =>
 
 /** Remplace le contenu d'une page (restauration d'une version, application d'un modèle). */
 export async function replacePageDoc(id: string, ydoc: string, body = "") {
-  await db().run("UPDATE pages SET ydoc = ?, body = ?, updated_at = ? WHERE id = ?", [ydoc, body, Date.now(), id]);
-  await reindex(id);
+  await db().batch([
+    { sql: "UPDATE pages SET ydoc = ?, body = ?, updated_at = ? WHERE id = ?", params: [ydoc, body, Date.now(), id] },
+    ...reindexStatements(id),
+  ]);
 }
 
 /** Étiquettes d'une page, lues depuis leur colonne JSON. */

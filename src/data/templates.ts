@@ -8,16 +8,23 @@ export const listTemplates = () => db().all<CustomTemplate>("SELECT id, name, yd
 /** Enregistre le contenu d'une page comme modèle, avec les fichiers qu'elle utilise. */
 export async function saveTemplate(name: string, ydoc: string, pageId: string) {
   const id = crypto.randomUUID();
-  await db().run("INSERT INTO templates (id, name, ydoc, created_at) VALUES (?,?,?,?)", [id, name, ydoc, Date.now()]);
-  await db().run("INSERT INTO page_files (page_id, file_id) SELECT ?, file_id FROM page_files WHERE page_id = ?", [
-    id,
-    pageId,
+  await db().batch([
+    {
+      sql: "INSERT INTO templates (id, name, ydoc, created_at) VALUES (?,?,?,?)",
+      params: [id, name, ydoc, Date.now()],
+    },
+    {
+      sql: "INSERT INTO page_files (page_id, file_id) SELECT ?, file_id FROM page_files WHERE page_id = ?",
+      params: [id, pageId],
+    },
   ]);
 }
 
 export async function deleteTemplate(id: string) {
-  await db().run("DELETE FROM templates WHERE id = ?", [id]);
-  await db().run("DELETE FROM page_files WHERE page_id = ?", [id]);
+  await db().batch([
+    { sql: "DELETE FROM templates WHERE id = ?", params: [id] },
+    { sql: "DELETE FROM page_files WHERE page_id = ?", params: [id] },
+  ]);
   await collectFiles();
 }
 

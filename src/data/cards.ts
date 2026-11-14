@@ -1,5 +1,6 @@
 import { createEmptyCard, fsrs, type Card, type Grade } from "ts-fsrs";
 import { db } from "../db";
+import type { Statement } from "../db/types";
 import type { ExtractedCard } from "./extract";
 
 export type CardRow = {
@@ -18,34 +19,53 @@ function revive(json: string): Card {
   return { ...raw, due: new Date(raw.due), last_review: raw.last_review ? new Date(raw.last_review) : undefined };
 }
 
-/** Aligne les cartes en base sur les blocs flashcard présents dans la page. */
-export async function syncCards(pageId: string, cards: ExtractedCard[]) {
-  const existing = await db().all<{ id: string }>("SELECT id FROM cards WHERE page_id = ?", [pageId]);
-  cards = cards.map((c) => ({ ...c, id: `${pageId}:${c.id}` }));
-  const keep = new Set(cards.map((c) => c.id));
+/** Insertion d'une carte neuve (progression à zéro). */
+export function insertCard(id: string, pageId: string, front: string, back: string, createdAt: number): Statement {
+  const state = createEmptyCard(new Date(createdAt));
+  return {
+    sql: "INSERT INTO cards (id, page_id, front, back, fsrs, due, created_at) VALUES (?,?,?,?,?,?,?)",
+    params: [id, pageId, front, back, JSON.stringify(state), state.due.getTime(), createdAt],
+  };
+}
+
+/**
+ * Instructions qui alignent les cartes en base sur les blocs flashcard de la page. Une carte
+ * inchangée n'est pas réécrite (chaque écriture alourdit le journal de synchronisation).
+ */
+export async function cardStatements(pageId: string, cards: ExtractedCard[], now = Date.now()): Promise<Statement[]> {
+  const existing = new Map(
+    (
+      await db().all<{ id: string; front: string; back: string }>(
+        "SELECT id, front, back FROM cards WHERE page_id = ?",
+        [pageId],
+      )
+    ).map((c) => [c.id, c]),
+  );
+  const wanted = cards.map((c) => ({ ...c, id: `${pageId}:${c.id}` }));
+  const keep = new Set(wanted.map((c) => c.id));
+  const statements: Statement[] = [];
   // Seules les cartes issues d'un bloc de la page sont alignées ; celles ajoutées à la main
   // ou par le connecteur IA (identifiant « extra:… ») ne sont jamais retirées ici.
-  for (const { id } of existing)
-    if (id.startsWith(`${pageId}:`) && !keep.has(id)) await db().run("DELETE FROM cards WHERE id = ?", [id]);
+  for (const id of existing.keys())
+    if (id.startsWith(`${pageId}:`) && !keep.has(id))
+      statements.push({ sql: "DELETE FROM cards WHERE id = ?", params: [id] });
 
-  const known = new Set(existing.map((e) => e.id));
-  const now = Date.now();
-  for (const c of cards) {
-    if (known.has(c.id)) {
-      await db().run("UPDATE cards SET front = ?, back = ? WHERE id = ?", [c.front, c.back, c.id]);
+  for (const c of wanted) {
+    const old = existing.get(c.id);
+    if (old) {
+      if (old.front !== c.front || old.back !== c.back)
+        statements.push({ sql: "UPDATE cards SET front = ?, back = ? WHERE id = ?", params: [c.front, c.back, c.id] });
     } else {
-      const state = createEmptyCard(new Date(now));
-      await db().run("INSERT INTO cards (id, page_id, front, back, fsrs, due, created_at) VALUES (?,?,?,?,?,?,?)", [
-        c.id,
-        pageId,
-        c.front,
-        c.back,
-        JSON.stringify(state),
-        state.due.getTime(),
-        now,
-      ]);
+      statements.push(insertCard(c.id, pageId, c.front, c.back, now));
     }
   }
+  return statements;
+}
+
+/** Aligne les cartes en base sur les blocs flashcard présents dans la page (une seule transaction). */
+export async function syncCards(pageId: string, cards: ExtractedCard[]) {
+  const statements = await cardStatements(pageId, cards);
+  if (statements.length) await db().batch(statements);
 }
 
 const LIVE = "page_id IN (SELECT id FROM pages WHERE deleted_at IS NULL)";
