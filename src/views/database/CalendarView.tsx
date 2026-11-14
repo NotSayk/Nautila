@@ -105,7 +105,7 @@ export function CalendarView({ api }: { api: Api }) {
             <div
               key={week[0]}
               className="grid grid-cols-7"
-              style={{ gridTemplateRows: `auto repeat(${maxLanes}, 22px) auto` }}
+              style={{ gridTemplateRows: `28px repeat(${maxLanes}, 22px) 20px` }}
             >
               {week.map((day, c) => (
                 <div

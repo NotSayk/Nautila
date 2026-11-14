@@ -502,7 +502,7 @@ export function DatabaseView({ page, embedded }: { page: PageMeta; embedded?: bo
   return (
     <div className={embedded ? "" : "px-(--page-pad) pb-32 pt-4"}>
       <div className={`mb-3 flex flex-wrap items-center gap-x-1 gap-y-2 ${LINE}`}>
-        <div className="flex min-w-0 flex-1 items-center gap-0.5 overflow-x-auto">
+        <div className="flex min-w-0 flex-1 items-center gap-0.5 overflow-x-auto overflow-y-hidden max-md:basis-full">
           {config.views.map((v) => {
             const Icon = VIEW_TYPES.find(([type]) => type === v.type)?.[2] ?? Table2;
             const active = v.id === view.id;
@@ -523,7 +523,7 @@ export function DatabaseView({ page, embedded }: { page: PageMeta; embedded?: bo
                 className="mb-1 h-7 w-32 rounded bg-hover px-2"
               />
             ) : (
-              <span key={v.id} className="mb-[-1px] flex shrink-0 items-center">
+              <span key={v.id} className="flex shrink-0 items-center">
                 <button
                   onClick={() => setViewId(v.id)}
                   onDoubleClick={() => setRenaming(v.id)}

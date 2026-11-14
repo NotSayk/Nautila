@@ -80,10 +80,11 @@ function ResizeHandle({
         onLive(last.current);
       }}
       onPointerUp={() => {
-        if (!start.current) return;
+        const from = start.current;
+        if (!from) return;
         start.current = null;
         onLive(null);
-        if (last.current !== width) onCommit(last.current);
+        if (last.current !== from.w) onCommit(last.current);
       }}
       onPointerCancel={() => {
         start.current = null;
