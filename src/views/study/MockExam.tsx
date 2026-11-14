@@ -340,15 +340,17 @@ function Report({
           {run.fsrs && ` · ${t("mockFsrsDone")}`}
         </p>
         <div className="mt-6 flex flex-wrap justify-center gap-2">
-          <button className={SECONDARY} onClick={() => (commit(), onExit())}>
+          <button autoFocus={result.wrong.length === 0} className={SECONDARY} onClick={() => (commit(), onExit())}>
             {t("mockBack")}
           </button>
           <button className={SECONDARY} onClick={() => (commit(), onAgain())}>
             {t("mockAgain")}
           </button>
-          <button autoFocus className={PRIMARY} disabled={result.wrong.length === 0} onClick={() => (commit(), onRetry(result.wrong))}>
-            {t("mockRetryWrong")} ({result.wrong.length})
-          </button>
+          {result.wrong.length > 0 && (
+            <button autoFocus className={PRIMARY} onClick={() => (commit(), onRetry(result.wrong))}>
+              {t("mockRetryWrong")} ({result.wrong.length})
+            </button>
+          )}
         </div>
       </div>
 

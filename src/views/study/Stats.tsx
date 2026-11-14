@@ -170,7 +170,15 @@ function Forecast({ days }: { days: StudyStats["forecast"] }) {
             style={{ height: `${d.count ? Math.max(4, (d.count / max) * 80) : 2}%` }}
           />
           <span className="w-full truncate text-center text-[10px] text-muted" aria-hidden>
-            {i === 0 ? t("todayShort") : short.format(keyNoon(d.key))}
+            {i === 0 ? (
+              t("todayShort")
+            ) : (
+              <>
+                {/* Sur un téléphone, la colonne est trop étroite pour le jour de la semaine : le quantième suffit. */}
+                <span className="sm:hidden">{new Date(keyNoon(d.key)).getDate()}</span>
+                <span className="max-sm:hidden">{short.format(keyNoon(d.key))}</span>
+              </>
+            )}
           </span>
         </li>
       ))}
