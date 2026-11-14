@@ -600,6 +600,14 @@ const fr = {
   mockRetryWrong: "Refaire les erreurs",
   mockMissed: "Questions ratées",
   mockYourAnswer: "Ta réponse",
+  // Devoirs récurrents
+  repeat: "Répétition",
+  repeatNone: "Une seule fois",
+  repeatDaily: "Chaque jour",
+  repeatWeekly: "Chaque semaine",
+  repeatBiweekly: "Toutes les deux semaines",
+  repeatMonthly: "Chaque mois",
+  nextOccurrence: "Prochaine occurrence :",
 };
 
 const en: typeof fr = {
@@ -1198,6 +1206,14 @@ const en: typeof fr = {
   mockRetryWrong: "Retry mistakes",
   mockMissed: "Missed questions",
   mockYourAnswer: "Your answer",
+  // Devoirs récurrents
+  repeat: "Repeat",
+  repeatNone: "Once",
+  repeatDaily: "Every day",
+  repeatWeekly: "Every week",
+  repeatBiweekly: "Every two weeks",
+  repeatMonthly: "Every month",
+  nextOccurrence: "Next occurrence:",
 };
 
 export type Key = keyof typeof fr;
