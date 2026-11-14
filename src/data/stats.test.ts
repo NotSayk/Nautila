@@ -11,6 +11,7 @@ import {
   heatmap,
   keyNoon,
   loadStudyStats,
+  logStudySession,
   reviewSummary,
   streaks,
   successRate,
@@ -128,5 +129,19 @@ describe("journal des révisions", () => {
     expect(stats.success).toBe(0.5);
     expect(stats.decks).toEqual([{ page_id: "p", reviews: 2, success: 0.5 }]);
     expect(stats.buckets.learning).toBe(1);
+  });
+
+  it("journalise une séance de Pomodoro une seule fois et la compte dans le temps par matière", async () => {
+    const db = await migratedDb();
+    const end = Date.now() - 60_000;
+    await logStudySession(end, "chimie", 25 * 60_000);
+    await logStudySession(end, "chimie", 25 * 60_000); // seconde fenêtre ouverte sur la même séance
+    await logStudySession(end - 86_400_000 * 10, null, 25 * 60_000);
+    expect(await db.all("SELECT id, course_id, started_at, kind FROM study_log WHERE course_id = 'chimie'")).toEqual([
+      { id: `pomodoro-${end}`, course_id: "chimie", started_at: end - 25 * 60_000, kind: "pomodoro" },
+    ]);
+    const stats = await loadStudyStats();
+    expect(stats.time7).toEqual([{ course_id: "chimie", duration: 25 * 60_000 }]);
+    expect(stats.time30).toHaveLength(2);
   });
 });

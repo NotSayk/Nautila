@@ -179,6 +179,18 @@ export async function loadStudyStats(now = Date.now()): Promise<StudyStats> {
   };
 }
 
+/**
+ * Journalise une séance de travail du Pomodoro. L'identifiant dérive de l'heure de fin : deux fenêtres
+ * ouvertes sur la même séance n'écrivent qu'une ligne.
+ */
+export const logStudySession = (endsAt: number, courseId: string | null, duration: number) =>
+  db().run("INSERT OR IGNORE INTO study_log (id, course_id, started_at, duration, kind) VALUES (?,?,?,?,'pomodoro')", [
+    `pomodoro-${endsAt}`,
+    courseId,
+    endsAt - duration,
+    duration,
+  ]);
+
 // ---------- Objectif du jour (réglage de l'appareil) ----------
 
 const GOAL_KEY = "nautila.dailyGoal";

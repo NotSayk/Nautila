@@ -612,6 +612,8 @@ const fr = {
   journal: "Journal",
   dailyNote: "Note du jour",
   dailyNoteFailed: "Impossible d'ouvrir la note du jour.",
+  // Temps d'étude
+  pomodoroCourse: "Matière de la séance",
 };
 
 const en: typeof fr = {
@@ -1222,6 +1224,8 @@ const en: typeof fr = {
   journal: "Journal",
   dailyNote: "Daily note",
   dailyNoteFailed: "Couldn't open today's note.",
+  // Temps d'étude
+  pomodoroCourse: "Subject for this session",
 };
 
 export type Key = keyof typeof fr;
