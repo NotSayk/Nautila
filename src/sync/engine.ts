@@ -2,6 +2,8 @@ import { db } from "../db";
 import { SYNC_TABLES } from "../db/schema";
 import type { SqlValue } from "../db/types";
 import { useStore } from "../store";
+import { nextBatch, onPushError, pendingMark, PUSH_ROWS, type Pending } from "./batch";
+import { keyValues, keyWhere } from "./keys";
 import { mergeDocs } from "./merge";
 
 type Row = Record<string, SqlValue>;
@@ -17,8 +19,34 @@ export type SyncState = {
 
 /** Événement émis quand le contenu d'une page arrive d'un autre appareil. */
 export const REMOTE_DOC_EVENT = "nautila-remote-doc";
-const PUSH_ROWS = 40;
-const PUSH_BYTES = 8 * 1024 * 1024;
+
+/** Modification que le serveur a refusée (ou qu'il refuserait) : mise de côté pour ne pas bloquer les autres. */
+export type SkippedChange = Pending & { reason: "tooLarge" | "rejected" };
+const SKIPPED_KEY = "nautila.sync.skipped";
+
+export function skippedChanges(): SkippedChange[] {
+  try {
+    const list = JSON.parse(localStorage.getItem(SKIPPED_KEY) ?? "[]");
+    return Array.isArray(list) ? list : [];
+  } catch {
+    return [];
+  }
+}
+
+function setSkipped(list: SkippedChange[]) {
+  try {
+    if (list.length > 0) localStorage.setItem(SKIPPED_KEY, JSON.stringify(list.slice(-200)));
+    else localStorage.removeItem(SKIPPED_KEY);
+  } catch {
+    /* non mémorisé : les lignes seront simplement réessayées */
+  }
+}
+
+/** Réessaie d'envoyer les modifications mises de côté. */
+export async function retrySkipped() {
+  setSkipped([]);
+  await syncNow();
+}
 
 export class SyncError extends Error {
   constructor(
@@ -50,8 +78,6 @@ async function api<T>(server: string, path: string, body: unknown, token?: strin
   return json as T;
 }
 
-const where = (table: string) => SYNC_TABLES[table].map((k) => `${k} = ?`).join(" AND ");
-
 /** Connecte cet appareil à un compte, puis met toutes les données locales en file d'envoi. */
 export async function connect(input: {
   server: string;
@@ -71,6 +97,7 @@ export async function connect(input: {
     res.username,
     res.token,
   ]);
+  setSkipped([]);
   const now = Date.now();
   for (const [table, key] of Object.entries(SYNC_TABLES)) {
     // Les pages gardent leur date de modification, pour ne pas écraser une version plus récente du compte.
@@ -83,19 +110,38 @@ export async function connect(input: {
   await syncNow();
 }
 
-/** Crée un jeton pour le connecteur MCP ; renvoie l'adresse du connecteur et le jeton. */
-export async function createAccessToken(): Promise<{ url: string; token: string }> {
+/** Requête au nom du compte connecté. */
+async function accountApi<T>(path: string, body: unknown = {}): Promise<T> {
   const state = await getSyncState();
   if (!state.server || !state.token) throw new SyncError(401, "auth");
-  const { token } = await api<{ token: string }>(state.server, "token", {}, state.token);
-  return { url: `${state.server}/mcp`, token };
+  return api<T>(state.server, path, body, state.token);
 }
+
+/** Crée un jeton pour le connecteur MCP ; renvoie l'adresse du connecteur et le jeton. */
+export async function createAccessToken(): Promise<{ url: string; token: string }> {
+  const { token } = await accountApi<{ token: string }>("token");
+  const { server } = await getSyncState();
+  return { url: `${server}/mcp`, token };
+}
+
+/** Jeton du connecteur MCP, tel que le serveur le décrit (le jeton lui-même n'est jamais renvoyé). */
+export type AccessToken = { id: string; created_at: number; last_used: number | null };
+export const listAccessTokens = async () => (await accountApi<{ tokens: AccessToken[] }>("tokens")).tokens;
+export const revokeAccessToken = (id: string) => accountApi("token/revoke", { id });
+
+/** Change le mot de passe ; les autres appareils et les jetons MCP sont déconnectés. */
+export const changePassword = (current: string, password: string) =>
+  accountApi<{ revoked: number }>("password", { current, password });
+
+/** Déconnecte tous les autres appareils du compte (celui-ci reste connecté). */
+export const logoutOtherDevices = () => accountApi<{ revoked: number }>("logout-others");
 
 export async function disconnect() {
   const state = await getSyncState();
   if (state.server && state.token) await api(state.server, "logout", {}, state.token).catch(() => undefined);
   await db().run("UPDATE sync_state SET token = NULL, seq = 0, last_sync = NULL");
   await db().run("DELETE FROM sync_log");
+  setSkipped([]);
   useStore.setState({ sync: { status: "off" } });
 }
 
@@ -134,7 +180,7 @@ async function apply(changes: Change[]) {
 
   for (const c of changes) {
     if (!SYNC_TABLES[c.tbl]) continue;
-    const key = c.id.split("|");
+    const key = keyValues(c.tbl, c.id);
     const [pending] = await db().all<{ at: number }>("SELECT at FROM sync_log WHERE tbl = ? AND id = ?", [c.tbl, c.id]);
     const localIsNewer = !!pending && pending.at > c.at;
     const unlog = { sql: "DELETE FROM sync_log WHERE tbl = ? AND id = ?", params: [c.tbl, c.id] };
@@ -166,7 +212,7 @@ async function apply(changes: Change[]) {
 
     if (localIsNewer) continue;
     if (c.data === null) {
-      writes.push({ sql: `DELETE FROM ${c.tbl} WHERE ${where(c.tbl)}`, params: key });
+      writes.push({ sql: `DELETE FROM ${c.tbl} WHERE ${keyWhere(c.tbl)}`, params: key });
       if (c.tbl === "pages") writes.push({ sql: "DELETE FROM pages_fts WHERE page_id = ?", params: [c.id] });
     } else writes.push(await upsert(c.tbl, c.data));
     log.push(unlog);
@@ -189,26 +235,47 @@ async function cycle() {
   try {
     let seq = state.seq;
     let received = false;
-    for (let round = 0; round < 500; round++) {
-      const pending = await db().all<{ tbl: string; id: string; at: number }>(
-        `SELECT tbl, id, at FROM sync_log ORDER BY at LIMIT ${PUSH_ROWS}`,
-      );
-      const changes: Change[] = [];
-      let bytes = 0;
-      for (const p of pending) {
-        const [data] = await db().all<Row>(`SELECT * FROM ${p.tbl} WHERE ${where(p.tbl)}`, p.id.split("|"));
-        const size = data ? JSON.stringify(data).length : 0;
-        if (changes.length > 0 && bytes + size > PUSH_BYTES) break;
-        bytes += size;
-        changes.push({ ...p, data: data ?? null });
-      }
+    /** Après le refus d'un lot, les lignes partent une à une pour isoler la fautive. */
+    let solo = false;
+    let quotaFull = false;
+    /** Lignes refusées faute de place pendant ce passage : réessayées au suivant. */
+    const deferred = new Set<string>();
+    let skipped = skippedChanges();
+    const load = async (p: Pending) => {
+      if (!SYNC_TABLES[p.tbl]) return null;
+      const [data] = await db().all<Row>(`SELECT * FROM ${p.tbl} WHERE ${keyWhere(p.tbl)}`, keyValues(p.tbl, p.id));
+      return data ?? null;
+    };
+    const skip = (rows: Pending[], reason: SkippedChange["reason"]) => {
+      skipped = [...skipped, ...rows.map((p) => ({ tbl: p.tbl, id: p.id, at: p.at, reason }))];
+      setSkipped(skipped);
+    };
 
-      const res = await api<{ seq: number; changes: Change[]; more: boolean }>(
-        state.server,
-        "sync",
-        { since: seq, changes },
-        state.token,
-      );
+    for (let round = 0; round < 500; round++) {
+      // Une ligne remodifiée depuis son refus a une autre date : elle n'est plus exclue et repart.
+      const excluded = new Set([...skipped.map(pendingMark), ...deferred]);
+      const limit = solo ? 1 : PUSH_ROWS;
+      const rows = await db().all<Pending>(`SELECT tbl, id, at FROM sync_log ORDER BY at LIMIT ${limit + excluded.size}`);
+      const pending = rows.filter((p) => !excluded.has(pendingMark(p)));
+      const { changes, oversized, consumed } = await nextBatch(pending, load, limit);
+      if (oversized.length > 0) skip(oversized, "tooLarge");
+
+      let res: { seq: number; changes: Change[]; more: boolean };
+      try {
+        res = await api(state.server, "sync", { since: seq, changes }, state.token);
+      } catch (err) {
+        const next = err instanceof SyncError ? onPushError(err.status, err.message, changes.length) : "fail";
+        if (next === "fail") throw err;
+        if (next === "split") solo = true;
+        else if (next === "quota") {
+          deferred.add(pendingMark(changes[0]));
+          quotaFull = true;
+        } else {
+          skip(changes, err instanceof SyncError && err.status === 413 ? "tooLarge" : "rejected");
+          solo = false;
+        }
+        continue;
+      }
       // Une ligne remodifiée pendant l'envoi a une date plus récente : elle reste en file.
       for (const c of changes)
         await db().run("DELETE FROM sync_log WHERE tbl = ? AND id = ? AND at = ?", [c.tbl, c.id, c.at]);
@@ -218,8 +285,16 @@ async function cycle() {
       }
       seq = res.seq;
       await db().run("UPDATE sync_state SET seq = ?, last_sync = ?", [seq, Date.now()]);
-      if (!res.more && changes.length === pending.length && pending.length < PUSH_ROWS) break;
+      if (!res.more && consumed === pending.length && pending.length < limit) break;
     }
+
+    // Oublie les refus devenus sans objet (ligne envoyée depuis, remodifiée ou supprimée).
+    const still: SkippedChange[] = [];
+    for (const s of skipped) {
+      const [row] = await db().all<{ at: number }>("SELECT at FROM sync_log WHERE tbl = ? AND id = ?", [s.tbl, s.id]);
+      if (row?.at === s.at) still.push(s);
+    }
+    setSkipped(still);
     // Pages partagées : les modifications des autres participants arrivent même page fermée.
     try {
       const { syncSharedPages } = await import("./share");
@@ -231,7 +306,16 @@ async function cycle() {
       await useStore.getState().refreshPages();
       await useStore.getState().refreshDue();
     }
-    useStore.setState({ sync: { status: "idle", username: state.username ?? undefined, lastSync: Date.now() } });
+    // Le reste est passé, mais certaines modifications attendent : l'erreur reste visible.
+    const pendingError = quotaFull ? "quota" : still.length > 0 ? "skipped" : undefined;
+    useStore.setState({
+      sync: {
+        status: pendingError ? "error" : "idle",
+        username: state.username ?? undefined,
+        lastSync: Date.now(),
+        error: pendingError,
+      },
+    });
   } catch (err) {
     const error =
       err instanceof SyncError
@@ -264,7 +348,8 @@ export async function startSync() {
   const tick = async () => {
     if (useStore.getState().sync.status === "off" || document.visibilityState === "hidden") return;
     const [{ n }] = await db().all<{ n: number }>("SELECT COUNT(*) AS n FROM sync_log");
-    if (n === 0 && Date.now() - lastPull < 25_000) return;
+    // Les modifications mises de côté ne relancent pas la synchronisation toutes les six secondes.
+    if (n <= skippedChanges().length && Date.now() - lastPull < 25_000) return;
     lastPull = Date.now();
     await syncNow();
   };

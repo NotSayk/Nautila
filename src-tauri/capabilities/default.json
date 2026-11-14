@@ -1,7 +1,14 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Droits de la fenêtre principale",
+  "description": "Droits de la fenêtre principale : base SQLite locale (ouvrir, lire, écrire, fermer). Les commandes de l'application (save_download, db_transaction) n'ont pas besoin d'être listées.",
   "windows": ["main"],
-  "permissions": ["core:default", "sql:default", "sql:allow-execute", "core:webview:allow-print"]
+  "permissions": [
+    "core:default",
+    "core:webview:allow-print",
+    "sql:allow-load",
+    "sql:allow-select",
+    "sql:allow-execute",
+    "sql:allow-close"
+  ]
 }

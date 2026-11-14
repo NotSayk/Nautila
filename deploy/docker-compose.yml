@@ -1,15 +1,19 @@
 # Nautila sur un serveur : application web + synchronisation, derrière Caddy.
 #   docker compose -f deploy/docker-compose.yml up -d --build
+# Les valeurs peuvent venir d'un fichier .env placé à côté (INVITE_CODE=…).
 services:
   nautila:
     build: ..
     restart: unless-stopped
     environment:
       # "open" : inscription libre ; "invite" : avec le code ci-dessous ; "closed" : fermée.
-      REGISTRATION: invite
-      INVITE_CODE: change-moi
+      REGISTRATION: ${REGISTRATION:-invite}
+      # Tant que le code vaut "change-moi", le serveur refuse toute inscription.
+      INVITE_CODE: ${INVITE_CODE:-change-moi}
       # Espace maximal par compte, en Mo.
-      MAX_USER_MB: 1024
+      MAX_USER_MB: ${MAX_USER_MB:-1024}
+      # Caddy est devant : l'adresse des clients est lue dans X-Forwarded-For.
+      TRUST_PROXY: "1"
     volumes:
       - nautila-data:/data
     ports:
