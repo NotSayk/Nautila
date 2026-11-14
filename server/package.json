@@ -5,7 +5,7 @@
   "type": "module",
   "license": "AGPL-3.0-or-later",
   "description": "Serveur de synchronisation de Nautila",
-  "scripts": { "start": "node index.mjs" },
+  "scripts": { "start": "node index.mjs", "test": "node --test tests/api.node-test.mjs" },
   "engines": { "node": ">=22.13" },
   "dependencies": { "yjs": "^13.6.33" }
 }
