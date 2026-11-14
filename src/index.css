@@ -574,8 +574,19 @@ input[type="radio"]:focus-visible {
   border-radius: 4px;
   color: var(--color-muted);
 }
-.sketch-tool:hover {
+.sketch-tool:hover,
+.sketch-tool-on {
   background: var(--color-hover);
+}
+.sketch-tool-on {
+  color: var(--color-ink);
+}
+.media-missing {
+  border-radius: 4px;
+  background: var(--color-panel);
+  padding: 8px 12px;
+  color: var(--color-muted);
+  font-size: 14px;
 }
 
 /* ---------- Lecteur PDF ---------- */
@@ -597,9 +608,73 @@ input[type="radio"]:focus-visible {
 .pdf-page:last-of-type {
   margin-bottom: 0;
 }
+/* Couleurs de surlignage : --hl pour le fond, --hl-solid pour les repères pleins. */
+.pdf-hl-yellow {
+  --hl: rgb(255 212 0 / 0.4);
+  --hl-solid: rgb(255 212 0 / 0.9);
+}
+.pdf-hl-green {
+  --hl: rgb(76 200 90 / 0.4);
+  --hl-solid: rgb(76 200 90 / 0.9);
+}
+.pdf-hl-blue {
+  --hl: rgb(60 150 255 / 0.35);
+  --hl-solid: rgb(60 150 255 / 0.9);
+}
+.pdf-hl-pink {
+  --hl: rgb(255 90 160 / 0.35);
+  --hl-solid: rgb(255 90 160 / 0.9);
+}
+.pdf-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+  margin-bottom: 4px;
+  font-size: 13px;
+  color: var(--color-muted);
+}
+.pdf-zoom {
+  min-width: 44px;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+.pdf-sep {
+  width: 1px;
+  height: 16px;
+  margin: 0 4px;
+  background: var(--color-line);
+}
+.pdf-page-input {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.pdf-page-input input {
+  width: 48px;
+  height: 22px;
+  border-radius: 4px;
+  background: var(--color-hover);
+  padding: 0 4px;
+  text-align: center;
+  color: var(--color-ink);
+}
+.pdf-swatch,
+.pdf-menu button.pdf-swatch {
+  width: 16px;
+  height: 16px;
+  padding: 0;
+  border-radius: 50%;
+  background: var(--hl-solid);
+}
+.pdf-swatch-on {
+  box-shadow:
+    0 0 0 2px var(--color-pop),
+    0 0 0 3.5px var(--color-accent);
+}
 .pdf-highlight {
   position: absolute;
-  background: rgb(255 212 0 / 0.4);
+  background: var(--hl, rgb(255 212 0 / 0.4));
   mix-blend-mode: multiply;
   pointer-events: none;
 }
@@ -689,7 +764,7 @@ input[type="radio"]:focus-visible {
 .pdf-note-text {
   flex: 1;
   min-width: 0;
-  border-left: 3px solid rgb(255 212 0 / 0.9);
+  border-left: 3px solid var(--hl-solid, rgb(255 212 0 / 0.9));
   padding: 2px 8px;
   text-align: left;
 }

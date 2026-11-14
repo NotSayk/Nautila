@@ -14,36 +14,43 @@ export type Extracted = { body: string; cards: ExtractedCard[]; links: string[];
 
 const FILE_SCHEME = "nautila-file:";
 
-function inlineText(content: unknown, links: Set<string>): string {
+function inlineText(content: unknown, links: Set<string>, latex = true): string {
   if (!content) return "";
   if (typeof content === "string") return content;
-  if (Array.isArray(content)) return content.map((c) => inlineText(c, links)).join("");
+  if (Array.isArray(content)) return content.map((c) => inlineText(c, links, latex)).join("");
   if (typeof content !== "object") return "";
   const node = content as Record<string, any>;
   switch (node.type) {
     case "text":
       return node.text ?? "";
     case "link":
-      return inlineText(node.content, links);
+      return inlineText(node.content, links, latex);
     case "pageLink":
       if (node.props?.pageId) links.add(node.props.pageId);
       return "";
     case "math":
-      return node.props?.latex ?? "";
+      return latex ? (node.props?.latex ?? "") : "";
     case "cite":
       return node.props?.key ? `[@${node.props.key}]` : "";
     case "tableContent":
       return (node.rows ?? [])
-        .map((r: any) => (r.cells ?? []).map((c: unknown) => inlineText(c, links)).join(" "))
+        .map((r: any) => (r.cells ?? []).map((c: unknown) => inlineText(c, links, latex)).join(" "))
         .join("\n");
     case "tableCell":
-      return inlineText(node.content, links);
+      return inlineText(node.content, links, latex);
     default:
       return "";
   }
 }
 
-export function extract(blocks: AnyBlock[]): Extracted {
+/** Blocs de fichier dont la légende et le nom se lisent dans la page (et se cherchent). */
+const FILE_BLOCKS = new Set(["image", "video", "audio", "file"]);
+
+/**
+ * Texte, cartes, liens et fichiers d'une page. Par défaut le texte est celui de l'index de recherche (LaTeX,
+ * noms de fichiers et passages surlignés compris) ; avec `search: false`, uniquement ce qui se lit comme des mots.
+ */
+export function extract(blocks: AnyBlock[], { search = true } = {}): Extracted {
   const lines: string[] = [];
   const cards: ExtractedCard[] = [];
   const links = new Set<string>();
@@ -60,16 +67,21 @@ export function extract(blocks: AnyBlock[]): Extracted {
         lines.push(front, back);
       } else if (b.type === "pdf") {
         // Les passages surlignés d'un PDF sont retrouvables par la recherche.
-        lines.push(String(b.props?.name ?? ""));
-        try {
-          for (const h of JSON.parse(String(b.props?.highlights ?? "[]"))) lines.push(String(h.text ?? ""));
-        } catch {
-          /* surlignages illisibles : ignorés pour l'index */
+        if (search) {
+          lines.push(String(b.props?.name ?? ""));
+          try {
+            for (const h of JSON.parse(String(b.props?.highlights ?? "[]"))) lines.push(String(h.text ?? ""));
+          } catch {
+            /* surlignages illisibles : ignorés pour l'index */
+          }
         }
+      } else if (FILE_BLOCKS.has(b.type)) {
+        lines.push(String(b.props?.caption ?? ""));
+        if (search) lines.push(String(b.props?.name ?? ""));
       } else if (b.type === "mathBlock") {
-        lines.push(String(b.props?.latex ?? ""));
+        if (search) lines.push(String(b.props?.latex ?? ""));
       } else {
-        lines.push(inlineText(b.content, links));
+        lines.push(inlineText(b.content, links, search));
       }
       if (b.children?.length) walk(b.children);
     }
@@ -86,4 +98,9 @@ export function toFtsQuery(input: string): string {
     .filter(Boolean)
     .map((w) => `"${w}"*`)
     .join(" ");
+}
+
+/** Nombre de mots lus dans la page : le code LaTeX des formules n'en fait pas partie. */
+export function countWords(blocks: AnyBlock[]): number {
+  return extract(blocks, { search: false }).body.split(/\s+/).filter(Boolean).length;
 }

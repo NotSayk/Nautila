@@ -2,6 +2,41 @@ import { db } from "../db";
 
 export type Reference = { key: string; title: string; author: string; year: string; bibtex: string };
 
+/** Valeur d'un champ (`name = {…}`, `"…"` ou nombre) dans le corps d'une entrée BibTeX ; vide s'il est absent. */
+function bibField(body: string, name: string): string {
+  const found = new RegExp(`\\b${name}\\s*=\\s*`, "i").exec(body);
+  if (!found) return "";
+  let i = found.index + found[0].length;
+  let value = "";
+  if (body[i] === "{") {
+    let level = 0;
+    for (; i < body.length; i++) {
+      if (body[i] === "{") level++;
+      else if (body[i] === "}" && --level === 0) break;
+      if (level > 0) value += body[i];
+    }
+    value = value.slice(1);
+  } else if (body[i] === '"') value = body.slice(i + 1, body.indexOf('"', i + 1));
+  else value = /^[^,\s]+/.exec(body.slice(i))?.[0] ?? "";
+  return value.replace(/[{}]/g, "").replace(/\s+/g, " ").trim();
+}
+
+/** Revue (ou livre qui contient le texte), volume, numéro et pages, relus dans le BibTeX d'origine. */
+export function refDetails(ref: Pick<Reference, "bibtex">): {
+  venue: string;
+  volume: string;
+  number: string;
+  pages: string;
+} {
+  const get = (name: string) => bibField(ref.bibtex ?? "", name);
+  return {
+    venue: get("journal") || get("journaltitle") || get("booktitle"),
+    volume: get("volume"),
+    number: get("number"),
+    pages: get("pages").replace(/\s*-{1,3}\s*/g, "–"),
+  };
+}
+
 /** Lit un fichier BibTeX : une entrée par `@type{clé, champ = {valeur}, …}`. */
 export function parseBibtex(text: string): Reference[] {
   const out: Reference[] = [];
@@ -17,23 +52,7 @@ export function parseBibtex(text: string): Reference[] {
       end++;
     }
     const body = text.slice(entry.lastIndex, end - 1);
-    const field = (name: string) => {
-      const found = new RegExp(`\\b${name}\\s*=\\s*`, "i").exec(body);
-      if (!found) return "";
-      let i = found.index + found[0].length;
-      let value = "";
-      if (body[i] === "{") {
-        let level = 0;
-        for (; i < body.length; i++) {
-          if (body[i] === "{") level++;
-          else if (body[i] === "}" && --level === 0) break;
-          if (level > 0) value += body[i];
-        }
-        value = value.slice(1);
-      } else if (body[i] === '"') value = body.slice(i + 1, body.indexOf('"', i + 1));
-      else value = /^[^,\s]+/.exec(body.slice(i))?.[0] ?? "";
-      return value.replace(/[{}]/g, "").replace(/\s+/g, " ").trim();
-    };
+    const field = (name: string) => bibField(body, name);
     out.push({
       key: match[2],
       title: field("title"),
@@ -47,17 +66,19 @@ export function parseBibtex(text: string): Reference[] {
 }
 
 /** « Dupont et Martin » ou « Dupont et al. », d'après le champ author de BibTeX. */
-export function shortAuthors(author: string): string {
+export function shortAuthors(author: string, and = "et"): string {
   const names = author
     .split(/\s+and\s+/i)
     .map((a) => (a.includes(",") ? a.split(",")[0] : (a.trim().split(/\s+/).pop() ?? "")).trim())
     .filter(Boolean);
   if (names.length === 0) return "";
   if (names.length === 1) return names[0];
-  return names.length === 2 ? `${names[0]} et ${names[1]}` : `${names[0]} et al.`;
+  return names.length === 2 ? `${names[0]} ${and} ${names[1]}` : `${names[0]} et al.`;
 }
 
-export const citeLabel = (ref: Reference) => [shortAuthors(ref.author) || ref.key, ref.year].filter(Boolean).join(", ");
+/** « Auteur, année » ; `and` est le mot qui relie deux auteurs (« et », « and »). */
+export const citeLabel = (ref: Reference, and = "et") =>
+  [shortAuthors(ref.author, and) || ref.key, ref.year].filter(Boolean).join(", ");
 
 export const listRefs = () =>
   db().all<Reference>("SELECT key, title, author, year, bibtex FROM refs ORDER BY author, year");

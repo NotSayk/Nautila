@@ -1,22 +1,32 @@
-import { Highlighter, Quote, Trash2 } from "lucide-react";
+import { Download, Highlighter, Maximize2, Quote, Trash2, ZoomIn, ZoomOut } from "lucide-react";
 import * as pdfjs from "pdfjs-dist";
 import workerUrl from "pdfjs-dist/build/pdf.worker.min.mjs?url";
-import { useEffect, useRef, useState } from "react";
-import { useT } from "../i18n";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useT, type Key } from "../i18n";
 import { useStore } from "../store";
+import { HIGHLIGHT_COLORS, type Highlight, type HighlightColor } from "./parse";
 
 pdfjs.GlobalWorkerOptions.workerSrc = workerUrl;
 
-/** Zone surlignée : coordonnées en fraction de la page, donc indépendantes du zoom. */
-export type Highlight = {
-  id: string;
-  page: number;
-  text: string;
-  rects: { x: number; y: number; w: number; h: number }[];
+export type { Highlight };
+
+const COLOR_LABEL: Record<HighlightColor, Key> = {
+  yellow: "hlYellow",
+  green: "hlGreen",
+  blue: "hlBlue",
+  pink: "hlPink",
 };
+
+const ZOOM_MIN = 0.5;
+const ZOOM_MAX = 4;
+const ZOOM_STEP = 1.25;
+/** Les pages à moins de cette distance de la zone visible sont rendues d'avance. */
+const RENDER_MARGIN = "800px 0px";
 
 type Props = {
   src: string;
+  /** Nom du fichier, proposé au téléchargement. */
+  name?: string;
   highlights: Highlight[];
   editable: boolean;
   onChange: (highlights: Highlight[]) => void;
@@ -30,35 +40,69 @@ function Page({
   doc,
   number,
   width,
+  ratio,
+  root,
+  onRatio,
   highlights,
 }: {
   doc: pdfjs.PDFDocumentProxy;
   number: number;
   width: number;
+  /** Hauteur / largeur de la page, connue ou estimée : l'espace reste réservé hors de l'écran. */
+  ratio: number;
+  root: HTMLElement;
+  onRatio: (number: number, ratio: number) => void;
   highlights: Highlight[];
   preview?: Highlight;
   active?: string;
 }) {
+  const frame = useRef<HTMLDivElement>(null);
   const canvas = useRef<HTMLCanvasElement>(null);
   const text = useRef<HTMLDivElement>(null);
-  const [size, setSize] = useState<{ w: number; h: number; scale: number }>();
+  const [scale, setScale] = useState(1);
+  const [visible, setVisible] = useState(false);
+
+  // Seules les pages proches de la zone visible sont dessinées : un PDF de 200 pages ne sature pas la mémoire.
+  useEffect(() => {
+    const el = frame.current;
+    if (!el) return;
+    const observer = new IntersectionObserver(([entry]) => setVisible(entry.isIntersecting), {
+      root,
+      rootMargin: RENDER_MARGIN,
+    });
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [root]);
+
+  // Page qui sort de la zone : on libère son dessin, l'espace réservé reste.
+  useEffect(() => {
+    if (visible) return;
+    if (canvas.current) {
+      canvas.current.width = 0;
+      canvas.current.height = 0;
+    }
+    text.current?.replaceChildren();
+  }, [visible]);
 
   useEffect(() => {
+    if (!visible) return;
     let live = true;
     let task: pdfjs.RenderTask | undefined;
     (async () => {
       const page = await doc.getPage(number);
-      const scale = width / page.getViewport({ scale: 1 }).width;
+      const base = page.getViewport({ scale: 1 });
+      const scale = width / base.width;
       const viewport = page.getViewport({ scale });
       if (!live || !canvas.current || !text.current) return;
-      setSize({ w: viewport.width, h: viewport.height, scale });
-      const ratio = Math.min(window.devicePixelRatio || 1, 2);
-      canvas.current.width = viewport.width * ratio;
-      canvas.current.height = viewport.height * ratio;
+      setScale(scale);
+      onRatio(number, base.height / base.width);
+      const dpr = Math.min(window.devicePixelRatio || 1, 2);
+      canvas.current.width = viewport.width * dpr;
+      canvas.current.height = viewport.height * dpr;
       task = page.render({
         canvas: canvas.current,
         viewport,
-        transform: ratio === 1 ? undefined : [ratio, 0, 0, ratio, 0, 0],
+        transform: dpr === 1 ? undefined : [dpr, 0, 0, dpr, 0, 0],
       });
       await task.promise.catch(() => undefined);
       if (!live) return;
@@ -68,21 +112,24 @@ function Page({
         container: text.current,
         viewport,
       }).render();
-    })();
+    })().catch(() => undefined);
     return () => {
       live = false;
       task?.cancel();
     };
-  }, [doc, number, width]);
+    // `onRatio` est stable pour la vie du document.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [doc, number, width, visible]);
 
   return (
     <div
+      ref={frame}
       data-page={number}
       className="pdf-page"
       style={{
-        width: size?.w ?? width,
-        height: size?.h ?? width * 1.414,
-        ["--total-scale-factor" as string]: size?.scale ?? 1,
+        width,
+        height: width * ratio,
+        ["--total-scale-factor" as string]: scale,
       }}
     >
       <canvas ref={canvas} style={{ width: "100%", height: "100%" }} />
@@ -91,7 +138,9 @@ function Page({
           <span
             key={h.id + i}
             className={
-              h === preview ? "pdf-highlight pdf-selecting" : h.id === active ? "pdf-highlight pdf-highlight-on" : "pdf-highlight"
+              h === preview
+                ? "pdf-highlight pdf-selecting"
+                : `pdf-highlight pdf-hl-${h.color ?? "yellow"}${h.id === active ? " pdf-highlight-on" : ""}`
             }
             style={{ left: `${r.x * 100}%`, top: `${r.y * 100}%`, width: `${r.w * 100}%`, height: `${r.h * 100}%` }}
           />
@@ -102,20 +151,29 @@ function Page({
   );
 }
 
-export default function PdfViewer({ src, highlights, editable, onChange, onQuote }: Props) {
+export default function PdfViewer({ src, name, highlights, editable, onChange, onQuote }: Props) {
   const t = useT();
-  const box = useRef<HTMLDivElement>(null);
+  const box = useRef<HTMLDivElement | null>(null);
+  const [boxEl, setBoxEl] = useState<HTMLDivElement | null>(null);
   const [doc, setDoc] = useState<pdfjs.PDFDocumentProxy>();
-  const [width, setWidth] = useState(0);
+  const [fitWidth, setFitWidth] = useState(0);
+  const [zoom, setZoom] = useState(1);
   const [failed, setFailed] = useState(false);
+  const [current, setCurrent] = useState(1);
+  const [color, setColor] = useState<HighlightColor>("yellow");
   const [pending, setPending] = useState<{ highlight: Highlight; left: number; top: number } | null>(null);
-  // Surlignage cliqué : on peut le retirer ou le citer.
+  // Surlignage cliqué : on peut le retirer, le citer ou changer sa couleur.
   const [active, setActive] = useState<{ id: string; left: number; top: number } | null>(null);
+  // Proportions des pages connues ; celles qu'on n'a pas encore vues prennent celles de la première.
+  const ratios = useRef(new Map<number, number>());
+  const [, setRatioVersion] = useState(0);
   // Historique des surlignages de ce document, pour Ctrl+Z / Ctrl+Maj+Z.
   const past = useRef<Highlight[][]>([]);
   const future = useRef<Highlight[][]>([]);
   const setToast = (message: string, undo: () => void) =>
     useStore.setState({ toast: { message, action: { label: t("undoAction"), run: undo } } });
+
+  const width = Math.round(fitWidth * zoom);
 
   const commit = (next: Highlight[]) => {
     past.current = [...past.current.slice(-49), highlights];
@@ -164,18 +222,42 @@ export default function PdfViewer({ src, highlights, editable, onChange, onQuote
   const keyRef = useRef(onKeyDown);
   keyRef.current = onKeyDown;
 
+  // Chargement du document. Changer de source détruit l'ancien document et repart de zéro.
   useEffect(() => {
+    let live = true;
+    setFailed(false);
+    setDoc(undefined);
+    ratios.current = new Map();
     const task = pdfjs.getDocument({ url: src });
-    task.promise.then(setDoc, () => setFailed(true));
-    return () => void task.destroy();
+    task.promise.then(
+      async (loaded) => {
+        const first = await loaded.getPage(1).catch(() => null);
+        if (!live) return;
+        if (first) {
+          const v = first.getViewport({ scale: 1 });
+          ratios.current.set(0, v.height / v.width);
+        }
+        setDoc(loaded);
+      },
+      () => live && setFailed(true),
+    );
+    return () => {
+      live = false;
+      void task.destroy();
+    };
   }, [src]);
 
+  // Largeur disponible, mesurée avec un délai : redimensionner la fenêtre ne re-rend pas les pages à chaque pas.
   useEffect(() => {
-    const el = box.current;
+    const el = boxEl;
     if (!el) return;
-    const measure = () => setWidth(Math.max(240, Math.floor(el.clientWidth - 24)));
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const measure = () => setFitWidth(Math.max(240, Math.floor(el.clientWidth - 24)));
     measure();
-    const observer = new ResizeObserver(measure);
+    const observer = new ResizeObserver(() => {
+      clearTimeout(timer);
+      timer = setTimeout(measure, 150);
+    });
     observer.observe(el);
     // L'éditeur ne doit pas voir ces clics : il sélectionnerait le bloc au lieu du texte.
     // (Le gestionnaire est donc branché ici, et non par React, qui écoute plus haut.)
@@ -185,19 +267,63 @@ export default function PdfViewer({ src, highlights, editable, onChange, onQuote
     };
     // Les raccourcis valent tant que ce document est le dernier endroit cliqué : l'éditeur
     // garde le focus du clavier, on les intercepte donc avant lui.
-    let current = false;
-    const track = (e: MouseEvent) => (current = el.contains(e.target as Node));
-    const key = (e: KeyboardEvent) => current && keyRef.current(e);
+    let last = false;
+    const track = (e: MouseEvent) => (last = el.contains(e.target as Node));
+    const key = (e: KeyboardEvent) => last && keyRef.current(e);
+    // Page courante, d'après la position de défilement.
+    let frameId = 0;
+    const onScroll = () => {
+      if (frameId) return;
+      frameId = requestAnimationFrame(() => {
+        frameId = 0;
+        let found = 1;
+        for (const page of el.querySelectorAll<HTMLElement>("[data-page]")) {
+          if (page.offsetTop > el.scrollTop + el.clientHeight / 3) break;
+          found = Number(page.dataset.page);
+        }
+        setCurrent(found);
+      });
+    };
     el.addEventListener("mousedown", stop);
+    el.addEventListener("scroll", onScroll, { passive: true });
     document.addEventListener("mousedown", track, true);
     window.addEventListener("keydown", key, true);
     return () => {
+      clearTimeout(timer);
+      cancelAnimationFrame(frameId);
       observer.disconnect();
       el.removeEventListener("mousedown", stop);
+      el.removeEventListener("scroll", onScroll);
       document.removeEventListener("mousedown", track, true);
       window.removeEventListener("keydown", key, true);
     };
-  }, []);
+  }, [boxEl]);
+
+  // Zoom : on garde la même partie du document à l'écran.
+  const anchor = useRef<number | null>(null);
+  const changeZoom = (next: number) => {
+    const el = box.current;
+    if (el && el.scrollHeight > 0) anchor.current = el.scrollTop / el.scrollHeight;
+    setZoom(Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, next)));
+  };
+  useLayoutEffect(() => {
+    const el = box.current;
+    if (el && anchor.current !== null) el.scrollTop = anchor.current * el.scrollHeight;
+    anchor.current = null;
+  }, [width]);
+
+  const goTo = (page: number) => {
+    const el = box.current;
+    const target = el?.querySelector<HTMLElement>(`[data-page="${Math.min(Math.max(1, page), doc?.numPages ?? 1)}"]`);
+    if (el && target) el.scrollTo({ top: target.offsetTop - 12, behavior: "smooth" });
+  };
+
+  const onRatio = (number: number, ratio: number) => {
+    const known = ratios.current.get(number);
+    if (known !== undefined && Math.abs(known - ratio) < 0.001) return;
+    ratios.current.set(number, ratio);
+    setRatioVersion((n) => n + 1);
+  };
 
   // L'éditeur garde la main sur la sélection du navigateur : on la reconstruit
   // donc nous-mêmes, du point où la souris est enfoncée à celui où elle se trouve.
@@ -250,7 +376,13 @@ export default function PdfViewer({ src, highlights, editable, onChange, onQuote
       const last = range.getBoundingClientRect();
       const outer = container.getBoundingClientRect();
       setPending({
-        highlight: { id: crypto.randomUUID().slice(0, 8), page: Number(page.dataset.page), text: content, rects },
+        highlight: {
+          id: crypto.randomUUID().slice(0, 8),
+          page: Number(page.dataset.page),
+          text: content,
+          rects,
+          color,
+        },
         left: Math.min(Math.max(last.left - outer.left + container.scrollLeft, 8), Math.max(8, outer.width - 130)),
         top: last.bottom - outer.top + container.scrollTop + 6,
       });
@@ -271,7 +403,10 @@ export default function PdfViewer({ src, highlights, editable, onChange, onQuote
       const outer = container.getBoundingClientRect();
       setActive({
         id: hit.id,
-        left: Math.min(Math.max(up.clientX - outer.left + container.scrollLeft - 60, 8), Math.max(8, outer.width - 200)),
+        left: Math.min(
+          Math.max(up.clientX - outer.left + container.scrollLeft - 60, 8),
+          Math.max(8, outer.width - 260),
+        ),
         top: up.clientY - outer.top + container.scrollTop + 14,
       });
     };
@@ -288,12 +423,94 @@ export default function PdfViewer({ src, highlights, editable, onChange, onQuote
     setPending(null);
   };
   const activeHighlight = active && highlights.find((h) => h.id === active.id);
+  const fallbackRatio = ratios.current.get(0) ?? 1.414;
+  const swatches = (selected: HighlightColor | undefined, onPick: (c: HighlightColor) => void) =>
+    HIGHLIGHT_COLORS.map((c) => (
+      <button
+        key={c}
+        role="menuitemradio"
+        aria-checked={c === selected}
+        title={t(COLOR_LABEL[c])}
+        aria-label={t(COLOR_LABEL[c])}
+        onMouseDown={(e) => e.preventDefault()}
+        onClick={() => onPick(c)}
+        className={`pdf-swatch pdf-hl-${c} ${c === selected ? "pdf-swatch-on" : ""}`}
+      />
+    ));
 
   return (
     <div>
-      <div ref={box} className="pdf-box">
+      {doc && (
+        <div className="pdf-toolbar no-print">
+          <button
+            className="sketch-tool"
+            title={t("pdfZoomOut")}
+            aria-label={t("pdfZoomOut")}
+            onClick={() => changeZoom(zoom / ZOOM_STEP)}
+          >
+            <ZoomOut size={15} />
+          </button>
+          <span className="pdf-zoom">{Math.round(zoom * 100)} %</span>
+          <button
+            className="sketch-tool"
+            title={t("pdfZoomIn")}
+            aria-label={t("pdfZoomIn")}
+            onClick={() => changeZoom(zoom * ZOOM_STEP)}
+          >
+            <ZoomIn size={15} />
+          </button>
+          <button
+            className="sketch-tool"
+            title={t("pdfFitWidth")}
+            aria-label={t("pdfFitWidth")}
+            onClick={() => changeZoom(1)}
+          >
+            <Maximize2 size={14} />
+          </button>
+          <span className="pdf-sep" />
+          <label className="pdf-page-input">
+            <span className="sr-only">{t("pdfGoToPage")}</span>
+            <input
+              key={current}
+              type="number"
+              min={1}
+              max={doc.numPages}
+              defaultValue={current}
+              title={t("pdfGoToPage")}
+              onKeyDown={(e) => e.key === "Enter" && goTo(Number(e.currentTarget.value) || 1)}
+              onBlur={(e) => Number(e.currentTarget.value) !== current && goTo(Number(e.currentTarget.value) || 1)}
+            />
+            / {doc.numPages}
+          </label>
+          <a
+            className="sketch-tool"
+            href={src}
+            download={name || "document.pdf"}
+            title={t("pdfDownload")}
+            aria-label={t("pdfDownload")}
+          >
+            <Download size={15} />
+          </a>
+          {editable && (
+            <>
+              <span className="pdf-sep" />
+              <span role="menu" aria-label={t("highlightColor")} className="flex items-center gap-1.5">
+                {swatches(color, setColor)}
+              </span>
+            </>
+          )}
+        </div>
+      )}
+      <div
+        ref={(el) => {
+          box.current = el;
+          setBoxEl(el);
+        }}
+        className="pdf-box"
+      >
         {failed && <p className="p-4 text-(--color-muted)">{t("pdfError")}</p>}
         {doc &&
+          boxEl &&
           width > 0 &&
           Array.from({ length: doc.numPages }, (_, i) => (
             <Page
@@ -301,6 +518,9 @@ export default function PdfViewer({ src, highlights, editable, onChange, onQuote
               doc={doc}
               number={i + 1}
               width={width}
+              ratio={ratios.current.get(i + 1) ?? fallbackRatio}
+              root={boxEl}
+              onRatio={onRatio}
               highlights={highlights.filter((h) => h.page === i + 1)}
               preview={pending?.highlight.page === i + 1 ? pending.highlight : undefined}
               active={active?.id}
@@ -334,6 +554,11 @@ export default function PdfViewer({ src, highlights, editable, onChange, onQuote
               <Quote size={14} />
               {t("quoteInNote")}
             </button>
+            <span className="flex items-center gap-1.5 px-2">
+              {swatches(activeHighlight.color ?? "yellow", (c) =>
+                commit(highlights.map((h) => (h.id === activeHighlight.id ? { ...h, color: c } : h))),
+              )}
+            </span>
           </div>
         )}
       </div>
@@ -341,14 +566,7 @@ export default function PdfViewer({ src, highlights, editable, onChange, onQuote
         <ul className="pdf-notes">
           {highlights.map((h) => (
             <li key={h.id}>
-              <button
-                className="pdf-note-text"
-                onClick={() =>
-                  box.current
-                    ?.querySelector(`[data-page="${h.page}"]`)
-                    ?.scrollIntoView({ behavior: "smooth", block: "start" })
-                }
-              >
+              <button className={`pdf-note-text pdf-hl-${h.color ?? "yellow"}`} onClick={() => goTo(h.page)}>
                 <span className="pdf-note-page">p. {h.page}</span>
                 {h.text}
               </button>

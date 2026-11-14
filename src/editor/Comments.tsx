@@ -16,6 +16,8 @@ type Comment = {
   resolved: boolean;
 };
 
+const SAFE_ID = /^[\w-]+$/;
+
 /**
  * Commentaires d'une page. Ils sont rangés dans le document lui-même, donc
  * synchronisés et partagés avec lui, y compris en édition à plusieurs.
@@ -45,7 +47,11 @@ export function Comments({
   useEffect(() => {
     const map = doc.getMap<Omit<Comment, "id">>("comments");
     const read = () => {
-      const list = [...map.entries()].map(([id, c]) => ({ id, ...c })).sort((a, b) => a.at - b.at);
+      // Le document est partagé : une entrée mal formée (autre version, collaborateur) est ignorée.
+      const list = [...map.entries()]
+        .filter(([, c]) => c && typeof c === "object" && typeof c.blockId === "string" && typeof c.text === "string")
+        .map(([id, c]) => ({ id, ...c, at: Number(c.at) || 0 }))
+        .sort((a, b) => a.at - b.at);
       setComments(list);
       onCount?.(list.filter((c) => !c.resolved).length);
     };
@@ -72,14 +78,23 @@ export function Comments({
     setText("");
   };
   const show = (blockId: string) =>
-    document.querySelector(`[data-id="${blockId}"]`)?.scrollIntoView({ behavior: "smooth", block: "center" });
+    document
+      .querySelector(`[data-id="${CSS.escape(blockId)}"]`)
+      ?.scrollIntoView({ behavior: "smooth", block: "center" });
+
+  // Un commentaire dont le bloc a été supprimé reste lisible et supprimable.
+  const [, tick] = useState(0);
+  useEffect(() => (open ? editor.onChange(() => tick((n) => n + 1)) : undefined), [open, editor]);
+  const orphan = (c: Comment) => !editor.getBlock(c.blockId);
 
   const open_ = comments.filter((c) => !c.resolved);
+  // Les identifiants viennent du document partagé : seuls les formats sûrs entrent dans la feuille de style.
+  const styled = open_.filter((c) => SAFE_ID.test(c.blockId));
   return (
     <>
       {/* Les blocs commentés sont repérés par un fond, sans toucher au contenu. */}
-      {open_.length > 0 && (
-        <style>{`${open_.map((c) => `.bn-block-outer[data-id="${c.blockId}"] > .bn-block > .bn-block-content`).join(",")}{background:rgb(255 212 0 / 0.16);border-radius:3px}`}</style>
+      {styled.length > 0 && (
+        <style>{`${styled.map((c) => `.bn-block-outer[data-id="${c.blockId}"] > .bn-block > .bn-block-content`).join(",")}{background:rgb(255 212 0 / 0.16);border-radius:3px}`}</style>
       )}
       {open && (
         <aside
@@ -133,11 +148,13 @@ export function Comments({
                 {c.quote && (
                   <button
                     onClick={() => show(c.blockId)}
-                    className="mt-1 block w-full truncate border-l-2 border-[#f2c94c] pl-2 text-left text-xs text-muted hover:text-ink"
+                    disabled={orphan(c)}
+                    className="mt-1 block w-full truncate border-l-2 border-[#f2c94c] pl-2 text-left text-xs text-muted hover:text-ink disabled:hover:text-muted"
                   >
                     {c.quote}
                   </button>
                 )}
+                {orphan(c) && <p className="mt-1 text-xs italic text-faint">{t("commentOrphan")}</p>}
                 <p className="mt-1 whitespace-pre-wrap">{c.text}</p>
               </div>
             ))}

@@ -1,8 +1,8 @@
 import { createReactBlockSpec, createReactInlineContentSpec } from "@blocknote/react";
 import { FileUp, Trash2 } from "lucide-react";
-import { lazy, Suspense, useEffect, useRef, useState } from "react";
+import { createContext, lazy, Suspense, useContext, useEffect, useRef, useState } from "react";
 import { getPageDoc } from "../data/pages";
-import { citeLabel, deleteRef, importRefs, listRefs, type Reference } from "../data/refs";
+import { citeLabel, deleteRef, importRefs, listRefs, refDetails, type Reference } from "../data/refs";
 import { useT } from "../i18n";
 import { Popover } from "../views/common";
 
@@ -40,6 +40,7 @@ function RefPicker({
   onPick: (key: string) => void;
 }) {
   const t = useT();
+  const and = t("refAnd");
   const refs = useRefs();
   const [query, setQuery] = useState("");
   const input = useRef<HTMLInputElement>(null);
@@ -65,7 +66,7 @@ function RefPicker({
                 onPick(r.key);
               }}
             >
-              <span className="block truncate font-medium">{citeLabel(r)}</span>
+              <span className="block truncate font-medium">{citeLabel(r, and)}</span>
               <span className="block truncate text-xs text-muted">{r.title || r.key}</span>
             </button>
             <button
@@ -106,20 +107,35 @@ function RefPicker({
   );
 }
 
+/**
+ * Une citation vide ne propose le choix de la référence qu'à l'insertion locale : le menu de l'éditeur
+ * le demande juste avant d'insérer. Au rechargement, à la recréation de l'éditeur ou à l'arrivée d'une
+ * citation vide insérée par un autre, rien ne s'ouvre.
+ */
+let citePickerAsked = 0;
+export const askCitePicker = () => void (citePickerAsked = Date.now());
+const takeCitePicker = () => {
+  const asked = Date.now() - citePickerAsked < 2000;
+  citePickerAsked = 0;
+  return asked;
+};
+
 /** Citation dans le texte : « (Auteur, année) ». */
 export const Cite = createReactInlineContentSpec(
   { type: "cite", propSchema: { key: { default: "" } }, content: "none" },
   {
     render: ({ inlineContent, updateInlineContent, editor }) => {
       const t = useT();
+      const and = t("refAnd");
       const refs = useRefs();
       const key = inlineContent.props.key;
       const ref = refs.find((r) => r.key === key);
       const [anchor, setAnchor] = useState<DOMRect | null>(null);
       const self = useRef<HTMLSpanElement>(null);
-      // Une citation tout juste insérée ouvre le choix de la référence.
+      // Une citation tout juste insérée (par cet utilisateur) ouvre le choix de la référence.
       useEffect(() => {
-        if (!key && editor.isEditable && self.current) setAnchor(self.current.getBoundingClientRect());
+        if (!key && editor.isEditable && self.current && takeCitePicker())
+          setAnchor(self.current.getBoundingClientRect());
         // eslint-disable-next-line react-hooks/exhaustive-deps
       }, []);
       return (
@@ -130,7 +146,7 @@ export const Cite = createReactInlineContentSpec(
           title={ref ? `${ref.author} — ${ref.title}` : undefined}
           onClick={(e) => editor.isEditable && setAnchor(e.currentTarget.getBoundingClientRect())}
         >
-          ({ref ? citeLabel(ref) : key || t("refChoose")})
+          ({ref ? citeLabel(ref, and) : key || t("refChoose")})
           {anchor && (
             <RefPicker
               anchor={anchor}
@@ -171,12 +187,19 @@ export const Bibliography = createReactBlockSpec(
       return (
         <div className="bibliography" contentEditable={false}>
           {cited.length === 0 && <span className="math-empty">{t("bibEmpty")}</span>}
-          {cited.map((r) => (
-            <p key={r.key}>
-              {r.author || r.key}
-              {r.year && ` (${r.year})`}. <em>{r.title}</em>.
-            </p>
-          ))}
+          {cited.map((r) => {
+            const d = refDetails(r);
+            // « Revue, 12(3), 45–67 » : seulement ce que l'entrée renseigne.
+            const where = [d.venue, d.volume && `${d.volume}${d.number ? `(${d.number})` : ""}`, d.pages]
+              .filter(Boolean)
+              .join(", ");
+            return (
+              <p key={r.key}>
+                {r.author || r.key}
+                {r.year && ` (${r.year})`}. <em>{r.title}</em>.{where && ` ${where}.`}
+              </p>
+            );
+          })}
         </div>
       );
     },
@@ -189,6 +212,13 @@ export const Bibliography = createReactBlockSpec(
 const PageEditor = lazy(() => import("./PageEditor").then((m) => ({ default: m.PageEditor })));
 
 /**
+ * Contenus déjà affichés autour d'un éditeur (la page, puis chaque bloc synchronisé imbriqué) :
+ * un bloc synchronisé qui renverrait à l'un d'eux (collé dans sa propre source, ou A→B→A) se
+ * rendrait à l'infini.
+ */
+export const SyncChain = createContext<readonly string[]>([]);
+
+/**
  * Bloc synchronisé : son contenu vit dans une page cachée. Copié-collé ailleurs,
  * le bloc affiche et modifie le même contenu.
  */
@@ -198,14 +228,22 @@ export const SyncedBlock = createReactBlockSpec(
     render: ({ block, editor }) => {
       const t = useT();
       const id = block.props.sourceId;
+      const chain = useContext(SyncChain);
+      const cycle = chain.includes(id);
       const [doc, setDoc] = useState<{ ydoc: string | null }>();
       useEffect(() => {
         let live = true;
-        if (id) void getPageDoc(id).then((d) => live && setDoc(d));
+        if (id && !cycle) void getPageDoc(id).then((d) => live && setDoc(d));
         return () => {
           live = false;
         };
-      }, [id]);
+      }, [id, cycle]);
+      if (cycle)
+        return (
+          <p className="media-missing" contentEditable={false}>
+            {t("syncedCycle")}
+          </p>
+        );
       return (
         <div className="synced" contentEditable={false} title={t("syncedHint")}>
           {doc && (
