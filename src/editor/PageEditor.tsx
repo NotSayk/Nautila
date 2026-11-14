@@ -319,17 +319,35 @@ export const PageEditor = forwardRef<PageEditorHandle, Props>(function PageEdito
     };
     const flush = () => (timer || dirty) && void save();
     let edited = false;
+    // Empreinte du contenu sans les identifiants de blocs : sert à ignorer les écritures d'initialisation.
+    const signature = () => JSON.stringify(editorRef.current.document, (k, v) => (k === "id" ? undefined : v));
+    let baseline: string | undefined;
+    try {
+      baseline = signature();
+    } catch {
+      /* éditeur pas encore prêt : toute écriture comptera comme une modification */
+    }
     const onUpdate = (update: Uint8Array, origin: unknown) => {
-      // Les modifications reçues d'un autre exemplaire du même contenu (autre appareil, bloc synchronisé)
-      // sont déjà gardées par celui qui les a faites : ni version, ni enregistrement, ni « première modification ».
-      if (origin === LOCAL_ECHO) return;
+      const remote = origin === LOCAL_ECHO;
+      if (!edited && !remote) {
+        // L'ouverture de la page peut écrire dans le document (normalisation) sans rien changer au contenu.
+        let same = false;
+        try {
+          same = baseline !== undefined && signature() === baseline;
+        } catch {
+          /* contenu illisible : on le tient pour modifié */
+        }
+        if (same) return;
+        onFirstEditRef.current?.();
+        edited = true;
+      }
       // Le même contenu peut être affiché deux fois (bloc synchronisé) : les autres exemplaires
       // reçoivent la modification tout de suite, sans attendre l'enregistrement.
-      window.dispatchEvent(
-        new CustomEvent(REMOTE_DOC_EVENT, { detail: { id: pageId, ydoc: toBase64(update), from: instance } }),
-      );
-      if (!edited) onFirstEditRef.current?.();
-      edited = true;
+      if (!remote)
+        window.dispatchEvent(
+          new CustomEvent(REMOTE_DOC_EVENT, { detail: { id: pageId, ydoc: toBase64(update), from: instance } }),
+        );
+      // Une modification distante est enregistrée ici aussi, mais n'est pas une « première modification ».
       dirty = true;
       clearTimeout(timer);
       timer = setTimeout(save, 600);
