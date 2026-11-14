@@ -34,6 +34,7 @@ import { cleanQuestions, deleteQuiz, listQuizzes, saveQuiz, type Question, type 
 import { useT, type Key } from "../i18n";
 import { useStore } from "../store";
 import { IconButton, PageIcon, SectionTitle, TopBar, useOverlay } from "./common";
+import { confirmDialog } from "./dialogs";
 import { ChoiceMode, FlipMode, MatchMode, questionsFromCards, WriteMode } from "./study/modes";
 
 const GRADES: [Grade, Key][] = [
@@ -735,7 +736,7 @@ export function Review() {
                       <IconButton
                         label={t("delete")}
                         onClick={async () => {
-                          if (!confirm(t("confirmDeleteQuiz"))) return;
+                          if (!(await confirmDialog({ message: t("confirmDeleteQuiz"), confirmLabel: t("delete"), danger: true }))) return;
                           await deleteQuiz(quiz.id);
                           reload();
                         }}

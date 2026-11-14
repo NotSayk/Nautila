@@ -17,6 +17,7 @@ import { OPTION_COLORS } from "../data/dbquery";
 import { useT } from "../i18n";
 import { useStore } from "../store";
 import { Menu, useOverlay, View } from "./common";
+import { confirmDialog } from "./dialogs";
 
 const HOUR = 52;
 const FIELD = "h-8 w-full rounded-md bg-hover px-2";
@@ -490,7 +491,7 @@ export function Timetable() {
                   label: t("deleteCalendar"),
                   danger: true,
                   onClick: async () => {
-                    if (!confirm(t("confirmDeleteCalendar").replace("{name}", c.calendar))) return;
+                    if (!(await confirmDialog({ message: t("confirmDeleteCalendar").replace("{name}", c.calendar), confirmLabel: t("delete"), danger: true }))) return;
                     await deleteCalendar(c.calendar);
                     reload();
                   },

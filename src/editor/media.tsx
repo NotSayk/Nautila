@@ -3,6 +3,7 @@ import { Eraser, FileUp, Mic, Square, Undo2 } from "lucide-react";
 import { lazy, Suspense, useEffect, useRef, useState } from "react";
 import { resolveFileUrl, saveFile } from "../data/files";
 import { useT } from "../i18n";
+import { notify } from "../views/dialogs";
 import type { Highlight } from "./PdfViewer";
 
 function useFileUrl(url: string) {
@@ -140,7 +141,7 @@ export const PdfBlock = createReactBlockSpec(
                   try {
                     editor.updateBlock(block.id, { props: { url: await saveFile(file), name: file.name } });
                   } catch {
-                    alert(t("fileTooLarge"));
+                    notify(t("fileTooLarge"));
                   }
                 }}
               />

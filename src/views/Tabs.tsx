@@ -19,6 +19,7 @@ export function Tabs() {
   const tabs = useStore((s) => s.tabs);
   const active = useStore((s) => s.tab);
   const pages = useStore((s) => s.pages);
+  const lang = useStore((s) => s.lang);
   const { selectTab, closeTab, openTab } = useStore.getState();
   if (tabs.length < 2) return null;
 
@@ -56,11 +57,13 @@ export function Tabs() {
                 <span className="truncate">{title}</span>
               </button>
               <button
-                aria-label={`${t("closeTab")} : ${title}`}
+                aria-label={`${t("closeTab")}${lang === "fr" ? " : " : ": "}${title}`}
                 title={t("closeTab")}
                 onClick={() => closeTab(i)}
                 className={`grid size-5 shrink-0 place-items-center rounded hover:bg-hover ${
-                  selected ? "" : "opacity-0 focus-visible:opacity-100 group-hover:opacity-100"
+                  selected
+                    ? ""
+                    : "opacity-0 focus-visible:opacity-100 group-hover:opacity-100 group-focus-within:opacity-100 [@media(hover:none)]:opacity-100"
                 }`}
               >
                 <X size={13} />

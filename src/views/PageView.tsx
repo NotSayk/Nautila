@@ -51,6 +51,7 @@ import { template, type TemplateId } from "../editor/templates";
 import { useT, type Key } from "../i18n";
 import { useStore } from "../store";
 import { Cover, IconButton, Menu, PageIcon, Popover, relativeTime, SectionTitle, TopBar } from "./common";
+import { notify } from "./dialogs";
 import { DatabaseView, RowProperties } from "./database/DatabaseView";
 import { EmojiPicker } from "./EmojiPicker";
 import { moveToTrash } from "./actions";
@@ -394,7 +395,7 @@ export function PageView({ id }: { id: string }) {
           try {
             await saveMeta({ cover: await saveFile(file) });
           } catch {
-            alert(t("fileTooLarge"));
+            notify(t("fileTooLarge"));
           }
         }}
       />

@@ -43,6 +43,7 @@ import { useStore } from "../store";
 import { REMOTE_DOC_EVENT } from "../sync/engine";
 import { knownRole, startShareSession, type ShareRole } from "../sync/share";
 import { fromBase64, toBase64 } from "../util/base64";
+import { notify } from "../views/dialogs";
 import { languageId, schema, type NautilaBlock, type NautilaEditor } from "./schema";
 
 /**
@@ -186,7 +187,7 @@ export const PageEditor = forwardRef<PageEditorHandle, Props>(function PageEdito
         try {
           return await saveFile(file);
         } catch (err) {
-          alert(t("fileTooLarge"));
+          notify(t("fileTooLarge"));
           throw err;
         }
       },
