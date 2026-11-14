@@ -4,6 +4,7 @@ import {
   Brackets,
   CalendarClock,
   ChartColumn,
+  ClipboardCheck,
   Download,
   Keyboard,
   Layers,
@@ -50,6 +51,7 @@ import { CardFront, ClozeText, MathText } from "./study/CardText";
 import { ChoiceMode, FlipMode, MatchMode, questionsFromCards, WriteMode } from "./study/modes";
 import { StatsView } from "./study/Stats";
 import { daysLeftLabel, ExamPlanView, useStudyIntent } from "./study/ExamPlan";
+import { MockExamView } from "./study/MockExam";
 
 const GRADES: [Grade, Key][] = [
   [1, "again"],
@@ -471,7 +473,15 @@ function Spaced({ pageId, pageIds, onExit }: { pageId?: string; pageIds?: string
 }
 
 /** Écran d'un paquet : choix du mode d'étude et liste des cartes. */
-function DeckView({ pageId, onStart }: { pageId: string; onStart: (mode: Mode, cards: CardRow[]) => void }) {
+function DeckView({
+  pageId,
+  onStart,
+  onMock,
+}: {
+  pageId: string;
+  onStart: (mode: Mode, cards: CardRow[]) => void;
+  onMock: (title: string) => void;
+}) {
   const t = useT();
   const page = useStore((s) => s.pages.find((p) => p.id === pageId));
   const navigate = useStore((s) => s.navigate);
@@ -545,6 +555,17 @@ function DeckView({ pageId, onStart }: { pageId: string; onStart: (mode: Mode, c
             </button>
           );
         })}
+        <button
+          disabled={cards.length === 0}
+          onClick={() => onMock(page?.title || t("untitled"))}
+          className="flex items-center gap-3 rounded-lg bg-pop p-3 text-left shadow-[0_0_0_1px_var(--color-line)] enabled:hover:bg-hover disabled:opacity-45"
+        >
+          <ClipboardCheck size={20} strokeWidth={1.75} className="shrink-0 text-muted" />
+          <span>
+            <span className="block font-medium">{t("mockExam")}</span>
+            <span className="block text-xs text-muted">{t("mockSub")}</span>
+          </span>
+        </button>
       </div>
 
       <SectionTitle>{t("allCards")}</SectionTitle>
@@ -753,6 +774,8 @@ type Screen =
       examId?: string;
     }
   | { name: "exam"; taskId: string }
+  /** Examen blanc ; sans `pageIds`, la source se choisit dans les réglages. `from` : écran où revenir. */
+  | { name: "mock"; pageIds?: string[]; title?: string; from?: Screen }
   | { name: "quiz"; quiz: Quiz }
   | { name: "editQuiz"; quiz: Quiz | null }
   | { name: "stats" };
@@ -786,7 +809,9 @@ export function Review() {
 
   const back = () =>
     setScreen(
-      screen.name === "study" && screen.examId
+      screen.name === "mock" && screen.from
+        ? screen.from
+        : screen.name === "study" && screen.examId
         ? { name: "exam", taskId: screen.examId }
         : screen.name === "study" && screen.pageId
           ? { name: "deck", pageId: screen.pageId }
@@ -833,6 +858,10 @@ export function Review() {
               <button className={SECONDARY} onClick={() => setScreen({ name: "editQuiz", quiz: null })}>
                 <Plus size={15} />
                 {t("newQuiz")}
+              </button>
+              <button className={SECONDARY} onClick={() => setScreen({ name: "mock" })}>
+                <ClipboardCheck size={15} />
+                {t("mockExam")}
               </button>
               <button className={SECONDARY} onClick={() => setScreen({ name: "stats" })}>
                 <ChartColumn size={15} />
@@ -942,6 +971,7 @@ export function Review() {
         {screen.name === "deck" && (
           <DeckView
             pageId={screen.pageId}
+            onMock={(title) => setScreen({ name: "mock", pageIds: [screen.pageId], title, from: screen })}
             onStart={(mode, cards) =>
               setScreen({
                 name: "study",
@@ -962,6 +992,15 @@ export function Review() {
             key={screen.taskId}
             taskId={screen.taskId}
             onReview={(pageIds) => setScreen({ name: "study", mode: "spaced", cards: [], pageIds, examId: screen.taskId })}
+            onMock={(pageIds, title) => setScreen({ name: "mock", pageIds, title, from: screen })}
+          />
+        )}
+        {screen.name === "mock" && (
+          <MockExamView
+            key={screen.pageIds?.join(",") ?? "choose"}
+            pageIds={screen.pageIds}
+            title={screen.title}
+            onExit={back}
           />
         )}
         {screen.name === "study" && screen.mode === "flip" && <FlipMode cards={screen.cards} onExit={back} />}
