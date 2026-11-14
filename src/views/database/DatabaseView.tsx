@@ -13,11 +13,23 @@ import {
   Trash2,
   X,
 } from "lucide-react";
-import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
-import { createRow, getDatabase, listRows, newView, saveDatabase, setRowProps } from "../../data/databases";
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  createRow,
+  getDatabase,
+  listRows,
+  newView,
+  purgeOptions,
+  saveDatabase,
+  setRowProps,
+} from "../../data/databases";
 import {
   applyView,
+  dayNoon,
   evalFormula,
+  groupKey,
+  removeProp,
+  timelineBounds,
   withFormulas,
   opsFor,
   type DbConfig,
@@ -87,7 +99,37 @@ type Api = {
   databaseId: string;
   /** Ligne tout juste créée, dont le nom doit recevoir le curseur. */
   fresh: string | null;
+  clearFresh: () => void;
+  patchView: (patch: Partial<DbView>) => void;
 };
+
+/** Vue dont la propriété de regroupement ou de date a disparu : on propose d'en choisir une autre. */
+function MissingProp({ api, type, field }: { api: Api; type: PropType; field: "groupBy" | "dateProp" }) {
+  const t = useT();
+  const eligible = api.props.filter((p) => p.type === type);
+  return (
+    <div className="flex flex-col items-start gap-2 py-6 text-muted">
+      <p>{t(field === "groupBy" ? "needGroupProp" : "needDateProp")}</p>
+      {eligible.length === 0 ? (
+        <p className="text-faint">{t("noEligibleProp")}</p>
+      ) : (
+        <select
+          aria-label={t(field === "groupBy" ? "groupBy" : "propDate")}
+          value=""
+          className={FIELD}
+          onChange={(e) => e.target.value && api.patchView({ [field]: e.target.value })}
+        >
+          <option value="">{t("chooseProp")}</option>
+          {eligible.map((p) => (
+            <option key={p.id} value={p.id}>
+              {p.name}
+            </option>
+          ))}
+        </select>
+      )}
+    </div>
+  );
+}
 
 function PopButton({
   label,
@@ -212,13 +254,15 @@ function SortEditor({ api }: { api: Api }) {
   const { view, props } = api;
   const set = (sort: DbView["sort"]) =>
     api.setConfig((c) => ({ ...c, views: c.views.map((v) => (v.id === view.id ? { ...v, sort } : v)) }));
+  // Un tri sur une propriété supprimée est traité comme absent.
+  const sort = view.sort && (view.sort.prop === "title" || props.some((p) => p.id === view.sort!.prop)) ? view.sort : null;
   return (
     <div className="flex gap-1">
       <select
         aria-label={t("sort")}
-        value={view.sort?.prop ?? ""}
+        value={sort?.prop ?? ""}
         className={`${FIELD} min-w-0 flex-1`}
-        onChange={(e) => set(e.target.value ? { prop: e.target.value, dir: view.sort?.dir ?? "asc" } : null)}
+        onChange={(e) => set(e.target.value ? { prop: e.target.value, dir: sort?.dir ?? "asc" } : null)}
       >
         <option value="">{t("noSort")}</option>
         <option value="title">{t("name")}</option>
@@ -228,12 +272,12 @@ function SortEditor({ api }: { api: Api }) {
           </option>
         ))}
       </select>
-      {view.sort && (
+      {sort && (
         <select
           aria-label={t("ascending")}
-          value={view.sort.dir}
+          value={sort.dir}
           className={FIELD}
-          onChange={(e) => set({ prop: view.sort!.prop, dir: e.target.value as "asc" | "desc" })}
+          onChange={(e) => set({ prop: sort.prop, dir: e.target.value as "asc" | "desc" })}
         >
           <option value="asc">{t("ascending")}</option>
           <option value="desc">{t("descending")}</option>
@@ -245,10 +289,18 @@ function SortEditor({ api }: { api: Api }) {
 
 function TitleInput({ row, api, className = "" }: { row: Row; api: Api; className?: string }) {
   const t = useT();
+  const ref = useRef<HTMLInputElement>(null);
+  const { fresh, clearFresh } = api;
+  // Le curseur va une seule fois au nom d'une ligne tout juste créée.
+  useEffect(() => {
+    if (fresh !== row.id) return;
+    ref.current?.focus();
+    clearFresh();
+  }, [fresh, row.id, clearFresh]);
   return (
     <input
+      ref={ref}
       key={row.title}
-      autoFocus={api.fresh === row.id}
       aria-label={t("name")}
       defaultValue={row.title}
       placeholder={t("untitled")}
@@ -298,7 +350,7 @@ function PropHeader({ prop, api }: { prop: Prop; api: Api }) {
             onKeyDown={(e) => e.key === "Enter" && e.currentTarget.blur()}
             className="mb-1 h-7 w-full rounded bg-hover px-2"
           />
-          <p className="px-2 py-1 text-xs text-faint">{t(PROP_TYPES.find(([type]) => type === prop.type)![1])}</p>
+          <p className="px-2 py-1 text-xs text-faint">{t(PROP_TYPES.find(([type]) => type === prop.type)?.[1] ?? "propText")}</p>
           {prop.type === "formula" && (
             <input
               aria-label={t("propFormula")}
@@ -328,7 +380,7 @@ function PropHeader({ prop, api }: { prop: Prop; api: Api }) {
             className="flex h-7 w-full items-center gap-2 rounded px-2 text-left text-danger hover:bg-hover"
             onClick={() => {
               setAnchor(null);
-              api.setConfig((c) => ({ ...c, props: c.props.filter((p) => p.id !== prop.id) }));
+              api.setConfig((c) => removeProp(c, prop.id));
             }}
           >
             <Trash2 size={16} />
@@ -349,7 +401,7 @@ function TableLayout({ api }: { api: Api }) {
   const group = props.find((p) => p.id === api.view.groupBy && p.type === "select");
   const groups: { id: string; option?: Option; rows: Row[] }[] = group
     ? [...(group.options ?? []).map((o) => ({ id: o.id, option: o })), { id: "" }]
-        .map((g) => ({ ...g, rows: rows.filter((r) => (r.props[group.id] ?? "") === g.id) }))
+        .map((g) => ({ ...g, rows: rows.filter((r) => groupKey(r.props[group.id], group) === g.id) }))
         .filter((g) => g.rows.length > 0)
     : [{ id: "", rows }];
   return (
@@ -402,7 +454,7 @@ function TableLayout({ api }: { api: Api }) {
                   <TitleInput row={row} api={api} className="h-full" />
                   <button
                     onClick={() => api.open(row.id)}
-                    className="hidden h-6 shrink-0 rounded bg-pop px-1.5 text-xs text-muted shadow-[0_0_0_1px_var(--color-line)] hover:bg-hover group-hover:block"
+                    className="h-6 shrink-0 rounded bg-pop px-1.5 text-xs text-muted opacity-0 shadow-[0_0_0_1px_var(--color-line)] hover:bg-hover focus:opacity-100 group-focus-within:opacity-100 group-hover:opacity-100 pointer-coarse:opacity-100 max-sm:opacity-100"
                   >
                     {t("open")}
                   </button>
@@ -420,7 +472,7 @@ function TableLayout({ api }: { api: Api }) {
                 <IconButton
                   label={t("moveToTrash")}
                   onClick={() => api.remove(row.id)}
-                  className="m-auto opacity-0 focus:opacity-100 group-hover:opacity-100"
+                  className="m-auto opacity-0 focus:opacity-100 group-focus-within:opacity-100 group-hover:opacity-100 pointer-coarse:opacity-100 max-sm:opacity-100"
                 >
                   <Trash2 size={14} />
                 </IconButton>
@@ -451,7 +503,7 @@ function BoardLayout({ api }: { api: Api }) {
   const group = api.props.find((p) => p.id === api.view.groupBy && p.type === "select");
   const [dragId, setDragId] = useState<string | null>(null);
   const [over, setOver] = useState<string | null>(null);
-  if (!group) return null;
+  if (!group) return <MissingProp api={api} type="select" field="groupBy" />;
   const columns: { id: string; option?: Option }[] = [
     { id: "" },
     ...(group.options ?? []).map((o) => ({ id: o.id, option: o })),
@@ -460,7 +512,7 @@ function BoardLayout({ api }: { api: Api }) {
   return (
     <div className="flex gap-3 overflow-x-auto pb-4">
       {columns.map(({ id, option }) => {
-        const cards = api.rows.filter((r) => (r.props[group.id] ?? "") === id);
+        const cards = api.rows.filter((r) => groupKey(r.props[group.id], group) === id);
         if (!option && cards.length === 0) return null;
         return (
           <div
@@ -525,7 +577,7 @@ function CalendarLayout({ api }: { api: Api }) {
   const dateProp = api.props.find((p) => p.id === api.view.dateProp && p.type === "date");
   const [month, setMonth] = useState(() => new Date(new Date().getFullYear(), new Date().getMonth(), 1));
   const [dragId, setDragId] = useState<string | null>(null);
-  if (!dateProp) return null;
+  if (!dateProp) return <MissingProp api={api} type="date" field="dateProp" />;
 
   // Grille de six semaines commençant un lundi.
   const start = new Date(month);
@@ -584,7 +636,7 @@ function CalendarLayout({ api }: { api: Api }) {
                 <button
                   aria-label={`${t("newRow")} ${key}`}
                   onClick={() => api.add({ [dateProp.id]: key })}
-                  className="grid size-5 place-items-center rounded text-faint opacity-0 hover:bg-hover focus:opacity-100 group-hover:opacity-100"
+                  className="grid size-5 place-items-center rounded text-faint opacity-0 hover:bg-hover focus:opacity-100 group-hover:opacity-100 pointer-coarse:opacity-100"
                 >
                   <Plus size={13} />
                 </button>
@@ -634,7 +686,7 @@ function ListLayout({ api }: { api: Api }) {
           <IconButton
             label={t("moveToTrash")}
             onClick={() => api.remove(row.id)}
-            className="opacity-0 focus:opacity-100 group-hover:opacity-100"
+            className="opacity-0 focus:opacity-100 group-focus-within:opacity-100 group-hover:opacity-100 pointer-coarse:opacity-100 max-sm:opacity-100"
           >
             <Trash2 size={14} />
           </IconButton>
@@ -678,26 +730,30 @@ function GalleryLayout({ api }: { api: Api }) {
 
 const DAY_MS = 86_400_000;
 const DAY_W = 30;
-const noon = (isoDate: string) => new Date(`${isoDate}T12:00:00`).getTime();
 
 function TimelineLayout({ api }: { api: Api }) {
   const t = useT();
   const lang = useStore((s) => s.lang);
   const startProp = api.props.find((p) => p.id === api.view.dateProp && p.type === "date");
   const endProp = api.props.find((p) => p.id === api.view.endProp && p.type === "date");
-  if (!startProp) return null;
+  if (!startProp) return <MissingProp api={api} type="date" field="dateProp" />;
 
-  const items = api.rows.flatMap((row) => {
-    const start = row.props[startProp.id];
-    if (typeof start !== "string" || !start) return [];
-    const end = endProp && typeof row.props[endProp.id] === "string" ? (row.props[endProp.id] as string) : start;
-    return [{ row, start: noon(start), end: Math.max(noon(end || start), noon(start)) }];
+  // Les dates invalides sont ignorées (la ligne compte comme sans date).
+  const dated = api.rows.flatMap((row) => {
+    const start = dayNoon(row.props[startProp.id]);
+    if (start === null) return [];
+    const end = endProp ? dayNoon(row.props[endProp.id]) : null;
+    return [{ row, start, end: Math.max(end ?? start, start) }];
   });
-  const undated = api.rows.length - items.length;
-  // La frise couvre toutes les lignes, avec une marge, et au moins cinq semaines.
+  const undated = api.rows.length - dated.length;
+  // La frise couvre toutes les lignes, avec une marge, et au moins cinq semaines ; elle est bornée.
   const today = new Date().setHours(12, 0, 0, 0);
-  const from = Math.min(today, ...items.map((i) => i.start)) - 3 * DAY_MS;
-  const to = Math.max(from + 35 * DAY_MS, ...items.map((i) => i.end + 7 * DAY_MS));
+  const { from, to } = timelineBounds(dated, today);
+  // Les lignes hors de la plage sont comptées à part ; celles qui la débordent sont rognées.
+  const items = dated
+    .filter((i) => i.end >= from && i.start <= to)
+    .map((i) => ({ ...i, start: Math.max(i.start, from), end: Math.min(i.end, to) }));
+  const outOfRange = dated.length - items.length;
   const days = Array.from({ length: Math.round((to - from) / DAY_MS) + 1 }, (_, i) => new Date(from + i * DAY_MS));
   const month = new Intl.DateTimeFormat(lang, { month: "long", year: "numeric" });
 
@@ -755,6 +811,11 @@ function TimelineLayout({ api }: { api: Api }) {
           {undated} {t("noDate")}
         </p>
       )}
+      {outOfRange > 0 && (
+        <p className="mt-2 text-xs text-faint">
+          {outOfRange} {t("outOfRange")}
+        </p>
+      )}
       <AddRow onClick={() => api.add({ [startProp.id]: iso(new Date()) })} />
     </div>
   );
@@ -769,20 +830,42 @@ export function DatabaseView({ page, embedded }: { page: PageMeta; embedded?: bo
   const [fresh, setFresh] = useState<string | null>(null);
   const [renaming, setRenaming] = useState<string | null>(null);
 
-  const reload = useCallback(async () => setRows(await listRows(page.id)), [page.id]);
+  const configRef = useRef<DbConfig | null>(null);
+  const loadSeq = useRef(0);
+  const pages = useStore((s) => s.pages);
+
+  // Une réponse tardive d'un chargement précédent est ignorée.
+  const reload = useCallback(async () => {
+    const seq = ++loadSeq.current;
+    const list = await listRows(page.id);
+    if (seq === loadSeq.current) setRows(list);
+  }, [page.id]);
+
+  // La liste des pages change (synchro, partage, autre onglet) : on relit les lignes.
+  const firstPages = useRef(true);
+  useEffect(() => {
+    if (firstPages.current) {
+      firstPages.current = false;
+      return;
+    }
+    if (configRef.current) void reload();
+  }, [pages, reload]);
 
   useEffect(() => {
     let live = true;
+    configRef.current = null;
     (async () => {
       let loaded = await getDatabase(page.id);
       if (!loaded) {
         loaded = { props: [], views: [newView("table", t("viewTable"))] };
         await saveDatabase(page.id, loaded);
       }
+      const seq = ++loadSeq.current;
       const list = await listRows(page.id);
       if (!live) return;
+      configRef.current = loaded;
       setConfigState(loaded);
-      setRows(list);
+      if (seq === loadSeq.current) setRows(list);
     })();
     return () => {
       live = false;
@@ -792,15 +875,17 @@ export function DatabaseView({ page, embedded }: { page: PageMeta; embedded?: bo
   }, [page.id]);
 
   const setConfig = useCallback(
-    (update: (c: DbConfig) => DbConfig) =>
-      setConfigState((current) => {
-        if (!current) return current;
-        const next = update(current);
-        void saveDatabase(page.id, next);
-        return next;
-      }),
+    (update: (c: DbConfig) => DbConfig) => {
+      const current = configRef.current;
+      if (!current) return;
+      const next = update(current);
+      configRef.current = next;
+      setConfigState(next);
+      void saveDatabase(page.id, next);
+    },
     [page.id],
   );
+  const clearFresh = useCallback(() => setFresh(null), []);
 
   const view = config?.views.find((v) => v.id === viewId) ?? config?.views[0];
   const visible = useMemo(
@@ -810,12 +895,16 @@ export function DatabaseView({ page, embedded }: { page: PageMeta; embedded?: bo
   if (!config || !view) return null;
 
   const refreshPages = () => useStore.getState().refreshPages();
+  const patchView = (patch: Partial<DbView>) =>
+    setConfig((c) => ({ ...c, views: c.views.map((v) => (v.id === view.id ? { ...v, ...patch } : v)) }));
   const api: Api = {
     databaseId: page.id,
     props: config.props,
     rows: visible,
     view,
     fresh,
+    clearFresh,
+    patchView,
     setConfig,
     open: (id) => navigate({ view: "page", id }),
     add: async (props = {}) => {
@@ -838,17 +927,29 @@ export function DatabaseView({ page, embedded }: { page: PageMeta; embedded?: bo
       await refreshPages();
     },
     setValue: async (row, propId, value) => {
-      const props = { ...row.props, [propId]: value };
+      // On repart de la ligne brute : `row` peut porter des résultats de formules qu'on ne stocke pas.
+      const raw = rows.find((r) => r.id === row.id) ?? row;
+      const props = { ...raw.props, [propId]: value };
+      for (const p of config.props) if (p.type === "formula") delete props[p.id];
       setRows((list) => list.map((r) => (r.id === row.id ? { ...r, props } : r)));
       await setRowProps(row.id, props);
     },
-    setOptions: (propId, options) =>
-      setConfig((c) => ({ ...c, props: c.props.map((p) => (p.id === propId ? { ...p, options } : p)) })),
+    setOptions: (propId, options) => {
+      const before = config.props.find((p) => p.id === propId)?.options ?? [];
+      const removed = before.filter((o) => !options.some((x) => x.id === o.id)).map((o) => o.id);
+      setConfig((c) => ({ ...c, props: c.props.map((p) => (p.id === propId ? { ...p, options } : p)) }));
+      // Une option supprimée disparaît de toutes les lignes, pas seulement de la cellule courante.
+      if (removed.length)
+        void purgeOptions(page.id, propId, removed).then((changed) => {
+          if (changed.length)
+            setRows((list) => list.map((r) => changed.find((c) => c.id === r.id) ?? r));
+        });
+    },
   };
 
-  const addView = (type: ViewType, name: string) =>
+  const addView = (type: ViewType, name: string) => {
+    const next = newView(type, name);
     setConfig((c) => {
-      const next = newView(type, name);
       let props = c.props;
       // Un kanban a besoin d'une sélection, un calendrier d'une date : on les crée au besoin.
       if (type === "board") {
@@ -876,12 +977,13 @@ export function DatabaseView({ page, embedded }: { page: PageMeta; embedded?: bo
         }
         next.dateProp = date.id;
       }
-      setViewId(next.id);
       return { props, views: [...c.views, next] };
     });
+    setViewId(next.id);
+  };
 
-  const patchView = (patch: Partial<DbView>) =>
-    setConfig((c) => ({ ...c, views: c.views.map((v) => (v.id === view.id ? { ...v, ...patch } : v)) }));
+  // Type de vue inconnu (base plus récente, import) : repli sur le tableau.
+  const layout: ViewType = VIEW_TYPES.some(([type]) => type === view.type) ? view.type : "table";
   const pickers: [keyof DbView, PropType, boolean][] = [
     ["groupBy", "select", view.type === "board" || view.type === "table"],
     ["dateProp", "date", view.type === "calendar" || view.type === "timeline"],
@@ -893,7 +995,7 @@ export function DatabaseView({ page, embedded }: { page: PageMeta; embedded?: bo
       <div className={`mb-3 flex flex-wrap items-center gap-x-1 gap-y-2 ${LINE}`}>
         <div className="flex min-w-0 flex-1 items-center gap-0.5 overflow-x-auto">
           {config.views.map((v) => {
-            const Icon = VIEW_TYPES.find(([type]) => type === v.type)![2];
+            const Icon = VIEW_TYPES.find(([type]) => type === v.type)?.[2] ?? Table2;
             const active = v.id === view.id;
             return renaming === v.id ? (
               <input
@@ -950,16 +1052,21 @@ export function DatabaseView({ page, embedded }: { page: PageMeta; embedded?: bo
           />
         </div>
         <div className="flex items-center gap-0.5 pb-1">
-          {pickers.map(
-            ([key, type, shown]) =>
-              shown && (
+          {pickers.map(([key, type, shown]) => {
+            if (!shown) return null;
+            // Une propriété supprimée n'est plus sélectionnée : le sélecteur reflète l'état réel.
+            const current = config.props.some((p) => p.id === view[key] && p.type === type) ? (view[key] as string) : "";
+            return (
                 <select
                   key={key}
                   aria-label={t(key === "groupBy" ? "groupBy" : key === "endProp" ? "endDate" : "propDate")}
-                  value={(view[key] as string) ?? ""}
-                  onChange={(e) => patchView({ [key]: e.target.value })}
+                  value={current}
+                  onChange={(e) => patchView({ [key]: e.target.value || undefined })}
                   className="h-7 max-w-36 rounded-md bg-transparent px-1 text-muted hover:bg-hover"
                 >
+                  {!current && !(key === "endProp" || (key === "groupBy" && view.type === "table")) && (
+                    <option value="">{t("chooseProp")}</option>
+                  )}
                   {key === "groupBy" && view.type === "table" && (
                     <option value="">
                       {t("groupBy")} : {t("none").toLowerCase()}
@@ -978,8 +1085,8 @@ export function DatabaseView({ page, embedded }: { page: PageMeta; embedded?: bo
                       </option>
                     ))}
                 </select>
-              ),
-          )}
+            );
+          })}
           <PopButton
             label={view.filters.length ? `${t("filter")} · ${view.filters.length}` : t("filter")}
             icon={<ListFilter size={15} />}
@@ -1000,12 +1107,12 @@ export function DatabaseView({ page, embedded }: { page: PageMeta; embedded?: bo
         </div>
       </div>
 
-      {view.type === "table" && <TableLayout api={api} />}
-      {view.type === "board" && <BoardLayout api={api} />}
-      {view.type === "calendar" && <CalendarLayout api={api} />}
-      {view.type === "list" && <ListLayout api={api} />}
-      {view.type === "gallery" && <GalleryLayout api={api} />}
-      {view.type === "timeline" && <TimelineLayout api={api} />}
+      {layout === "table" && <TableLayout api={api} />}
+      {layout === "board" && <BoardLayout api={api} />}
+      {layout === "calendar" && <CalendarLayout api={api} />}
+      {layout === "list" && <ListLayout api={api} />}
+      {layout === "gallery" && <GalleryLayout api={api} />}
+      {layout === "timeline" && <TimelineLayout api={api} />}
       {visible.length === 0 && rows.length > 0 && <p className="py-6 text-center text-muted">{t("emptyDb")}</p>}
     </div>
   );
@@ -1045,8 +1152,11 @@ export function RowProperties({ page, databaseId }: { page: PageMeta; databaseId
               }}
               onOptions={(options) => {
                 const next = { ...config, props: config.props.map((x) => (x.id === p.id ? { ...x, options } : x)) };
+                const before = p.options ?? [];
+                const removed = before.filter((o) => !options.some((x) => x.id === o.id)).map((o) => o.id);
                 setConfig(next);
                 void saveDatabase(databaseId, next);
+                if (removed.length) void purgeOptions(databaseId, p.id, removed);
               }}
             />
           </span>

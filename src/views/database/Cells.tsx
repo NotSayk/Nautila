@@ -78,6 +78,12 @@ function Related({ ids }: { ids: string[] }) {
                 e.stopPropagation();
                 navigate({ view: "page", id });
               }}
+              onKeyDown={(e) => {
+                if (e.key !== "Enter" && e.key !== " ") return;
+                e.preventDefault();
+                e.stopPropagation();
+                navigate({ view: "page", id });
+              }}
               className="max-w-full cursor-pointer truncate rounded px-1 font-medium underline decoration-line underline-offset-4 hover:bg-hover"
             >
               {page.icon} {page.title || t("untitled")}
@@ -106,7 +112,7 @@ function RelationEditor({ prop, value, onChange }: { prop: Prop; value: Value; o
         aria-label={prop.name}
         className="flex h-full min-h-8 w-full cursor-pointer flex-wrap items-center gap-1 px-2 py-1"
         onClick={(e) => setAnchor(e.currentTarget.getBoundingClientRect())}
-        onKeyDown={(e) => e.key === "Enter" && setAnchor(e.currentTarget.getBoundingClientRect())}
+        onKeyDown={(e) => e.target === e.currentTarget && e.key === "Enter" && setAnchor(e.currentTarget.getBoundingClientRect())}
       >
         <Related ids={selected} />
       </div>
@@ -161,7 +167,7 @@ function SelectEditor({
   const selected = Array.isArray(value) ? value : value ? [String(value)] : [];
   const q = query.trim();
   const shown = options.filter((o) => o.name.toLowerCase().includes(q.toLowerCase()));
-  const exact = options.some((o) => o.name.toLowerCase() === q.toLowerCase());
+  const exact = options.find((o) => o.name.toLowerCase() === q.toLowerCase());
 
   const toggle = (id: string) => {
     if (multi) onChange(selected.includes(id) ? selected.filter((x) => x !== id) : [...selected, id]);
@@ -182,6 +188,7 @@ function SelectEditor({
     if (!multi) setAnchor(null);
   };
   const remove = (id: string) => {
+    // Les autres lignes sont nettoyées par le parent (onOptions) ; ici la cellule courante.
     onOptions(options.filter((o) => o.id !== id));
     if (selected.includes(id)) onChange(multi ? selected.filter((x) => x !== id) : null);
   };
@@ -201,7 +208,7 @@ function SelectEditor({
             autoFocus
             value={query}
             onChange={(e) => setQuery(e.target.value)}
-            onKeyDown={(e) => e.key === "Enter" && q && (exact ? toggle(shown[0].id) : create())}
+            onKeyDown={(e) => e.key === "Enter" && q && (exact ? toggle(exact.id) : create())}
             placeholder={t("optionSearch")}
             className="mb-1 h-7 w-full rounded bg-hover px-2 placeholder:text-faint"
           />

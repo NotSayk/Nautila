@@ -1,5 +1,14 @@
 import { describe, expect, it } from "vitest";
-import { applyView, evalFormula, withFormulas, type DbView, type Prop, type Row } from "./dbquery";
+import {
+  applyView,
+  dayNoon,
+  evalFormula,
+  groupKey,
+  removeProp,
+  stripOptions,
+  timelineBounds,
+  withFormulas,
+  type DbView, type Prop, type Row } from "./dbquery";
 
 const props: Prop[] = [
   {
@@ -64,6 +73,72 @@ describe("applyView", () => {
     expect(ids({ sort: { prop: "n", dir: "asc" } })).toBe("abc");
     expect(ids({ sort: { prop: "st", dir: "asc" } })).toBe("bac");
     expect(ids({ sort: { prop: "title", dir: "desc" } })).toBe("cba");
+  });
+});
+
+describe("tri et filtres robustes", () => {
+  it("trie le texte selon la langue, nombres compris", () => {
+    const named = [row("1", "Zèbre", {}, 1), row("2", "Étude 10", {}, 2), row("3", "Étude 2", {}, 3), row("4", "abeille", {}, 4)];
+    const out = applyView(named, view({ sort: { prop: "title", dir: "asc" } }), props).map((r) => r.id);
+    expect(out.join("")).toBe("4321");
+  });
+
+  it("ignore un filtre numérique dont la valeur n'est pas un nombre", () => {
+    const f = { filters: [{ id: "f", prop: "n", op: "after" as const, value: "abc" }] };
+    expect(ids(f)).toBe("abc");
+  });
+});
+
+describe("groupKey, stripOptions, removeProp", () => {
+  const select = props[0];
+  it("classe une valeur inconnue dans « aucune valeur »", () => {
+    expect(groupKey("done", select)).toBe("done");
+    expect(groupKey("orphelin", select)).toBe("");
+    expect(groupKey(undefined, select)).toBe("");
+  });
+
+  it("retire une option supprimée des valeurs", () => {
+    expect(stripOptions({ st: "done", n: 1 }, "st", ["done"])).toEqual({ st: null, n: 1 });
+    expect(stripOptions({ m: ["a", "b"] }, "m", ["a"])).toEqual({ m: ["b"] });
+    expect(stripOptions({ m: ["a"] }, "m", ["a"])).toEqual({ m: null });
+    expect(stripOptions({ st: "todo" }, "st", ["done"])).toBeNull();
+  });
+
+  it("nettoie les vues d'une propriété supprimée", () => {
+    const config = {
+      props,
+      views: [
+        view({
+          filters: [{ id: "f", prop: "st", op: "is", value: "todo" }],
+          sort: { prop: "st", dir: "asc" },
+          groupBy: "st",
+          dateProp: "d",
+        }),
+      ],
+    };
+    const next = removeProp(removeProp(config, "st"), "d");
+    expect(next.props.map((p) => p.id)).toEqual(["n", "ok"]);
+    expect(next.views[0]).toMatchObject({ filters: [], sort: null });
+    expect(next.views[0].groupBy).toBeUndefined();
+    expect(next.views[0].dateProp).toBeUndefined();
+  });
+});
+
+describe("frise", () => {
+  it("ignore les dates invalides", () => {
+    expect(dayNoon("2026-03-01")).not.toBeNull();
+    expect(dayNoon("2026-13-45")).toBeNull();
+    expect(dayNoon("pas une date")).toBeNull();
+    expect(dayNoon(undefined)).toBeNull();
+  });
+
+  it("borne la plage affichée même avec une date aberrante", () => {
+    const today = dayNoon("2026-06-01")!;
+    const far = dayNoon("2205-01-01")!;
+    const { from, to } = timelineBounds([{ start: far, end: far }], today);
+    expect((to - from) / 86_400_000).toBeLessThanOrEqual(730);
+    const normal = timelineBounds([], today);
+    expect((normal.to - normal.from) / 86_400_000).toBe(35);
   });
 });
 

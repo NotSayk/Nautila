@@ -235,7 +235,13 @@ function ImportDialog({
           if (!timed.length && !events.length) return;
           setBusy(true);
           const calendar = name.trim() || fileName(file);
-          await importEvents(calendar, events, courses, clean ? legacy.map((s) => s.id) : []);
+          try {
+            await importEvents(calendar, events, courses, clean ? legacy.map((s) => s.id) : []);
+          } catch {
+            setBusy(false);
+            useStore.setState({ toast: { message: t("icalImportError") } });
+            return;
+          }
           onClose(calendar);
         }}
       >
@@ -396,12 +402,25 @@ export function Timetable() {
   const icalInput = useRef<HTMLInputElement>(null);
   const weekEnd = addDays(week, 7);
 
+  // Une réponse tardive (changement rapide de semaine) ne remplace pas la plus récente.
+  const loadSeq = useRef(0);
   const reload = () => {
-    void listSlots().then(setSlots);
-    void listCalendars().then(setCalendars);
-    void listEvents(week, weekEnd).then(setEvents);
+    const seq = ++loadSeq.current;
+    Promise.all([listSlots(), listCalendars(), listEvents(week, weekEnd)])
+      .then(([s, c, e]) => {
+        if (seq !== loadSeq.current) return;
+        setSlots(s);
+        setCalendars(c);
+        setEvents(e);
+      })
+      .catch(() => {
+        if (seq === loadSeq.current) useStore.setState({ toast: { message: t("timetableLoadError") } });
+      });
   };
-  useEffect(reload, [week]);
+  useEffect(() => {
+    reload();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [week]);
   useEffect(() => {
     const timer = setInterval(() => setNow(Date.now()), 60_000);
     return () => clearInterval(timer);
@@ -515,7 +534,12 @@ export function Timetable() {
             onChange={async (e) => {
               const file = e.target.files?.[0];
               e.target.value = "";
-              if (file) setPending({ file: file.name, parsed: parseIcal(await file.text()) });
+              if (!file) return;
+              try {
+                setPending({ file: file.name, parsed: parseIcal(await file.text()) });
+              } catch {
+                useStore.setState({ toast: { message: t("icalError") } });
+              }
             }}
           />
           <button

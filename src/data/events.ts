@@ -1,5 +1,5 @@
 import { db } from "../db";
-import { matchCourse, type IcalEvent } from "./ical";
+import { clock, matchCourse, type IcalEvent } from "./ical";
 
 /** Séance datée d'un calendrier importé. */
 export type CalEvent = {
@@ -102,6 +102,38 @@ export async function importEvents(
   for (const id of removeSlots) statements.push({ sql: "DELETE FROM slots WHERE id = ?", params: [id] });
   if (statements.length) await db().batch(statements);
   return { added, updated, removed: gone.length };
+}
+
+export type DayClass = { id: string; start: string; end: string; title: string; room: string; cancelled: boolean };
+
+/**
+ * Cours d'une journée : créneaux de la semaine type (`day` : 0 = lundi) et séances
+ * datées. Un créneau identique à une séance (même titre, mêmes heures) n'est listé qu'une fois.
+ */
+export function dayClasses(
+  slots: { id: string; day: number; start: string; end: string; title: string; room: string }[],
+  events: CalEvent[],
+  dayStart: number,
+  dayEnd: number,
+  weekday: number,
+): DayClass[] {
+  const fromEvents = events
+    .filter((e) => !e.all_day)
+    .map((e) => ({
+      id: e.id,
+      start: e.start < dayStart ? "00:00" : clock(e.start),
+      end: e.end > dayEnd ? "23:59" : clock(e.end),
+      title: e.title,
+      room: e.room,
+      cancelled: !!e.cancelled,
+    }));
+  const same = (a: { title: string; start: string; end: string }, b: typeof a) =>
+    a.title.trim().toLowerCase() === b.title.trim().toLowerCase() && a.start === b.start && a.end === b.end;
+  const fromSlots = slots
+    .filter((s) => s.day === weekday)
+    .map((s) => ({ id: s.id, start: s.start, end: s.end, title: s.title, room: s.room, cancelled: false }))
+    .filter((s) => !fromEvents.some((e) => same(s, e)));
+  return [...fromSlots, ...fromEvents].sort((a, b) => a.start.localeCompare(b.start));
 }
 
 /**
