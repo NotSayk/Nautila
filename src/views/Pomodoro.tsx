@@ -5,9 +5,48 @@ import { useStore } from "../store";
 
 const DURATION = { focus: 25 * 60_000, break: 5 * 60_000 };
 
+const KEY = "nautila.pomodoro";
+type Timer = ReturnType<typeof useStore.getState>["pomodoro"];
+
+/** Minuteur relu depuis le stockage : une session déjà terminée passe à l'autre phase, à l'arrêt. */
+function restore(raw: string | null, now: number): Timer | null {
+  try {
+    const s = JSON.parse(raw ?? "null") as Partial<Timer> | null;
+    if (!s || (s.mode !== "focus" && s.mode !== "break") || typeof s.left !== "number") return null;
+    const mode = s.mode;
+    if (typeof s.endsAt === "number") {
+      if (s.endsAt > now) return { mode, endsAt: s.endsAt, left: s.left };
+      const next = mode === "focus" ? "break" : "focus";
+      return { mode: next, endsAt: null, left: DURATION[next] };
+    }
+    return { mode, endsAt: null, left: Math.min(Math.max(s.left, 0), DURATION[mode]) };
+  } catch {
+    return null;
+  }
+}
+
+// Le minuteur survit au rechargement : relu au chargement, enregistré à chaque changement.
+try {
+  const saved = restore(localStorage.getItem(KEY), Date.now());
+  if (saved) useStore.setState({ pomodoro: saved });
+} catch {
+  /* stockage indisponible : minuteur non restauré */
+}
+useStore.subscribe((state, prev) => {
+  if (state.pomodoro === prev.pomodoro) return;
+  try {
+    localStorage.setItem(KEY, JSON.stringify(state.pomodoro));
+  } catch {
+    /* minuteur non mémorisé, sans gravité */
+  }
+});
+
 function beep() {
   try {
     const ctx = new AudioContext();
+    // Libère le contexte audio une fois le son terminé.
+    const close = () => void ctx.close().catch(() => undefined);
+    setTimeout(close, 1200);
     const osc = ctx.createOscillator();
     const gain = ctx.createGain();
     osc.frequency.value = 660;
@@ -30,6 +69,7 @@ export function Pomodoro() {
 
   useEffect(() => {
     if (!running) return;
+    setNow(Date.now()); // reprise : l'horloge affichée repart de l'instant présent
     const timer = setInterval(() => setNow(Date.now()), 500);
     return () => clearInterval(timer);
   }, [running]);

@@ -69,7 +69,11 @@ export function FlipMode({ cards, onExit }: ModeProps) {
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
+      const target = e.target as HTMLElement;
+      if (e.repeat || target.closest("input, textarea, select")) return;
       if (e.key === " " || e.key === "Enter") {
+        // Sur un bouton ou un lien, la touche garde son effet habituel.
+        if (target.closest("button, a, [role=button], [role=link]")) return;
         e.preventDefault();
         setFlipped((f) => !f);
       } else if (e.key === "ArrowRight") go(1);

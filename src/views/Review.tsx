@@ -308,22 +308,32 @@ function Spaced({ pageId, onExit }: { pageId?: string; onExit: () => void }) {
   const card = queue?.[0];
   const now = new Date();
 
+  // Verrou : un double appui ne note pas deux fois la même carte.
+  const grading = useRef(false);
   const grade = async (g: Grade) => {
-    if (!card) return;
-    await gradeCard(card, g, now);
-    setRevealed(false);
-    // Quand la file est vide, on avance les cartes dues dans les 10 minutes
-    // (étapes d'apprentissage) pour finir la séance sans attendre.
-    const next = await dueCards(Date.now(), pageId);
-    setQueue(next.length ? next : await dueCards(Date.now() + 10 * 60_000, pageId));
-    void useStore.getState().refreshDue();
+    if (!card || grading.current) return;
+    grading.current = true;
+    try {
+      await gradeCard(card, g, now);
+      setRevealed(false);
+      // Quand la file est vide, on avance les cartes dues dans les 10 minutes
+      // (étapes d'apprentissage) pour finir la séance sans attendre.
+      const next = await dueCards(Date.now(), pageId);
+      setQueue(next.length ? next : await dueCards(Date.now() + 10 * 60_000, pageId));
+      void useStore.getState().refreshDue();
+    } finally {
+      grading.current = false;
+    }
   };
 
   // Espace ou Entrée : voir la réponse ; 1 à 4 : noter la carte.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if ((e.target as HTMLElement).closest("input, textarea")) return;
+      const target = e.target as HTMLElement;
+      if (e.repeat || target.closest("input, textarea, select")) return;
       if (!revealed && (e.key === " " || e.key === "Enter")) {
+        // Sur un bouton ou un lien, la touche garde son effet habituel.
+        if (target.closest("button, a, [role=button], [role=link]")) return;
         e.preventDefault();
         setRevealed(true);
       } else if (revealed && /^[1-4]$/.test(e.key)) void grade(Number(e.key) as Grade);

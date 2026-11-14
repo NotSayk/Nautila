@@ -1,8 +1,7 @@
 import { CalendarCheck, CalendarDays, Clock, Layers } from "lucide-react";
 import { useEffect, useState } from "react";
 import { cardStats } from "../data/cards";
-import { listEvents } from "../data/events";
-import { clock } from "../data/ical";
+import { dayClasses, listEvents, type DayClass } from "../data/events";
 import { listSlots } from "../data/school";
 import { listTasks, type Task } from "../data/tasks";
 import { useT } from "../i18n";
@@ -16,39 +15,32 @@ export function Dashboard() {
   const navigate = useStore((s) => s.navigate);
   const [stats, setStats] = useState({ due: 0, total: 0 });
   const [tasks, setTasks] = useState<Task[]>([]);
-  const [classes, setClasses] = useState<
-    { id: string; start: string; end: string; title: string; room: string; cancelled: boolean }[]
-  >([]);
+  const [classes, setClasses] = useState<DayClass[]>([]);
+  // Jour courant : relu chaque minute pour que l'accueil suive le changement de jour.
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const tick = () => setNow(Date.now());
+    const timer = setInterval(tick, 60_000);
+    document.addEventListener("visibilitychange", tick);
+    return () => {
+      clearInterval(timer);
+      document.removeEventListener("visibilitychange", tick);
+    };
+  }, []);
+  const dayStart = new Date(now).setHours(0, 0, 0, 0);
 
   useEffect(() => {
     cardStats().then(setStats);
-    const today = (new Date().getDay() + 6) % 7;
-    const dayStart = new Date().setHours(0, 0, 0, 0);
     const dayEnd = new Date(dayStart).setDate(new Date(dayStart).getDate() + 1);
-    // Créneaux de la semaine type et séances datées des calendriers importés.
+    const weekday = (new Date(dayStart).getDay() + 6) % 7;
+    // Créneaux de la semaine type et séances datées des calendriers importés, sans doublon.
     Promise.all([listSlots(), listEvents(dayStart, dayEnd)]).then(([slots, events]) =>
-      setClasses(
-        [
-          ...slots
-            .filter((x) => x.day === today)
-            .map((x) => ({ id: x.id, start: x.start, end: x.end, title: x.title, room: x.room, cancelled: false })),
-          ...events
-            .filter((e) => !e.all_day)
-            .map((e) => ({
-              id: e.id,
-              start: e.start < dayStart ? "00:00" : clock(e.start),
-              end: e.end > dayEnd ? "23:59" : clock(e.end),
-              title: e.title,
-              room: e.room,
-              cancelled: !!e.cancelled,
-            })),
-        ].sort((a, b) => a.start.localeCompare(b.start)),
-      ),
+      setClasses(dayClasses(slots, events, dayStart, dayEnd, weekday)),
     );
     listTasks().then((all) => setTasks(all.filter((x) => !x.done && x.due_at !== null && daysUntil(x.due_at) <= 14)));
-  }, []);
+  }, [dayStart]);
 
-  const hour = new Date().getHours();
+  const hour = new Date(now).getHours();
   const greeting = t(hour < 12 ? "goodMorning" : hour < 18 ? "goodAfternoon" : "goodEvening");
   const recent = [...pages].sort((a, b) => b.updated_at - a.updated_at).slice(0, 8);
   const courseName = (id: string | null) => pages.find((p) => p.id === id)?.title;
