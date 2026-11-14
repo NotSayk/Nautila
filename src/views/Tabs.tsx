@@ -1,4 +1,4 @@
-import { CalendarDays, CheckSquare, GraduationCap, Home, Layers, Plus, Trash2, Users, X } from "lucide-react";
+import { CalendarDays, CheckSquare, Home, Layers, Plus, Trash2, Users, X } from "lucide-react";
 import { useT, type Key } from "../i18n";
 import { useStore, type Route } from "../store";
 import { PageIcon } from "./common";
@@ -9,7 +9,6 @@ const VIEWS: Record<Exclude<Route["view"], "page">, [Key, React.ReactNode]> = {
   tasks: ["tasks", <CheckSquare size={15} />],
   trash: ["trash", <Trash2 size={15} />],
   timetable: ["timetable", <CalendarDays size={15} />],
-  grades: ["grades", <GraduationCap size={15} />],
   join: ["joinShared", <Users size={15} />],
   view: ["publicView", <Users size={15} />],
 };

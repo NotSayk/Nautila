@@ -20,9 +20,19 @@ describe("migrations", () => {
     const db = memoryDb();
     await migrate(db);
     const [{ user_version }] = await db.all<{ user_version: number }>("PRAGMA user_version");
-    expect(user_version).toBe(9);
+    expect(user_version).toBe(10);
     await db.run("INSERT INTO pages (id, title, created_at, updated_at) VALUES ('p', 'Titre', 1, 1)");
     expect(await db.all("SELECT tbl, id FROM sync_log")).toEqual([{ tbl: "pages", id: "p" }]);
+  });
+
+  it("retirent la table des notes et ses déclencheurs", async () => {
+    const db = memoryDb();
+    await migrate(db);
+    expect(await db.all("SELECT name FROM sqlite_master WHERE name = 'grades' OR name LIKE 'sync_grades_%'")).toEqual(
+      [],
+    );
+    await db.run("PRAGMA user_version = 9");
+    await migrate(db);
   });
 
   it("reprennent après une migration interrompue avant sa fin", async () => {
@@ -35,7 +45,7 @@ describe("migrations", () => {
     await db.run("PRAGMA user_version = 2");
     await migrate(db);
     const [{ user_version }] = await db.all<{ user_version: number }>("PRAGMA user_version");
-    expect(user_version).toBe(9);
+    expect(user_version).toBe(10);
     expect(await db.all("SELECT id FROM cards")).toEqual([{ id: "p:b" }]);
     expect(await db.all("SELECT COUNT(*) AS n FROM sync_state")).toEqual([{ n: 1 }]);
   });

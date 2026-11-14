@@ -34,7 +34,7 @@ Tes notes restent sur ton appareil : pas de compte, pas de télémétrie.
   ou directement dans Révisions, une par une ou en collant une liste (tableur, « question ; réponse »).
 - Quiz à choix multiples créés et modifiés dans Révisions (ou par le connecteur MCP).
 - Modes d'étude : cartes, QCM, écriture, association ; quiz à choix multiples.
-- Devoirs et examens avec rappels, emploi du temps, notes et moyennes pondérées.
+- Devoirs et examens avec rappels, emploi du temps.
 - Emploi du temps semaine par semaine, comme un agenda : import d'un fichier iCal (.ics) exporté d'ADE,
   HyperPlanning, Celcat ou d'un agenda, avec les vacances, les cours annulés, la salle, l'enseignant et le
   type de séance. Réimporter le fichier met le calendrier à jour ; les cours du jour sont sur l'accueil.
