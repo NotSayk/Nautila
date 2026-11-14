@@ -20,8 +20,13 @@ export type MockQuestion =
 /** Réponse donnée : indice du choix, texte tapé, ou rien. */
 export type MockAnswer = number | string | null;
 
+type QuizLike = {
+  id: string;
+  questions: { question: string; choices: string[]; answer: number; explanation?: string }[];
+};
+
 /** Toutes les questions possibles : chaque question de quiz, chaque carte (une par trou). */
-export function buildPool(cards: CardRow[], quizzes: { id: string; questions: { question: string; choices: string[]; answer: number; explanation?: string }[] }[]): MockQuestion[] {
+export function buildPool(cards: CardRow[], quizzes: QuizLike[]): MockQuestion[] {
   const fromQuizzes: MockQuestion[] = quizzes.flatMap((quiz) =>
     quiz.questions.map((q, i) => ({
       kind: "choice" as const,
@@ -78,8 +83,5 @@ export async function loadPool(pageIds: string[]): Promise<MockQuestion[]> {
     listQuizzes(),
   ]);
   const wanted = new Set(pageIds);
-  return buildPool(
-    cards,
-    quizzes.filter((q) => q.page_id && wanted.has(q.page_id)),
-  );
+  return buildPool(cards, quizzes.filter((q) => q.page_id && wanted.has(q.page_id)));
 }

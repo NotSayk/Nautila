@@ -1,7 +1,15 @@
 import { ClipboardCheck, Timer } from "lucide-react";
 import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { gradeCard, listDecks, type Deck } from "../../data/cards";
-import { drawQuestions, isCorrect, loadPool, retryMinutes, scoreMock, type MockAnswer, type MockQuestion } from "../../data/mock";
+import {
+  drawQuestions,
+  isCorrect,
+  loadPool,
+  retryMinutes,
+  scoreMock,
+  type MockAnswer,
+  type MockQuestion,
+} from "../../data/mock";
 import { subtreeIds } from "../../data/plan";
 import { useT } from "../../i18n";
 import { useStore } from "../../store";
@@ -407,10 +415,15 @@ export function MockExamView({ pageIds, title, onExit }: { pageIds?: string[]; t
     | { name: "report"; run: Run; pool: MockQuestion[]; settings: Settings; answers: MockAnswer[]; spent: number }
   >({ name: "setup" });
 
-  const start = (pool: MockQuestion[], settings: Settings, questions = drawQuestions(pool, settings.count), minutes = settings.minutes) =>
-    setPhase({ name: "run", run: { questions, minutes, fsrs: settings.fsrs }, pool, settings, round: Date.now() });
+  const start = (
+    pool: MockQuestion[],
+    settings: Settings,
+    questions = drawQuestions(pool, settings.count),
+    minutes = settings.minutes,
+  ) => setPhase({ name: "run", run: { questions, minutes, fsrs: settings.fsrs }, pool, settings, round: Date.now() });
 
-  if (phase.name === "setup") return <Setup pageIds={pageIds} title={title} onStart={(pool, settings) => start(pool, settings)} />;
+  if (phase.name === "setup")
+    return <Setup pageIds={pageIds} title={title} onStart={(pool, settings) => start(pool, settings)} />;
   if (phase.name === "run")
     return (
       <Exam
