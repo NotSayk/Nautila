@@ -19,6 +19,8 @@ export const BACKUP_TABLES = [
   "page_files",
   "quizzes",
   "refs",
+  "review_log",
+  "study_log",
 ] as const;
 type Backup = { app: "nautila"; version: 1; exported_at: number; tables: Record<string, Record<string, SqlValue>[]> };
 

@@ -225,6 +225,19 @@ describe("serveur", () => {
     assert.equal(pull.json.seq, 10);
   });
 
+  it("annonce les tables acceptées et prend les journaux d'étude", async () => {
+    const token = await account("journal");
+    const changes = [
+      { tbl: "review_log", id: "r1", at: Date.now(), data: { id: "r1", card_id: "c", page_id: "p", grade: 3, at: 1 } },
+      { tbl: "study_log", id: "s1", at: Date.now(), data: { id: "s1", started_at: 1, duration: 60000 } },
+    ];
+    const push = await call(base, "/api/sync", { body: { since: 0, changes }, token });
+    assert.equal(push.status, 200);
+    assert.ok(push.json.tables.includes("review_log") && push.json.tables.includes("study_log"));
+    const other = await call(base, "/api/sync", { body: { since: 0, changes: [] }, token });
+    assert.deepEqual(other.json.changes.map((c) => c.tbl).sort(), ["review_log", "study_log"]);
+  });
+
   it("isole les jetons MCP et permet de les révoquer", async () => {
     const token = await account("david");
     const { json } = await call(base, "/api/token", { token });

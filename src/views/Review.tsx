@@ -2,6 +2,7 @@ import {
   ArrowLeft,
   BookOpenCheck,
   Brackets,
+  ChartColumn,
   Download,
   Keyboard,
   Layers,
@@ -44,6 +45,7 @@ import { IconButton, PageIcon, SectionTitle, TopBar, useOverlay } from "./common
 import { confirmDialog, notify } from "./dialogs";
 import { CardFront, ClozeText, MathText } from "./study/CardText";
 import { ChoiceMode, FlipMode, MatchMode, questionsFromCards, WriteMode } from "./study/modes";
+import { StatsView } from "./study/Stats";
 
 const GRADES: [Grade, Key][] = [
   [1, "again"],
@@ -353,6 +355,11 @@ function Spaced({ pageId, onExit }: { pageId?: string; onExit: () => void }) {
 
   const card = queue?.[0];
   const now = new Date();
+  // Temps de réponse : depuis l'affichage de la carte jusqu'à la note (au-delà de 10 min, non significatif).
+  const shownAt = useRef(Date.now());
+  useEffect(() => {
+    shownAt.current = Date.now();
+  }, [card?.id, queue]);
 
   // Verrou : un double appui ne note pas deux fois la même carte.
   const grading = useRef(false);
@@ -360,7 +367,8 @@ function Spaced({ pageId, onExit }: { pageId?: string; onExit: () => void }) {
     if (!card || grading.current) return;
     grading.current = true;
     try {
-      await gradeCard(card, g, now);
+      const spent = Date.now() - shownAt.current;
+      await gradeCard(card, g, now, spent <= 600_000 ? spent : null);
       setRevealed(false);
       // Quand la file est vide, on avance les cartes dues dans les 10 minutes
       // (étapes d'apprentissage) pour finir la séance sans attendre.
@@ -725,7 +733,8 @@ type Screen =
   | { name: "deck"; pageId: string }
   | { name: "study"; mode: Mode; cards: CardRow[]; pageId?: string; questions?: Question[] }
   | { name: "quiz"; quiz: Quiz }
-  | { name: "editQuiz"; quiz: Quiz | null };
+  | { name: "editQuiz"; quiz: Quiz | null }
+  | { name: "stats" };
 
 export function Review() {
   const t = useT();
@@ -790,6 +799,10 @@ export function Review() {
               <button className={SECONDARY} onClick={() => setScreen({ name: "editQuiz", quiz: null })}>
                 <Plus size={15} />
                 {t("newQuiz")}
+              </button>
+              <button className={SECONDARY} onClick={() => setScreen({ name: "stats" })}>
+                <ChartColumn size={15} />
+                {t("statsTitle")}
               </button>
             </div>
 
@@ -893,6 +906,7 @@ export function Review() {
         {screen.name === "study" && screen.mode === "match" && <MatchMode cards={screen.cards} onExit={back} />}
         {screen.name === "quiz" && <ChoiceMode questions={screen.quiz.questions} onExit={back} />}
         {screen.name === "editQuiz" && <QuizEditor quiz={screen.quiz} onDone={() => setScreen({ name: "home" })} />}
+        {screen.name === "stats" && <StatsView />}
       </div>
       {newDeck && (
         <NewDeckDialog

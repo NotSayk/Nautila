@@ -212,7 +212,15 @@ export function previewIntervals(row: CardRow, now = new Date()): Record<Grade, 
   return { 1: preview[1].card.due, 2: preview[2].card.due, 3: preview[3].card.due, 4: preview[4].card.due };
 }
 
-export async function gradeCard(row: CardRow, grade: Grade, now = new Date()) {
-  const { card } = scheduler.next(revive(row.fsrs), now, grade);
-  await db().run("UPDATE cards SET fsrs = ?, due = ? WHERE id = ?", [JSON.stringify(card), card.due.getTime(), row.id]);
+/** Note une carte et l'inscrit au journal des révisions (`duration` : temps de réponse en ms, si connu). */
+export async function gradeCard(row: CardRow, grade: Grade, now = new Date(), duration: number | null = null) {
+  const before = revive(row.fsrs);
+  const { card } = scheduler.next(before, now, grade);
+  await db().batch([
+    { sql: "UPDATE cards SET fsrs = ?, due = ? WHERE id = ?", params: [JSON.stringify(card), card.due.getTime(), row.id] },
+    {
+      sql: "INSERT INTO review_log (id, card_id, page_id, grade, state, at, duration) VALUES (?,?,?,?,?,?,?)",
+      params: [crypto.randomUUID(), row.id, row.page_id, grade, before.state ?? 0, now.getTime(), duration],
+    },
+  ]);
 }

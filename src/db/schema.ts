@@ -14,7 +14,15 @@ export const SYNC_TABLES: Record<string, string[]> = {
   quizzes: ["id"],
   refs: ["key"],
   events: ["id"],
+  review_log: ["id"],
+  study_log: ["id"],
 };
+
+/**
+ * Tables apparues après la 0.2.5 : un serveur plus ancien refuserait le lot entier qui les contient.
+ * Elles ne partent que vers un serveur qui annonce les connaître (voir src/sync/engine.ts).
+ */
+export const NEWER_SYNC_TABLES = ["review_log", "study_log"];
 
 /** Chaque écriture locale note la ligne dans sync_log, sauf pendant l'application de changements distants. */
 function syncTriggers(tables: string[]): string[] {
@@ -228,6 +236,33 @@ const MIGRATIONS: string[][] = [
     `CREATE INDEX IF NOT EXISTS pages_parent_deleted ON pages (parent_id, deleted_at)`,
     `CREATE INDEX IF NOT EXISTS cards_page ON cards (page_id)`,
     `CREATE INDEX IF NOT EXISTS page_files_file ON page_files (file_id)`,
+  ],
+  [
+    // --- Outils d'étude. ---
+    // Devoir récurrent : « daily », « weekly », « biweekly » ou « monthly » (null : ne se répète pas).
+    `ALTER TABLE tasks ADD COLUMN recurrence TEXT`,
+    // Journal des révisions : une ligne par notation d'une carte. `state` : état FSRS avant la note
+    // (0 nouvelle, 1 en apprentissage, 2 en révision, 3 réapprentissage) ; `duration` en ms, si connue.
+    `CREATE TABLE review_log (
+      id TEXT PRIMARY KEY,
+      card_id TEXT NOT NULL,
+      page_id TEXT NOT NULL,
+      grade INTEGER NOT NULL,
+      state INTEGER NOT NULL DEFAULT 0,
+      at INTEGER NOT NULL,
+      duration INTEGER
+    )`,
+    `CREATE INDEX review_log_at ON review_log (at)`,
+    // Temps d'étude : une ligne par session de travail terminée (minuteur Pomodoro), en ms.
+    `CREATE TABLE study_log (
+      id TEXT PRIMARY KEY,
+      course_id TEXT,
+      started_at INTEGER NOT NULL,
+      duration INTEGER NOT NULL,
+      kind TEXT NOT NULL DEFAULT 'pomodoro'
+    )`,
+    `CREATE INDEX study_log_started ON study_log (started_at)`,
+    ...syncTriggers(["review_log", "study_log"]),
   ],
 ];
 

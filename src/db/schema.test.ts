@@ -7,7 +7,7 @@ describe("migrations", () => {
     const db = memoryDb();
     await migrate(db);
     const [{ user_version }] = await db.all<{ user_version: number }>("PRAGMA user_version");
-    expect(user_version).toBe(11);
+    expect(user_version).toBe(12);
     await db.run("INSERT INTO pages (id, title, created_at, updated_at) VALUES ('p', 'Titre', 1, 1)");
     expect(await db.all("SELECT tbl, id FROM sync_log")).toEqual([{ tbl: "pages", id: "p" }]);
   });
@@ -32,7 +32,7 @@ describe("migrations", () => {
     await db.run("PRAGMA user_version = 2");
     await migrate(db);
     const [{ user_version }] = await db.all<{ user_version: number }>("PRAGMA user_version");
-    expect(user_version).toBe(11);
+    expect(user_version).toBe(12);
     expect(await db.all("SELECT id FROM cards")).toEqual([{ id: "p:b" }]);
     expect(await db.all("SELECT COUNT(*) AS n FROM sync_state")).toEqual([{ n: 1 }]);
   });
@@ -61,5 +61,22 @@ describe("migrations", () => {
     expect(names).toEqual(
       expect.arrayContaining(["events_calendar", "pages_deleted", "pages_parent_deleted", "cards_page"]),
     );
+  });
+
+  it("ajoutent les outils d'étude : journaux synchronisés et devoirs récurrents", async () => {
+    const db = memoryDb();
+    await migrate(db);
+    await db.run("INSERT INTO tasks (id, title, created_at, recurrence) VALUES ('t', 'TD', 1, 'weekly')");
+    await db.run("INSERT INTO review_log (id, card_id, page_id, grade, at) VALUES ('r', 'c', 'p', 3, 1)");
+    await db.run("INSERT INTO study_log (id, course_id, started_at, duration) VALUES ('s', 'm', 1, 1500000)");
+    expect(await db.all("SELECT tbl, id FROM sync_log ORDER BY tbl")).toEqual([
+      { tbl: "review_log", id: "r" },
+      { tbl: "study_log", id: "s" },
+      { tbl: "tasks", id: "t" },
+    ]);
+    // Une base restée en version 11 avec la colonne déjà ajoutée reprend sans erreur.
+    await db.run("PRAGMA user_version = 11");
+    await migrate(db);
+    expect(await db.all("SELECT recurrence FROM tasks")).toEqual([{ recurrence: "weekly" }]);
   });
 });

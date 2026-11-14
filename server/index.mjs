@@ -76,6 +76,7 @@ const TABLES = new Set([
   "quizzes",
   "refs",
   "events",
+  "review_log", "study_log",
 ]);
 
 function registrationMode() {
@@ -516,7 +517,8 @@ function sync(user, body) {
     out.push({ tbl: row.tbl, id: row.id, data: row.data === null ? null : JSON.parse(row.data), at: row.at });
   }
   if (!more && cursor < seq && q.after.get(user.id, cursor)) more = true;
-  return { seq: cursor, changes: out, more };
+  // `tables` : ce que ce serveur accepte, pour qu'un appareil plus récent garde le reste pour lui.
+  return { seq: cursor, changes: out, more, tables: [...TABLES] };
 }
 
 // ---------- Pages partagées en direct ----------

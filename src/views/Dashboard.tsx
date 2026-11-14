@@ -1,12 +1,89 @@
-import { CalendarCheck, CalendarDays, Clock, Layers } from "lucide-react";
+import { CalendarCheck, CalendarDays, Clock, Flame, Layers } from "lucide-react";
 import { useEffect, useState } from "react";
 import { cardStats } from "../data/cards";
+import { dailyGoal, reviewSummary, setDailyGoal } from "../data/stats";
 import { dayClasses, listEvents, type DayClass } from "../data/events";
 import { listSlots } from "../data/school";
 import { listTasks, type Task } from "../data/tasks";
 import { useT } from "../i18n";
 import { useStore } from "../store";
 import { daysUntil, formatDue, PageIcon, relativeTime, SectionTitle, TopBar } from "./common";
+
+type Summary = Awaited<ReturnType<typeof reviewSummary>>;
+
+/** Série de jours de révision et objectif du jour (nombre de cartes, réglable). */
+function DailyGoal({ summary }: { summary: Summary | null }) {
+  const t = useT();
+  const [goal, setGoal] = useState(dailyGoal);
+  const [editing, setEditing] = useState(false);
+  if (!summary) return null;
+  const done = summary.reviewedToday;
+  const reached = done >= goal;
+  return (
+    <div className="mt-3 rounded-xl bg-panel p-4">
+      <p className="flex items-center gap-1.5 font-medium">
+        <Flame size={16} className={summary.current > 0 ? "text-[#d9730d]" : "text-faint"} aria-hidden />
+        {summary.current} {t(summary.current > 1 ? "daysLong" : "dayLong")}
+        <span className="font-normal text-muted">· {t("streak").toLowerCase()}</span>
+      </p>
+      <p className="text-xs text-muted">
+        {t("streakBest")} : {summary.best}
+        {summary.current > 0 && !summary.today && ` · ${t("streakKeep")}`}
+      </p>
+      <div className="mt-3 flex items-baseline justify-between gap-2">
+        <span className="text-muted">{t("dailyGoal")}</span>
+        <span className="tabular-nums">
+          <span className="font-semibold">{done}</span> / {goal}
+        </span>
+      </div>
+      <div
+        role="progressbar"
+        aria-label={t("dailyGoal")}
+        aria-valuemin={0}
+        aria-valuemax={goal}
+        aria-valuenow={Math.min(done, goal)}
+        className="mt-1.5 h-1.5 overflow-hidden rounded-full bg-line"
+      >
+        <div
+          className={`h-full rounded-full ${reached ? "bg-[#448361] dark:bg-[#5fae83]" : "bg-accent"}`}
+          style={{ width: `${Math.min(100, (done / goal) * 100)}%` }}
+        />
+      </div>
+      {reached && <p className="mt-1.5 text-xs text-muted">{t("goalReached")}</p>}
+      {editing ? (
+        <form
+          className="mt-3 flex items-center gap-1.5"
+          onSubmit={(e) => {
+            e.preventDefault();
+            const value = Number(new FormData(e.currentTarget).get("goal"));
+            if (value > 0) {
+              setDailyGoal(value);
+              setGoal(dailyGoal());
+            }
+            setEditing(false);
+          }}
+          onKeyDown={(e) => e.key === "Escape" && (e.stopPropagation(), setEditing(false))}
+        >
+          <input
+            autoFocus
+            name="goal"
+            type="number"
+            min={1}
+            max={999}
+            defaultValue={goal}
+            aria-label={t("dailyGoalCards")}
+            className="h-7 w-20 rounded-md bg-hover px-2 tabular-nums"
+          />
+          <button className="h-7 rounded-md bg-accent px-2.5 font-medium text-white hover:brightness-95">{t("save")}</button>
+        </form>
+      ) : (
+        <button onClick={() => setEditing(true)} className="mt-2 h-7 rounded-md px-1.5 text-xs text-muted hover:bg-hover">
+          {t("editGoal")}
+        </button>
+      )}
+    </div>
+  );
+}
 
 export function Dashboard() {
   const t = useT();
@@ -16,6 +93,7 @@ export function Dashboard() {
   const [stats, setStats] = useState({ due: 0, total: 0 });
   const [tasks, setTasks] = useState<Task[]>([]);
   const [classes, setClasses] = useState<DayClass[]>([]);
+  const [summary, setSummary] = useState<Summary | null>(null);
   // Jour courant : relu chaque minute pour que l'accueil suive le changement de jour.
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
@@ -31,6 +109,7 @@ export function Dashboard() {
 
   useEffect(() => {
     cardStats().then(setStats);
+    reviewSummary().then(setSummary);
     const dayEnd = new Date(dayStart).setDate(new Date(dayStart).getDate() + 1);
     const weekday = (new Date(dayStart).getDay() + 6) % 7;
     // Créneaux de la semaine type et séances datées des calendriers importés, sans doublon.
@@ -150,6 +229,7 @@ export function Dashboard() {
                 {t("startReview")}
               </button>
             </div>
+            <DailyGoal summary={summary} />
           </section>
         </div>
       </div>
