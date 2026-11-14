@@ -8,7 +8,6 @@ export const SYNC_TABLES: Record<string, string[]> = {
   files: ["id"],
   databases: ["page_id"],
   slots: ["id"],
-  grades: ["id"],
   templates: ["id"],
   links: ["source_id", "target_id"],
   page_files: ["page_id", "file_id"],
@@ -23,7 +22,7 @@ function syncTriggers(tables: string[]): string[] {
   return tables.flatMap((table) =>
     (["INSERT", "UPDATE", "DELETE"] as const).map((op) => {
       const row = op === "DELETE" ? "OLD" : "NEW";
-      const id = SYNC_TABLES[table].map((k) => `${row}.${k}`).join(" || '|' || ");
+      const id = (SYNC_TABLES[table] ?? ["id"]).map((k) => `${row}.${k}`).join(" || '|' || ");
       return `CREATE TRIGGER sync_${table}_${op.toLowerCase()} AFTER ${op} ON ${table}
         WHEN (SELECT applying FROM sync_state) = 0
         BEGIN
@@ -212,6 +211,13 @@ const MIGRATIONS: string[][] = [
     )`,
     `CREATE INDEX events_start ON events (start)`,
     ...syncTriggers(["events"]),
+  ],
+  [
+    // Les notes saisies à la main n'existent plus. Le coefficient d'une matière,
+    // rangé dans `props` de sa page, est laissé tel quel.
+    ...["insert", "update", "delete"].map((op) => `DROP TRIGGER IF EXISTS sync_grades_${op}`),
+    `DROP TABLE IF EXISTS grades`,
+    `DELETE FROM sync_log WHERE tbl = 'grades'`,
   ],
 ];
 

@@ -10,7 +10,6 @@ import {
   RefreshCw,
   CalendarCheck,
   CalendarDays,
-  ChartNoAxesColumn,
   FileDown,
   ChevronRight,
   ChevronsLeft,
@@ -471,12 +470,6 @@ export function Sidebar() {
             label={t("timetable")}
             active={route.view === "timetable"}
             onClick={go({ view: "timetable" })}
-          />
-          <NavItem
-            icon={<ChartNoAxesColumn {...ICON} />}
-            label={t("grades")}
-            active={route.view === "grades"}
-            onClick={go({ view: "grades" })}
           />
         </nav>
 

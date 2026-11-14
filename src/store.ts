@@ -9,7 +9,6 @@ export type Route =
   | { view: "tasks" }
   | { view: "trash" }
   | { view: "timetable" }
-  | { view: "grades" }
   | { view: "join"; id: string }
   | { view: "view"; id: string }
   | { view: "page"; id: string };
@@ -17,7 +16,7 @@ export type Route =
 function parseHash(): Route {
   const [view, id] = location.hash.replace(/^#\/?/, "").split("/");
   if ((view === "page" || view === "join" || view === "view") && id) return { view, id };
-  if (view === "review" || view === "tasks" || view === "trash" || view === "timetable" || view === "grades")
+  if (view === "review" || view === "tasks" || view === "trash" || view === "timetable")
     return { view };
   return { view: "home" };
 }

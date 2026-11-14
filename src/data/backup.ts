@@ -12,7 +12,6 @@ const TABLES = [
   "databases",
   "slots",
   "events",
-  "grades",
   "templates",
   "versions",
   "page_files",

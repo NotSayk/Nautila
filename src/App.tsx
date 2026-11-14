@@ -4,7 +4,6 @@ import { initDb, isTauri } from "./db";
 import { useT } from "./i18n";
 import { useStore } from "./store";
 import { Dashboard } from "./views/Dashboard";
-import { Grades } from "./views/Grades";
 import { Timetable } from "./views/Timetable";
 import { notifyDueTasks } from "./reminders";
 import { startSync } from "./sync/engine";
@@ -142,7 +141,6 @@ export function App() {
           {route.view === "tasks" && <Tasks />}
           {route.view === "trash" && <Trash />}
           {route.view === "timetable" && <Timetable />}
-          {route.view === "grades" && <Grades />}
           {route.view === "join" && <JoinView id={route.id} />}
           {route.view === "view" && <PublicView id={route.id} />}
         </main>
