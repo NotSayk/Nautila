@@ -5,11 +5,11 @@ export async function openWebDb(): Promise<Db> {
   const pending = new Map<number, { resolve: (v: unknown) => void; reject: (e: Error) => void }>();
   let nextId = 1;
 
-  const persistent = await new Promise<boolean>((resolve, reject) => {
+  const status = await new Promise<{ persistent: boolean; blockedByOtherTab: boolean }>((resolve, reject) => {
     worker.onmessage = (e) => {
       const msg = e.data;
       if ("ready" in msg) {
-        if (msg.ready) resolve(msg.persistent);
+        if (msg.ready) resolve({ persistent: msg.persistent, blockedByOtherTab: msg.blockedByOtherTab === true });
         else reject(new Error(msg.error));
         return;
       }
@@ -30,7 +30,8 @@ export async function openWebDb(): Promise<Db> {
     });
 
   return {
-    persistent,
+    persistent: status.persistent,
+    blockedByOtherTab: status.blockedByOtherTab,
     run: async (sql, params = []) => void (await post({ sql, params, rows: false })),
     all: async <T>(sql: string, params: SqlValue[] = []) => (await post({ sql, params, rows: true })) as T[],
     batch: async (batch) => void (await post({ batch })),

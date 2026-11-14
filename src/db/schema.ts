@@ -213,23 +213,46 @@ const MIGRATIONS: string[][] = [
     `CREATE INDEX events_start ON events (start)`,
     ...syncTriggers(["events"]),
   ],
+  [
+    // --- Fiabilité des données : index des requêtes courantes (rejouable : IF NOT EXISTS). ---
+    // Séances d'un calendrier importé (réimport), pages filtrées par corbeille / parent, cartes d'une
+    // page, et fichiers cités par une page (nettoyage des fichiers orphelins).
+    `CREATE INDEX IF NOT EXISTS events_calendar ON events (calendar)`,
+    `CREATE INDEX IF NOT EXISTS pages_deleted ON pages (deleted_at)`,
+    `CREATE INDEX IF NOT EXISTS pages_parent_deleted ON pages (parent_id, deleted_at)`,
+    `CREATE INDEX IF NOT EXISTS cards_page ON cards (page_id)`,
+    `CREATE INDEX IF NOT EXISTS page_files_file ON page_files (file_id)`,
+  ],
 ];
 
+/** Erreurs d'une migration déjà (en partie) appliquée par une ancienne version de l'application. */
+const alreadyApplied = (err: unknown) =>
+  /duplicate column name|already exists/i.test(String(err instanceof Error ? err.message : err));
+
 /**
- * Applique les migrations manquantes. Chacune est rejouable : si l'application
- * est fermée au milieu d'une migration, la suivante reprend sans erreur là où
- * des colonnes, tables ou déclencheurs existent déjà.
+ * Applique les migrations manquantes. Chacune est une transaction : ses instructions et le nouveau
+ * numéro de version sont validés ensemble, donc une fermeture ou une erreur en cours de route ne
+ * laisse jamais la base à moitié migrée.
+ * Repli : une base laissée à moitié migrée par une ancienne version (instructions appliquées une
+ * à une) fait échouer la transaction sur « existe déjà » ; la migration est alors rejouée
+ * instruction par instruction en ignorant ce qui existe déjà.
  */
 export async function migrate(db: Db): Promise<void> {
   const [{ user_version }] = await db.all<{ user_version: number }>("PRAGMA user_version");
   for (let v = user_version; v < MIGRATIONS.length; v++) {
-    for (const sql of MIGRATIONS[v]) {
-      try {
-        await db.run(sql);
-      } catch (err) {
-        if (!/duplicate column name|already exists/i.test(String(err instanceof Error ? err.message : err))) throw err;
+    const bump = `PRAGMA user_version = ${v + 1}`;
+    try {
+      await db.batch([...MIGRATIONS[v].map((sql) => ({ sql })), { sql: bump }]);
+    } catch (err) {
+      if (!alreadyApplied(err)) throw err;
+      for (const sql of MIGRATIONS[v]) {
+        try {
+          await db.run(sql);
+        } catch (e) {
+          if (!alreadyApplied(e)) throw e;
+        }
       }
+      await db.run(bump);
     }
-    await db.run(`PRAGMA user_version = ${v + 1}`);
   }
 }

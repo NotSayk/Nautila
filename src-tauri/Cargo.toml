@@ -15,3 +15,7 @@ tauri-build = { version = "2", features = [] }
 [dependencies]
 tauri = { version = "2", features = [] }
 tauri-plugin-sql = { version = "2", features = ["sqlite"] }
+# Même version de sqlx que le greffon SQL : sert à la commande `db_transaction` (transaction sur son pool).
+sqlx = { version = "0.8", default-features = false, features = ["sqlite"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
