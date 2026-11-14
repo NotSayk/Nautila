@@ -11,7 +11,24 @@
   },
   "app": {
     "windows": [{ "title": "Nautila", "width": 1200, "height": 800, "minWidth": 380, "minHeight": 500 }],
-    "security": { "csp": null }
+    "security": {
+      "csp": {
+        "default-src": "'self'",
+        "script-src": "'self' 'wasm-unsafe-eval'",
+        "style-src": "'self' 'unsafe-inline'",
+        "img-src": "'self' asset: http://asset.localhost data: blob: http: https:",
+        "media-src": "'self' asset: http://asset.localhost data: blob: http: https:",
+        "font-src": "'self' data:",
+        "connect-src": "'self' ipc: http://ipc.localhost http: https: data: blob:",
+        "worker-src": "'self' blob:",
+        "frame-src": "'self' blob:",
+        "object-src": "'none'",
+        "base-uri": "'self'",
+        "form-action": "'none'"
+      },
+      "devCsp": null,
+      "dangerousDisableAssetCspModification": ["style-src"]
+    }
   },
   "bundle": {
     "active": true,

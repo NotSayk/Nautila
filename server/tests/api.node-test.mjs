@@ -183,6 +183,17 @@ describe("serveur", () => {
       headers: fromNewIp(),
     });
     assert.equal(res.status, 413);
+    // Sans Content-Length (envoi par morceaux) : le reste du corps est jeté et la réponse arrive.
+    const chunked = await new Promise((resolve, reject) => {
+      const req = request(`${base}/api/login`, { method: "POST", headers: { "Content-Type": "application/json" } }, (r) => {
+        r.resume();
+        resolve(r.statusCode);
+      });
+      req.on("error", reject);
+      for (let i = 0; i < 50; i++) req.write("x".repeat(1024));
+      req.end();
+    });
+    assert.equal(chunked, 413);
   });
 
   it("donne des numéros de séquence distincts à deux synchronisations simultanées", async () => {

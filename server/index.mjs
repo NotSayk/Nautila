@@ -17,7 +17,8 @@ const MB = 1024 * 1024;
 const MINUTE = 60_000;
 const DAY = 86_400_000;
 /** Nombre lu dans l'environnement, ou la valeur par défaut s'il est absent ou invalide. */
-const num = (value, fallback) => (value !== undefined && value !== "" && Number.isFinite(Number(value)) ? Number(value) : fallback);
+const num = (value, fallback) =>
+  value !== undefined && value !== "" && Number.isFinite(Number(value)) ? Number(value) : fallback;
 
 const PORT = num(env.PORT, 8787);
 const DATA_FILE = env.DATA_FILE ?? "./nautila-server.db";
@@ -34,7 +35,9 @@ const TOKEN_TTL = num(env.TOKEN_TTL_DAYS, 90) * DAY;
 /** Les suppressions plus anciennes sont oubliées (0 : jamais). */
 const TOMBSTONE_TTL = num(env.TOMBSTONE_DAYS, 365) * DAY;
 /** Nombre de relais (Caddy, nginx…) devant le serveur : X-Forwarded-For n'est lu que s'il est défini. */
-const PROXY_HOPS = /^(true|yes|on)$/i.test(env.TRUST_PROXY ?? "") ? 1 : Math.max(0, Math.floor(num(env.TRUST_PROXY, 0)));
+const PROXY_HOPS = /^(true|yes|on)$/i.test(env.TRUST_PROXY ?? "")
+  ? 1
+  : Math.max(0, Math.floor(num(env.TRUST_PROXY, 0)));
 /**
  * Origines autorisées à appeler l'API depuis un navigateur. Par défaut toutes : l'API
  * s'authentifie par un jeton dans l'en-tête Authorization (jamais par cookie), donc un
@@ -82,7 +85,8 @@ function registrationMode() {
     return "closed";
   }
   // Le code d'exemple de deploy/docker-compose.yml est public : il n'ouvre pas les inscriptions.
-  if (mode === "invite" && (!INVITE_CODE || ["change-moi", "change-me", "changeme"].includes(INVITE_CODE.toLowerCase()))) {
+  const placeholder = ["change-moi", "change-me", "changeme"].includes(INVITE_CODE.toLowerCase());
+  if (mode === "invite" && (!INVITE_CODE || placeholder)) {
     console.warn(
       "ATTENTION : INVITE_CODE est vide ou vaut encore la valeur d'exemple : inscriptions FERMÉES. " +
         "Choisis un vrai code (fichier .env ou docker-compose.yml) puis redémarre le serveur.",
@@ -741,7 +745,8 @@ const uuid = () =>
 function putRecord(user, tbl, id, data) {
   const json = JSON.stringify(data);
   transaction(user.id, (next) => {
-    if (usageOf(user.id) + json.length > MAX_USER_BYTES) throw new HttpError(413, "Espace de stockage du compte dépassé");
+    if (usageOf(user.id) + json.length > MAX_USER_BYTES)
+      throw new HttpError(413, "Espace de stockage du compte dépassé");
     q.put.run(user.id, tbl, id, json, Date.now(), next());
   });
 }
@@ -1038,20 +1043,41 @@ function mcpMessage(user, msg) {
 /** Lit un corps JSON, en refusant tout ce qui dépasse `limit` octets avant de l'avoir lu en entier. */
 async function readJson(req, limit = MAX_BODY, allowArray = false) {
   if (Number(req.headers["content-length"]) > limit) throw new HttpError(413, "body too large");
-  const chunks = [];
-  let size = 0;
-  for await (const chunk of req) {
-    size += chunk.length;
-    if (size > limit) throw new HttpError(413, "body too large");
-    chunks.push(chunk);
-  }
+  const raw = await new Promise((resolve, reject) => {
+    const chunks = [];
+    let size = 0;
+    req.on("data", (chunk) => {
+      size += chunk.length;
+      if (size <= limit) return void chunks.push(chunk);
+      chunks.length = 0;
+      reject(new HttpError(413, "body too large"));
+      discard(req);
+    });
+    req.on("end", () => resolve(Buffer.concat(chunks)));
+    req.on("error", reject);
+  });
   try {
-    const body = JSON.parse(Buffer.concat(chunks).toString("utf8") || "{}");
+    const body = JSON.parse(raw.toString("utf8") || "{}");
     if (!body || typeof body !== "object" || (Array.isArray(body) && !allowArray)) throw new Error();
     return body;
   } catch {
     throw new HttpError(400, "invalid json");
   }
+}
+
+/**
+ * Lit et jette la suite d'un corps refusé, pour que le client reçoive la réponse d'erreur au lieu
+ * d'une connexion coupée en plein envoi ; au-delà de 64 Mo, la connexion est fermée.
+ */
+function discard(req) {
+  if (req.discarding || req.complete || req.destroyed) return;
+  req.discarding = true;
+  let extra = 0;
+  req.removeAllListeners("data");
+  req.on("data", (chunk) => {
+    if ((extra += chunk.length) > 64 * MB) req.destroy();
+  });
+  req.resume();
 }
 
 const bearer = (req) => /^Bearer (\S+)$/.exec(req.headers.authorization ?? "")?.[1];
@@ -1138,7 +1164,10 @@ const HTML_HEADERS = {
   "Content-Security-Policy": APP_CSP,
   "Permissions-Policy": "camera=(), geolocation=(), payment=(), usb=(), microphone=(self)",
 };
-const API_HEADERS = { "Content-Security-Policy": "default-src 'none'; frame-ancestors 'none'", "Cache-Control": "no-store" };
+const API_HEADERS = {
+  "Content-Security-Policy": "default-src 'none'; frame-ancestors 'none'",
+  "Cache-Control": "no-store",
+};
 
 /** Types qu'un fichier joint peut garder quand il est affiché : images matricielles, audio, vidéo, PDF. */
 const INLINE_TYPES = new Set([
@@ -1226,7 +1255,9 @@ async function serveStatic(res, pathname) {
 function corsHeaders(req) {
   const origin = req.headers.origin;
   if (!CORS_ORIGINS) return { "Access-Control-Allow-Origin": "*" };
-  return origin && CORS_ORIGINS.has(origin) ? { "Access-Control-Allow-Origin": origin, Vary: "Origin" } : { Vary: "Origin" };
+  return origin && CORS_ORIGINS.has(origin)
+    ? { "Access-Control-Allow-Origin": origin, Vary: "Origin" }
+    : { Vary: "Origin" };
 }
 const PREFLIGHT = {
   "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
@@ -1251,7 +1282,8 @@ async function handle(req, res) {
   };
   const ip = clientIp(req);
 
-  if ((isApi || isMcp) && req.method === "OPTIONS") return void res.writeHead(204, { ...SECURITY, ...cors, ...PREFLIGHT }).end();
+  if ((isApi || isMcp) && req.method === "OPTIONS")
+    return void res.writeHead(204, { ...SECURITY, ...cors, ...PREFLIGHT }).end();
 
   if (isMcp) {
     if (req.method !== "POST") throw new HttpError(405, "method not allowed");
@@ -1412,6 +1444,8 @@ const server = createServer(async (req, res) => {
     // Aucun détail interne dans la réponse ; l'adresse demandée (qui peut contenir un jeton) n'est pas journalisée.
     if (!(err instanceof HttpError)) console.error(err);
     if (res.headersSent) return void res.end();
+    // Corps pas encore lu (refus avant lecture) : jeté, sauf s'il est annoncé démesuré.
+    if (!(Number(req.headers["content-length"]) > MAX_BODY + 64 * MB)) discard(req);
     const isApi = /^\/(api|mcp)(\/|$)/.test(req.url ?? "");
     const cors = isApi && !(req.url ?? "").startsWith("/api/public/") ? corsHeaders(req) : {};
     res.writeHead(err instanceof HttpError ? err.status : 500, {
