@@ -1,91 +1,14 @@
 // Tests du serveur : chaque groupe lance un vrai serveur sur une base temporaire.
 //   cd server && npm test
-import { spawn } from "node:child_process";
 import { createHash, randomBytes, scryptSync } from "node:crypto";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, writeFileSync } from "node:fs";
 import { request } from "node:http";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { after, before, describe, it } from "node:test";
 import assert from "node:assert/strict";
 import * as Y from "yjs";
-
-const SERVER = new URL("../index.mjs", import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, "$1");
-const dirs = [];
-const tempDir = () => {
-  const dir = mkdtempSync(join(tmpdir(), "nautila-test-"));
-  dirs.push(dir);
-  return dir;
-};
-after(() => dirs.forEach((d) => rmSync(d, { recursive: true, force: true })));
-
-/** Lance le serveur et attend qu'il écoute ; renvoie son adresse. */
-function start(env = {}, dataFile = join(tempDir(), "test.db")) {
-  return new Promise((resolve, reject) => {
-    const proc = spawn(process.execPath, [SERVER], {
-      env: { ...process.env, PORT: "0", DATA_FILE: dataFile, NODE_NO_WARNINGS: "1", ...env },
-      stdio: ["ignore", "pipe", "pipe"],
-    });
-    let out = "";
-    let err = "";
-    proc.stderr.on("data", (d) => (err += d));
-    proc.stdout.on("data", (d) => {
-      out += d;
-      const port = /port (\d+)/.exec(out)?.[1];
-      if (port)
-        resolve({
-          url: `http://127.0.0.1:${port}`,
-          stop: () => new Promise((r) => (proc.on("exit", r), proc.kill())),
-          logs: () => out + err,
-        });
-    });
-    proc.on("exit", (code) => reject(new Error(`serveur arrêté (${code}) : ${out}${err}`)));
-  });
-}
-
-/** Requête HTTP brute : renvoie statut, en-têtes et corps (JSON si possible). */
-function call(base, path, { method = "POST", body, token, headers = {} } = {}) {
-  return new Promise((resolve, reject) => {
-    const data = body === undefined ? undefined : typeof body === "string" ? body : JSON.stringify(body);
-    const req = request(
-      `${base}${path}`,
-      {
-        method,
-        headers: {
-          ...(data !== undefined ? { "Content-Type": "application/json", "Content-Length": Buffer.byteLength(data) } : {}),
-          ...(token ? { Authorization: `Bearer ${token}` } : {}),
-          ...headers,
-        },
-      },
-      (res) => {
-        const chunks = [];
-        res.on("data", (c) => chunks.push(c));
-        res.on("end", () => {
-          const raw = Buffer.concat(chunks);
-          let json;
-          try {
-            json = JSON.parse(raw.toString("utf8"));
-          } catch {
-            json = undefined;
-          }
-          resolve({ status: res.statusCode, headers: res.headers, json, raw });
-        });
-      },
-    );
-    req.on("error", reject);
-    if (data !== undefined) req.write(data);
-    req.end();
-  });
-}
-
-const PASSWORD = "correct-horse-battery";
-const fileRow = (id, mime, content, name = "f") => ({
-  tbl: "files",
-  id,
-  at: Date.now(),
-  data: { id, name, mime, data: Buffer.from(content).toString("base64"), created_at: 1 },
-});
+import { PASSWORD, call, fileRow, start, tempDir } from "./helpers.mjs";
 
 describe("serveur", () => {
   let srv;

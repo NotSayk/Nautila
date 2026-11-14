@@ -125,6 +125,10 @@ for (const [table, column, definition] of [
   // "session" : un appareil ; "mcp" : un connecteur IA, accepté seulement sur /mcp.
   ["tokens", "kind", "TEXT NOT NULL DEFAULT 'session'"],
   ["tokens", "last_used", "INTEGER"],
+  // Secret du lien d'invitation, distinct de l'identifiant ; vide : l'identifiant seul suffit (anciens liens).
+  ["shares", "invite", "TEXT"],
+  // 1 : page partagée avant la table share_files ; les fichiers des participants y sont relevés à leur prochaine modification.
+  ["shares", "legacy_files", "INTEGER NOT NULL DEFAULT 0"],
 ])
   if (!hasColumn(table, column)) db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
 // Les jetons d'avant l'expiration repartent d'aujourd'hui, pour ne déconnecter personne à la mise à jour.
@@ -138,7 +142,44 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS tokens_user ON tokens (user_id);
   CREATE INDEX IF NOT EXISTS shares_owner ON shares (owner_id);
   CREATE INDEX IF NOT EXISTS records_tombstones ON records (at) WHERE data IS NULL;
+  -- Octets occupés par compte, tenus à jour à chaque écriture ; une ligne absente est recalculée à la demande.
+  CREATE TABLE IF NOT EXISTS user_usage (user_id INTEGER PRIMARY KEY, bytes INTEGER NOT NULL);
+  -- Fichiers qu'un compte a mis dans une page partagée : seuls ceux-là sont servis aux autres.
+  CREATE TABLE IF NOT EXISTS share_files (
+    share_id TEXT NOT NULL, file_id TEXT NOT NULL, user_id INTEGER NOT NULL,
+    PRIMARY KEY (share_id, file_id, user_id)
+  );
+  CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT);
 `);
+
+/** Identifiants de fichiers cités (`nautila-file:<id>`) dans un état ou une mise à jour Yjs, au plus `max`. */
+function citedFiles(bytes, max = 200) {
+  const ids = new Set();
+  for (const m of Buffer.from(bytes)
+    .toString("latin1")
+    .matchAll(/nautila-file:([\w-]{16,64})/g)) {
+    ids.add(m[1]);
+    if (ids.size >= max) break;
+  }
+  return ids;
+}
+
+// Pages partagées existantes : seuls les fichiers du propriétaire cités par le document restent servis.
+if (!db.prepare("SELECT 1 FROM meta WHERE key = 'share_files'").get()) {
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    const add = db.prepare("INSERT OR IGNORE INTO share_files (share_id, file_id, user_id) VALUES (?, ?, ?)");
+    for (const share of db.prepare("SELECT id, owner_id, ydoc FROM shares").iterate())
+      for (const file of citedFiles(Buffer.from(share.ydoc ?? "", "base64"), Infinity))
+        add.run(share.id, file, share.owner_id);
+    db.exec("UPDATE shares SET legacy_files = 1");
+    db.exec("INSERT INTO meta (key, value) VALUES ('share_files', '1')");
+    db.exec("COMMIT");
+  } catch (err) {
+    db.exec("ROLLBACK");
+    throw err;
+  }
+}
 
 /** Lignes vivantes d'une table du compte, sans lire leur contenu complet. */
 const liveRows = (tbl, columns, extra = "") =>
@@ -160,7 +201,6 @@ const q = {
      FROM tokens t JOIN users u ON u.id = t.user_id WHERE t.hash = ?`,
   ),
   dropOtherTokens: db.prepare("DELETE FROM tokens WHERE user_id = ? AND hash != ?"),
-  dropOtherSessions: db.prepare("DELETE FROM tokens WHERE user_id = ? AND hash != ? AND kind = 'session'"),
   mcpTokens: db.prepare(
     `SELECT substr(hash, 1, 16) AS id, created_at, last_used FROM tokens
      WHERE user_id = ? AND kind = 'mcp' ORDER BY created_at DESC`,
@@ -193,23 +233,46 @@ const q = {
   addMember: db.prepare(
     "INSERT OR IGNORE INTO share_members (share_id, user_id, role, joined_at) VALUES (?, ?, NULL, ?)",
   ),
-  setMember: db.prepare("UPDATE share_members SET role = ? WHERE share_id = ? AND user_id = ?"),
+  setMember: db.prepare(
+    "UPDATE share_members SET role = ? WHERE share_id = ? AND user_id = ? AND (role IS NULL OR role != 'left')",
+  ),
+  rejoin: db.prepare("UPDATE share_members SET role = NULL WHERE share_id = ? AND user_id = ? AND role = 'left'"),
   members: db.prepare(
     `SELECT m.user_id AS id, u.username, m.role FROM share_members m JOIN users u ON u.id = m.user_id
-     WHERE m.share_id = ? ORDER BY m.joined_at`,
+     WHERE m.share_id = ? AND (m.role IS NULL OR m.role != 'left') ORDER BY m.joined_at`,
   ),
   dropMembers: db.prepare("DELETE FROM share_members WHERE share_id = ?"),
-  fileOf: db.prepare("SELECT data FROM records WHERE user_id = ? AND tbl = 'files' AND id = ? AND data IS NOT NULL"),
-  // Fichier d'une page partagée : il appartient au propriétaire ou à l'un des participants qui l'a ajouté.
-  sharedFile: db.prepare(
-    `SELECT data FROM records WHERE tbl = 'files' AND id = ? AND data IS NOT NULL AND (user_id = ? OR user_id IN
-       (SELECT user_id FROM share_members WHERE share_id = ? AND (role IS NULL OR role != 'none'))) LIMIT 1`,
+  // "left" : le participant a quitté la page lui-même ; il peut la rejoindre de nouveau par le lien.
+  leave: db.prepare(
+    `INSERT INTO share_members (share_id, user_id, role, joined_at) VALUES (?, ?, 'left', ?)
+     ON CONFLICT (share_id, user_id) DO UPDATE SET role = 'left'`,
   ),
-  // Ce qui compte dans l'espace d'un compte : ses lignes et les documents des pages qu'il partage.
+  setInvite: db.prepare("UPDATE shares SET invite = ? WHERE id = ?"),
+  ownerName: db.prepare("SELECT username FROM users WHERE id = ?"),
+  fileOf: db.prepare("SELECT data FROM records WHERE user_id = ? AND tbl = 'files' AND id = ? AND data IS NOT NULL"),
+  hasFile: db.prepare("SELECT 1 FROM records WHERE user_id = ? AND tbl = 'files' AND id = ? AND data IS NOT NULL"),
+  addShareFile: db.prepare("INSERT OR IGNORE INTO share_files (share_id, file_id, user_id) VALUES (?, ?, ?)"),
+  dropShareFiles: db.prepare("DELETE FROM share_files WHERE share_id = ?"),
+  dropMemberFiles: db.prepare("DELETE FROM share_files WHERE share_id = ? AND user_id = ?"),
+  // Fichier d'une page partagée : seulement si le compte à qui il appartient l'a mis dans cette page,
+  // et qu'il en est encore le propriétaire ou un participant.
+  sharedFile: db.prepare(
+    `SELECT r.data FROM share_files f
+       JOIN records r ON r.user_id = f.user_id AND r.tbl = 'files' AND r.id = f.file_id AND r.data IS NOT NULL
+     WHERE f.share_id = ?1 AND f.file_id = ?2 AND (f.user_id = ?3 OR f.user_id IN
+       (SELECT user_id FROM share_members WHERE share_id = ?1 AND (role IS NULL OR role NOT IN ('none', 'left'))))
+     ORDER BY f.user_id = ?3 DESC LIMIT 1`,
+  ),
+  // Ce qui compte dans l'espace d'un compte : ses lignes et les documents des pages qu'il partage (en octets).
   usage: db.prepare(
-    `SELECT (SELECT COALESCE(SUM(LENGTH(data)), 0) FROM records WHERE user_id = ?1)
+    `SELECT (SELECT COALESCE(SUM(LENGTH(CAST(data AS BLOB))), 0) FROM records WHERE user_id = ?1)
           + (SELECT COALESCE(SUM(LENGTH(ydoc)), 0) FROM shares WHERE owner_id = ?1) AS bytes`,
   ),
+  usageRow: db.prepare("SELECT bytes FROM user_usage WHERE user_id = ?"),
+  setUsage: db.prepare("INSERT OR REPLACE INTO user_usage (user_id, bytes) VALUES (?, ?)"),
+  addUsage: db.prepare("UPDATE user_usage SET bytes = MAX(0, bytes + ?) WHERE user_id = ?"),
+  tokenAlive: db.prepare("SELECT last_used FROM tokens WHERE hash = ?"),
+  otherMcp: db.prepare("SELECT COUNT(*) AS n FROM tokens WHERE user_id = ? AND hash != ? AND kind = 'mcp'"),
   page: db.prepare("SELECT data FROM records WHERE user_id = ? AND tbl = 'pages' AND id = ? AND data IS NOT NULL"),
   pageList: liveRows(
     "pages",
@@ -230,7 +293,20 @@ const q = {
   ),
 };
 
-const usageOf = (userId) => q.usage.get(userId).bytes;
+/**
+ * Octets occupés par un compte. Le compteur est tenu à jour à chaque écriture ; il n'est calculé
+ * en entier qu'une fois par compte (premier appel après la mise à jour du serveur).
+ */
+function usageOf(userId) {
+  const row = q.usageRow.get(userId);
+  if (row) return row.bytes;
+  const { bytes } = q.usage.get(userId);
+  q.setUsage.run(userId, bytes);
+  return bytes;
+}
+/** Ajoute (ou retire) des octets au compteur ; sans compteur, rien à faire : le calcul complet les comptera. */
+const addUsage = (userId, delta) => void (delta && q.addUsage.run(delta, userId));
+const byteLength = (s) => (s == null ? 0 : Buffer.byteLength(s));
 
 class HttpError extends Error {
   constructor(status, message) {
@@ -240,7 +316,7 @@ class HttpError extends Error {
 }
 
 const sha = (s) => createHash("sha256").update(s).digest("hex");
-const hashPassword = async (password, salt) => await scrypt(password, salt, 64);
+const hashPassword = (password, salt) => limitedScrypt(password, salt);
 /** Comparaison en temps constant de deux chaînes quelconques. */
 const safeEqual = (a, b) =>
   timingSafeEqual(createHash("sha256").update(String(a)).digest(), createHash("sha256").update(String(b)).digest());
@@ -280,6 +356,11 @@ class Counter {
     this.hit(key, now);
     return this.entry(key, now).count <= this.max;
   }
+  /** Annule un passage compté d'avance (essai finalement réussi). */
+  undo(key, now = Date.now()) {
+    const entry = this.entry(key, now);
+    if (entry && entry.count > 0) entry.count--;
+  }
   clear(key) {
     this.map.delete(key);
   }
@@ -288,12 +369,15 @@ class Counter {
   }
 }
 
-// Essais de mot de passe : seuls les échecs comptent, par adresse et par identifiant.
+// Essais de mot de passe, par adresse et par identifiant : chaque essai est compté AVANT le calcul
+// (des essais simultanés ne passent pas entre le contrôle et le comptage), puis rendu s'il réussit.
 const ipFailures = new Counter(15 * MINUTE, num(env.LOGIN_MAX_PER_IP, 30));
 const userFailures = new Counter(15 * MINUTE, num(env.LOGIN_MAX_PER_USER, 10));
 const publicHits = new Counter(MINUTE, num(env.PUBLIC_MAX_PER_MINUTE, 600));
 const mcpHits = new Counter(MINUTE, num(env.MCP_MAX_PER_MINUTE, 240));
-const COUNTERS = [ipFailures, userFailures, publicHits, mcpHits];
+/** Messages de présence (curseurs) par connexion à une page partagée. */
+const awarenessHits = new Counter(10_000, 40);
+const COUNTERS = [ipFailures, userFailures, publicHits, mcpHits, awarenessHits];
 
 function guard(ip, username) {
   if (ipFailures.over(ip) || (username && userFailures.over(username))) throw new HttpError(429, "too many attempts");
@@ -301,6 +385,68 @@ function guard(ip, username) {
 function failed(ip, username) {
   ipFailures.hit(ip);
   if (username) userFailures.hit(username);
+}
+
+/**
+ * Clé d'adresse pour les compteurs : une adresse IPv4 telle quelle, une adresse IPv6 réduite à son
+ * préfixe /64 (un abonné en reçoit généralement un entier, il ne doit pas multiplier ses essais).
+ */
+function ipKey(ip) {
+  const s = String(ip ?? "")
+    .trim()
+    .toLowerCase()
+    .replace(/^\[|\]$/g, "")
+    .split("%")[0];
+  const v4 = /^(?:::ffff:)?(\d{1,3}(?:\.\d{1,3}){3})$/.exec(s);
+  if (v4) return v4[1];
+  if (!s.includes(":") || !/^[0-9a-f:.]+$/.test(s)) return s;
+  const [head, tail, extra] = s.split("::");
+  if (extra !== undefined) return s;
+  const left = head ? head.split(":") : [];
+  const right = tail === undefined ? [] : tail ? tail.split(":") : [];
+  const groups =
+    tail === undefined ? left : [...left, ...Array(Math.max(0, 8 - left.length - right.length)).fill("0"), ...right];
+  return `${groups
+    .slice(0, 4)
+    .map((g) => (parseInt(g, 16) || 0).toString(16))
+    .join(":")}::/64`;
+}
+
+/** Calculs scrypt en cours par compte, et file d'attente globale (le calcul occupe un fil du pool de libuv). */
+const SCRYPT_MAX = Math.max(1, num(env.SCRYPT_CONCURRENCY, 4));
+const SCRYPT_QUEUE = 64;
+const SCRYPT_PER_USER = 2;
+let scryptRunning = 0;
+const scryptWaiting = [];
+const scryptByUser = new Map();
+
+async function limitedScrypt(password, salt) {
+  if (scryptRunning >= SCRYPT_MAX) {
+    if (scryptWaiting.length >= SCRYPT_QUEUE) throw new HttpError(503, "server busy");
+    await new Promise((resolve) => scryptWaiting.push(resolve));
+  } else scryptRunning++;
+  try {
+    return await scrypt(password, salt, 64);
+  } finally {
+    // La place passe directement au suivant de la file, sinon elle est libérée.
+    const next = scryptWaiting.shift();
+    if (next) next();
+    else scryptRunning--;
+  }
+}
+
+/** Réserve un calcul de mot de passe pour un compte ; refuse au-delà de SCRYPT_PER_USER simultanés. */
+async function perUser(username, run) {
+  const running = scryptByUser.get(username) ?? 0;
+  if (running >= SCRYPT_PER_USER) throw new HttpError(429, "too many attempts");
+  scryptByUser.set(username, running + 1);
+  try {
+    return await run();
+  } finally {
+    const left = (scryptByUser.get(username) ?? 1) - 1;
+    if (left > 0) scryptByUser.set(username, left);
+    else scryptByUser.delete(username);
+  }
 }
 
 const USERNAME = /^[a-z0-9._-]{3,32}$/;
@@ -389,12 +535,12 @@ async function checkPassword(user, password) {
 async function login(body, ip) {
   const { username, password } = credentials(body);
   guard(ip, username);
+  // Compté avant le calcul, dans le même tour synchrone que le contrôle.
+  failed(ip, username);
   const user = q.user.get(username);
-  if (!(await checkPassword(user, password))) {
-    failed(ip, username);
-    throw new HttpError(401, "bad credentials");
-  }
+  if (!(await perUser(username, () => checkPassword(user, password)))) throw new HttpError(401, "bad credentials");
   userFailures.clear(username);
+  ipFailures.undo(ip);
   return { token: issueToken(user.id), username };
 }
 
@@ -406,14 +552,16 @@ async function changePassword(auth, body, ip) {
   const password = String(body.password ?? "");
   if (password.length < 8 || password.length > 200) throw new HttpError(400, "invalid password");
   if (weakPassword(user.username, password)) throw new HttpError(400, "weak password");
-  if (!(await checkPassword(q.userById.get(user.id), current))) {
-    failed(ip, user.username);
-    // Pas 401 : l'appareil reste connecté, seul l'ancien mot de passe est faux.
+  failed(ip, user.username);
+  // Pas 401 : l'appareil reste connecté, seul l'ancien mot de passe est faux.
+  if (!(await perUser(user.username, () => checkPassword(q.userById.get(user.id), current))))
     throw new HttpError(403, "bad credentials");
-  }
+  userFailures.undo(user.username);
+  ipFailures.undo(ip);
   const salt = randomBytes(16).toString("hex");
   q.setPassword.run(salt, (await hashPassword(password, salt)).toString("hex"), user.id);
   const { changes } = q.dropOtherTokens.run(user.id, auth.hash);
+  closeRevokedStreams();
   return { ok: true, revoked: Number(changes) };
 }
 
@@ -466,7 +614,11 @@ function transaction(userId, write) {
 
 function sync(user, body) {
   const since = Number(body.since) || 0;
-  const changes = Array.isArray(body.changes) ? body.changes : [];
+  // Une seule fois chaque ligne (la dernière envoyée) : sinon un lot répétant mille fois une grosse
+  // page ferait relire et refusionner son document mille fois, serveur bloqué pendant ce temps.
+  const latest = new Map();
+  for (const c of Array.isArray(body.changes) ? body.changes : []) latest.set(`${c?.tbl}\u0000${c?.id}`, c);
+  const changes = [...latest.values()];
   const now = Date.now();
   /** Lignes enregistrées telles que reçues : inutile de les renvoyer à l'expéditeur. */
   const echoed = new Set();
@@ -493,11 +645,13 @@ function sync(user, body) {
 
       const json = data === null ? null : JSON.stringify(data);
       if (existing && existing.data === json && existing.at === stamp) continue;
-      added += (json?.length ?? 0) - (existing?.data?.length ?? 0);
+      added += byteLength(json) - byteLength(existing?.data);
       const seq = next();
       q.put.run(user.id, c.tbl, c.id, json, stamp, seq);
       if (json === (c.data === null ? null : JSON.stringify(c.data))) echoed.add(seq);
     }
+    // Compteur mis à jour dans la transaction : annulé avec elle si le quota est dépassé.
+    addUsage(user.id, added);
     if (added > 0 && usageOf(user.id) > MAX_USER_BYTES) throw new HttpError(413, "quota exceeded");
   });
 
@@ -523,29 +677,59 @@ function sync(user, body) {
 
 // ---------- Pages partagées en direct ----------
 // Une page partagée est un document Yjs tenu en mémoire tant que quelqu'un
-// l'a ouverte. Toute personne connectée qui possède son identifiant (128 bits
-// aléatoires) peut la rejoindre ; le propriétaire décide qui peut modifier.
+// l'a ouverte. Toute personne connectée qui possède son lien (identifiant de
+// 128 bits aléatoires, plus le secret d'invitation s'il a été régénéré) peut la
+// rejoindre ; le propriétaire décide qui peut modifier.
 const rooms = new Map();
 /** Flux ouverts par compte, pour qu'un seul compte ne puisse pas épuiser les connexions. */
 const streams = new Map();
 const MAX_STREAMS = 40;
+/** Au-delà de ce volume en attente d'envoi, un flux qui ne lit plus est fermé. */
+const STREAM_BUFFER = 1 * MB;
+/** Mémoire des salles qu'un même compte peut faire ouvrir (documents chargés à sa demande). */
+const MAX_OPEN_BYTES = num(env.MAX_OPEN_SHARES_MB, 256) * MB;
+/** Salles ouvertes à la demande de chaque compte. */
+const openedBy = new Map();
+/** Taille maximale d'un message de présence (curseur), en base64. */
+const AWARENESS_MAX = 4096;
+/** Pages traitées par /api/shares/state, et volume de documents lus par requête. */
+const STATE_ENTRIES = 300;
+const STATE_BYTES = 64 * MB;
+let roomSerial = 0;
+
+/** Format des identifiants de partage et des secrets d'invitation (16 octets aléatoires en base64url). */
+const SHARE_ID = /^[\w-]{16,64}$/;
+const invited = (share, invite) => !share.invite || (typeof invite === "string" && safeEqual(invite, share.invite));
 
 /**
- * Droit d'un compte sur une page partagée : "owner", "edit", "view" ou "none" (retiré).
- * Le réglage propre au participant l'emporte sur le réglage général de la page.
- * Avec `join`, le compte est inscrit parmi les participants s'il n'y est pas déjà.
+ * Droit d'un compte sur une page partagée : "owner", "edit", "view" ou "none" (retiré, parti, ou
+ * sans le secret d'invitation). Le réglage propre au participant l'emporte sur le réglage général.
+ * `join: "link"` : le compte rejoint par le lien (secret vérifié), même s'il était parti ;
+ * `join: "open"` : l'ouverture du flux inscrit un compte jamais vu, si la page n'a pas de secret
+ * (participants arrivés avant la liste des participants).
  */
-function roleOf(share, user, join = false) {
+function roleOf(share, user, { join, invite } = {}) {
   if (share.owner_id === user.id) return "owner";
-  if (join) q.addMember.run(share.id, user.id, Date.now());
-  return q.member.get(share.id, user.id)?.role ?? share.access;
+  let member = q.member.get(share.id, user.id);
+  if (join === "link" && (!member || member.role === "left") && invited(share, invite)) {
+    if (member) q.rejoin.run(share.id, user.id);
+    else q.addMember.run(share.id, user.id, Date.now());
+    member = { role: null };
+  } else if (join === "open" && !member && !share.invite) {
+    q.addMember.run(share.id, user.id, Date.now());
+    member = { role: null };
+  }
+  // Page sans secret : comme avant, l'identifiant suffit.
+  if (!member) return share.invite ? "none" : share.access;
+  if (member.role === "left") return "none";
+  return member.role ?? share.access;
 }
 
 /** Vérifie le droit d'un compte ; refuse s'il a été retiré, ou s'il ne peut que lire quand `write` est demandé. */
-function shareAccess(id, user, { write = false, join = false } = {}) {
+function shareAccess(id, user, { write = false, join, invite } = {}) {
   const share = q.share.get(id);
   if (!share) throw new HttpError(404, "share not found");
-  const role = roleOf(share, user, join);
+  const role = roleOf(share, user, { join, invite });
   if (role === "none" || (write && role === "view")) throw new HttpError(403, "forbidden");
   return { share, role };
 }
@@ -558,39 +742,75 @@ function ownedShare(id, user) {
   return share;
 }
 
+/** Vrai si le jeton existe encore et n'a pas expiré ; un flux ouvert compte comme une utilisation. */
+function tokenAlive(hash, now = Date.now()) {
+  const row = q.tokenAlive.get(hash);
+  if (!row || (TOKEN_TTL > 0 && now - (row.last_used ?? 0) > TOKEN_TTL)) return false;
+  if (now - (row.last_used ?? 0) > 60 * MINUTE) q.touchToken.run(now, hash);
+  return true;
+}
+
+/** Envoie une trame à un flux ; ferme celui qui ne lit plus (trop de données en attente). */
+function push(client, frame) {
+  if (client.closed) return;
+  client.res.write(frame);
+  // Coupé net : avec une simple fin de réponse, les données en attente resteraient en mémoire.
+  if (client.res.writableLength > STREAM_BUFFER) client.close(true);
+}
+
+/** Ferme les flux dont le jeton n'existe plus (déconnexion, mot de passe changé, jeton révoqué ou expiré). */
+function closeRevokedStreams() {
+  const now = Date.now();
+  for (const room of [...rooms.values()])
+    for (const client of [...room.clients.values()]) if (!tokenAlive(client.hash, now)) client.close();
+}
+
 /** Annonce à chaque participant connecté son droit actuel, et coupe ceux qui ont été retirés. */
 function refreshRoles(id) {
   const room = rooms.get(id);
   const share = q.share.get(id);
   if (!room || !share) return;
-  for (const [conn, client] of room.clients) {
-    const role = roleOf(share, client.user);
-    client.res.write(`data: ${JSON.stringify({ type: "role", role })}\n\n`);
-    if (role === "none") {
-      room.clients.delete(conn);
-      client.res.end();
-    }
+  for (const client of [...room.clients.values()]) {
+    client.role = roleOf(share, client.user);
+    push(client, `data: ${JSON.stringify({ type: "role", role: client.role })}\n\n`);
+    if (client.role === "none") client.close();
   }
 }
 
-function openRoom(share) {
+function openRoom(share, user) {
   let room = rooms.get(share.id);
   if (!room) {
+    const mine = openedBy.get(user.id) ?? new Set();
+    let bytes = share.ydoc?.length ?? 0;
+    for (const id of mine) bytes += rooms.get(id)?.bytes ?? 0;
+    if (bytes > MAX_OPEN_BYTES) throw new HttpError(429, "too many open shares");
     const doc = new Y.Doc();
     if (share.ydoc) Y.applyUpdate(doc, b64(share.ydoc));
     room = {
       id: share.id,
+      /** Numéro de la salle et de sa version : clé des caches dérivés du document. */
+      serial: ++roomSerial,
+      version: 0,
       owner: share.owner_id,
+      opener: user.id,
       doc,
       clients: new Map(),
+      /** Présences annoncées : identifiant Yjs du client → connexion qui l'a annoncé, et son horloge. */
+      awareness: new Map(),
       dirty: false,
+      deleted: false,
       timer: null,
-      /** Taille approchée du document enregistré, en base64. */
+      /** Taille approchée du document en mémoire, et taille de la version enregistrée (base64). */
       bytes: share.ydoc?.length ?? 0,
-      quota: { at: 0, over: false },
+      stored: share.ydoc?.length ?? 0,
+      /** Page partagée avant share_files : comptes dont les fichiers déjà cités ont été relevés. */
+      legacyFiles: !!share.legacy_files,
+      scanned: new Set(),
       used: 0,
     };
     rooms.set(share.id, room);
+    mine.add(share.id);
+    openedBy.set(user.id, mine);
   }
   room.used = Date.now();
   return room;
@@ -599,21 +819,30 @@ function openRoom(share) {
 function persistRoom(room) {
   clearTimeout(room.timer);
   room.timer = null;
-  if (!room.dirty) return;
+  if (!room.dirty || room.deleted) return;
   room.dirty = false;
   const ydoc = Buffer.from(Y.encodeStateAsUpdate(room.doc)).toString("base64");
-  room.bytes = ydoc.length;
+  addUsage(room.owner, ydoc.length - room.stored);
+  room.bytes = room.stored = ydoc.length;
   q.saveShare.run(ydoc, Date.now(), room.id);
 }
 
 function closeRoom(room) {
   persistRoom(room);
   if (rooms.get(room.id) === room) rooms.delete(room.id);
+  const mine = openedBy.get(room.opener);
+  mine?.delete(room.id);
+  if (mine?.size === 0) openedBy.delete(room.opener);
 }
 
 function broadcast(room, except, event) {
   const frame = `data: ${JSON.stringify(event)}\n\n`;
-  for (const [conn, client] of room.clients) if (conn !== except) client.res.write(frame);
+  for (const [conn, client] of [...room.clients]) if (conn !== except) push(client, frame);
+}
+
+/** Note les fichiers que ce compte cite dans ce qu'il vient d'écrire : il accepte de les montrer aux participants. */
+function registerFiles(shareId, userId, bytes) {
+  for (const file of citedFiles(bytes)) q.addShareFile.run(shareId, file, userId);
 }
 
 function createShare(user, body) {
@@ -625,10 +854,28 @@ function createShare(user, body) {
   const id = randomBytes(16).toString("base64url");
   const now = Date.now();
   q.addShare.run(id, user.id, String(body.title ?? "").slice(0, 300), ydoc, now, now);
+  addUsage(user.id, ydoc?.length ?? 0);
+  if (ydoc) registerFiles(id, user.id, b64(ydoc));
   return { id };
 }
 
-function shareStream(room, req, res, user, role, headers) {
+function deleteShare(share) {
+  const room = rooms.get(share.id);
+  if (room) {
+    room.deleted = true;
+    broadcast(room, null, { type: "closed" });
+    for (const client of [...room.clients.values()]) client.close();
+    closeRoom(room);
+  }
+  docCache.delete(share.id);
+  addUsage(share.owner_id, -(share.ydoc?.length ?? 0));
+  q.dropShare.run(share.id);
+  q.dropMembers.run(share.id);
+  q.dropShareFiles.run(share.id);
+}
+
+function shareStream(room, req, res, auth, role, headers) {
+  const { user, hash } = auth;
   const open = streams.get(user.id) ?? 0;
   if (open >= MAX_STREAMS) throw new HttpError(429, "too many streams");
   streams.set(user.id, open + 1);
@@ -639,21 +886,41 @@ function shareStream(room, req, res, user, role, headers) {
     "Cache-Control": "no-cache, no-transform",
     "X-Accel-Buffering": "no",
   });
-  const state = Buffer.from(Y.encodeStateAsUpdate(room.doc)).toString("base64");
-  res.write(`data: ${JSON.stringify({ type: "sync", conn, update: state, peers: room.clients.size, role })}\n\n`);
-  room.clients.set(conn, { res, user });
-  broadcast(room, conn, { type: "peers", peers: room.clients.size });
-  const beat = setInterval(() => res.write(": ping\n\n"), 25_000);
-  req.on("close", () => {
+  let beat;
+  const cleanup = () => {
+    if (client.closed) return;
+    client.closed = true;
     clearInterval(beat);
     const left = (streams.get(user.id) ?? 1) - 1;
     if (left > 0) streams.set(user.id, left);
     else streams.delete(user.id);
     room.clients.delete(conn);
+    releaseAwareness(room, conn);
     room.used = Date.now();
     broadcast(room, null, { type: "peers", peers: room.clients.size });
     if (room.clients.size === 0) closeRoom(room);
-  });
+  };
+  const client = {
+    res,
+    user,
+    /** Empreinte du jeton qui a ouvert le flux : il est fermé dès que ce jeton disparaît. */
+    hash,
+    role,
+    closed: false,
+    close(hard = false) {
+      cleanup();
+      if (hard) res.destroy();
+      else res.end();
+    },
+  };
+  const state = Buffer.from(Y.encodeStateAsUpdate(room.doc)).toString("base64");
+  room.clients.set(conn, client);
+  push(client, `data: ${JSON.stringify({ type: "sync", conn, update: state, peers: room.clients.size, role })}\n\n`);
+  broadcast(room, conn, { type: "peers", peers: room.clients.size });
+  // Battement : garde la connexion ouverte et revérifie le jeton (révoqué ou expiré entre-temps).
+  beat = setInterval(() => (tokenAlive(hash) ? push(client, ": ping\n\n") : client.close()), 25_000);
+  req.on("close", cleanup);
+  res.on("close", cleanup);
 }
 
 /** Document d'une page partagée : celui de la salle ouverte, sinon la dernière version enregistrée. */
@@ -665,18 +932,28 @@ function shareDoc(share) {
   return doc;
 }
 
-/** Texte du document d'une page partagée, gardé en cache tant qu'il ne change pas. */
-const docTexts = new Map();
-function shareText(share) {
+/**
+ * Données dérivées du document d'une page partagée (texte, état encodé), gardées en cache
+ * tant que le document ne change pas : par version de la salle ouverte, sinon par date d'enregistrement.
+ */
+const docCache = new Map();
+function cachedDoc(share, field, compute) {
   const room = rooms.get(share.id);
-  if (room) return room.doc.getXmlFragment("doc").toString();
-  const cached = docTexts.get(share.id);
-  if (cached?.at === share.updated_at) return cached.text;
-  const text = shareDoc(share).getXmlFragment("doc").toString();
-  if (docTexts.size > 200) docTexts.clear();
-  docTexts.set(share.id, { at: share.updated_at, text });
-  return text;
+  const key = room ? `r${room.serial}.${room.version}` : `d${share.updated_at}`;
+  let entry = docCache.get(share.id);
+  if (entry?.key !== key) {
+    if (docCache.size > 200) docCache.clear();
+    entry = { key };
+    docCache.set(share.id, entry);
+  }
+  return (entry[field] ??= compute());
 }
+const shareText = (share) => cachedDoc(share, "text", () => shareDoc(share).getXmlFragment("doc").toString());
+/** État complet du document, en base64 (page publique). */
+const shareState = (share) =>
+  rooms.has(share.id)
+    ? cachedDoc(share, "state", () => Buffer.from(Y.encodeStateAsUpdate(rooms.get(share.id).doc)).toString("base64"))
+    : share.ydoc;
 
 /** Vrai si le document de la page cite ce fichier (identifiant entier, pas un simple fragment). */
 const citesFile = (share, fileId) =>
@@ -686,41 +963,65 @@ const citesFile = (share, fileId) =>
  * État des pages partagées d'un appareil, pour les mettre à jour sans les ouvrir :
  * pour chacune, ce qui manque à l'appareil (d'après son vecteur d'état) et le vecteur
  * d'état du serveur, qui lui permet d'envoyer en retour ce que le serveur n'a pas.
+ * Chaque page n'est traitée qu'une fois ; au-delà de STATE_BYTES lus, les suivantes sont omises
+ * (l'appareil, qui les envoie dans un ordre aléatoire, les reprendra à une prochaine synchronisation).
  */
 function sharesState(user, body) {
-  const list = Array.isArray(body.shares) ? body.shares.slice(0, 500) : [];
-  return {
-    shares: list.map(({ id, sv } = {}) => {
-      const share = typeof id === "string" ? q.share.get(id) : null;
-      if (!share) return { id, role: "gone" };
-      const role = roleOf(share, user);
-      if (role === "none") return { id, role };
-      const doc = shareDoc(share);
-      let vector;
-      try {
-        vector = typeof sv === "string" && sv ? b64(sv) : undefined;
-        if (vector) Y.decodeStateVector(vector);
-      } catch {
-        vector = undefined;
-      }
-      const update = Y.encodeStateAsUpdate(doc, vector);
-      return {
+  const wanted = new Map();
+  for (const entry of Array.isArray(body.shares) ? body.shares : []) {
+    const id = entry?.id;
+    if (typeof id !== "string" || !SHARE_ID.test(id) || wanted.has(id)) continue;
+    wanted.set(id, entry.sv);
+    if (wanted.size >= STATE_ENTRIES) break;
+  }
+  let budget = STATE_BYTES;
+  const shares = [];
+  for (const [id, sv] of wanted) {
+    const share = q.share.get(id);
+    if (!share) {
+      shares.push({ id, role: "gone" });
+      continue;
+    }
+    const role = roleOf(share, user);
+    if (role === "none") {
+      shares.push({ id, role });
+      continue;
+    }
+    const room = rooms.get(id);
+    const size = room ? room.bytes : (share.ydoc?.length ?? 0);
+    if (size > budget && shares.length > 0) continue;
+    budget -= size;
+    let vector;
+    try {
+      vector = typeof sv === "string" && sv ? b64(sv) : undefined;
+      if (vector) Y.decodeStateVector(vector);
+    } catch {
+      vector = undefined;
+    }
+    try {
+      // Document fermé : calculé sur la version enregistrée, sans le reconstruire en mémoire.
+      const stored = room ? null : share.ydoc ? b64(share.ydoc) : Y.encodeStateAsUpdate(new Y.Doc());
+      const update = room ? Y.encodeStateAsUpdate(room.doc, vector) : vector ? Y.diffUpdate(stored, vector) : stored;
+      const state = room ? Y.encodeStateVector(room.doc) : Y.encodeStateVectorFromUpdate(stored);
+      shares.push({
         id,
         role,
         update: Buffer.from(update).toString("base64"),
-        sv: Buffer.from(Y.encodeStateVector(doc)).toString("base64"),
-      };
-    }),
-  };
+        sv: Buffer.from(state).toString("base64"),
+      });
+    } catch {
+      shares.push({ id, role }); // version enregistrée illisible : rien à transmettre
+    }
+  }
+  return { shares };
 }
 
-function shareUpdate(room, body) {
+function shareUpdate(room, body, user) {
   if (typeof body.update !== "string") throw new HttpError(400, "invalid update");
   if (room.bytes + body.update.length > MAX_SHARE_BYTES) throw new HttpError(413, "share too large");
-  // L'espace du propriétaire est revérifié au plus une fois par minute.
-  const now = Date.now();
-  if (now - room.quota.at > MINUTE) room.quota = { at: now, over: usageOf(room.owner) > MAX_USER_BYTES };
-  if (room.quota.over) throw new HttpError(413, "quota exceeded");
+  // Le compteur du propriétaire est à jour : vérifié à chaque modification (avec ce qui n'est pas encore enregistré).
+  if (usageOf(room.owner) + Math.max(0, room.bytes - room.stored) > MAX_USER_BYTES)
+    throw new HttpError(413, "quota exceeded");
   const update = b64(body.update);
   try {
     Y.decodeUpdate(update);
@@ -728,12 +1029,113 @@ function shareUpdate(room, body) {
     throw new HttpError(400, "invalid update");
   }
   Y.applyUpdate(room.doc, update);
+  const now = Date.now();
   room.bytes += body.update.length;
+  room.version++;
   room.dirty = true;
   room.used = now;
   room.timer ??= setTimeout(() => persistRoom(room), 3000);
-  broadcast(room, typeof body.conn === "string" ? body.conn : null, { type: "update", update: body.update });
+  registerFiles(room.id, user.id, update);
+  // Page partagée avant share_files : à la première modification d'un compte, ses fichiers déjà cités sont relevés.
+  if (room.legacyFiles && !room.scanned.has(user.id)) {
+    room.scanned.add(user.id);
+    for (const file of citedFiles(Y.encodeStateAsUpdate(room.doc), Infinity))
+      if (q.hasFile.get(user.id, file)) q.addShareFile.run(room.id, file, user.id);
+  }
+  // Seule une connexion de ce compte peut être exclue de l'envoi (c'est la sienne, qui a déjà la modification).
+  const conn = typeof body.conn === "string" && room.clients.get(body.conn)?.user.id === user.id ? body.conn : null;
+  broadcast(room, conn, { type: "update", update: body.update });
   return { ok: true };
+}
+
+/** Lit un message de présence (format y-protocols) : [{ clientID, clock, state }] ; lève une erreur s'il est mal formé. */
+function readAwareness(bytes) {
+  let pos = 0;
+  const uint = () => {
+    let n = 0;
+    for (let unit = 1; ; unit *= 128) {
+      if (pos >= bytes.length || unit > 2 ** 49) throw new Error("awareness");
+      const b = bytes[pos++];
+      n += (b & 127) * unit;
+      if (b < 128) return n;
+    }
+  };
+  const utf8 = new TextDecoder("utf-8", { fatal: true });
+  const entries = [];
+  for (let count = uint(); count > 0; count--) {
+    if (entries.length >= 8) throw new Error("awareness");
+    const clientID = uint();
+    const clock = uint();
+    const length = uint();
+    if (pos + length > bytes.length) throw new Error("awareness");
+    const state = JSON.parse(utf8.decode(bytes.subarray(pos, pos + length)));
+    pos += length;
+    if (state !== null && (typeof state !== "object" || Array.isArray(state))) throw new Error("awareness");
+    entries.push({ clientID, clock, state });
+  }
+  if (pos !== bytes.length) throw new Error("awareness");
+  return entries;
+}
+
+function writeAwareness(entries) {
+  const out = [];
+  const uint = (n) => {
+    for (; n > 127; n = Math.floor(n / 128)) out.push((n % 128) | 128);
+    out.push(n);
+  };
+  uint(entries.length);
+  for (const { clientID, clock, state } of entries) {
+    uint(clientID);
+    uint(clock);
+    const json = Buffer.from(JSON.stringify(state));
+    uint(json.length);
+    for (const b of json) out.push(b);
+  }
+  return Buffer.from(out).toString("base64");
+}
+
+/**
+ * Relaie la présence (curseur, nom) d'un participant. Chaque identifiant Yjs appartient à la
+ * connexion qui l'a annoncé en premier : personne ne peut déplacer le curseur d'un autre. Le nom
+ * affiché est celui du compte ; un lecteur annonce sa présence, sans curseur ni autre donnée.
+ */
+function relayAwareness(room, user, role, body) {
+  const { conn, update } = body;
+  if (typeof update !== "string" || update.length > AWARENESS_MAX) throw new HttpError(413, "awareness too large");
+  const client = typeof conn === "string" ? room.clients.get(conn) : undefined;
+  if (!client || client.user.id !== user.id) return; // pas de flux ouvert par ce compte : personne à qui l'attribuer
+  if (!awarenessHits.take(conn)) throw new HttpError(429, "too many requests");
+  let entries;
+  try {
+    entries = readAwareness(b64(update));
+  } catch {
+    throw new HttpError(400, "invalid awareness");
+  }
+  const kept = [];
+  for (const { clientID, clock, state } of entries) {
+    const claim = room.awareness.get(clientID);
+    if (claim ? claim.conn !== conn : [...room.awareness.values()].filter((c) => c.conn === conn).length >= 2) continue;
+    room.awareness.set(clientID, { conn, clock });
+    let clean = state;
+    if (state) {
+      const color =
+        typeof state.user?.color === "string" && state.user.color.length <= 32 ? state.user.color : undefined;
+      clean = { ...(role === "view" ? {} : state), user: { name: user.username, color } };
+    }
+    kept.push({ clientID, clock, state: clean });
+  }
+  if (kept.length > 0) broadcast(room, conn, { type: "awareness", update: writeAwareness(kept) });
+}
+
+/** Retire la présence d'une connexion fermée, pour que son curseur disparaisse chez les autres. */
+function releaseAwareness(room, conn) {
+  const gone = [];
+  for (const [clientID, claim] of room.awareness)
+    if (claim.conn === conn) {
+      room.awareness.delete(clientID);
+      gone.push({ clientID, clock: claim.clock, state: null });
+    }
+  if (gone.length > 0) broadcast(room, conn, { type: "awareness", update: writeAwareness(gone) });
 }
 
 // ---------- Connecteur MCP (Claude, Codex…) ----------
@@ -743,15 +1145,27 @@ const uuid = () =>
     .toString("hex")
     .replace(/^(.{8})(.{4})(.{4})(.{4})(.{12})$/, "$1-$2-$3-$4-$5");
 
-/** Écrit une ligne dans les données du compte ; les appareils la recevront à leur prochaine synchronisation. */
-function putRecord(user, tbl, id, data) {
-  const json = JSON.stringify(data);
+/** Messages par requête groupée, et éléments créés par appel d'outil. */
+const MCP_BATCH = 10;
+const MCP_MAX_CARDS = 200;
+const MCP_MAX_QUESTIONS = 100;
+
+/**
+ * Écrit des lignes dans les données du compte, en une seule transaction et avec un seul contrôle
+ * de l'espace (taille totale ajoutée) ; les appareils les recevront à leur prochaine synchronisation.
+ */
+function putRecords(user, rows) {
+  const items = rows.map(({ tbl, id, data }) => ({ tbl, id, json: JSON.stringify(data) }));
   transaction(user.id, (next) => {
-    if (usageOf(user.id) + json.length > MAX_USER_BYTES)
-      throw new HttpError(413, "Espace de stockage du compte dépassé");
-    q.put.run(user.id, tbl, id, json, Date.now(), next());
+    let added = 0;
+    for (const { tbl, id, json } of items) added += byteLength(json) - byteLength(q.record.get(user.id, tbl, id)?.data);
+    if (usageOf(user.id) + added > MAX_USER_BYTES) throw new HttpError(413, "Espace de stockage du compte dépassé");
+    const now = Date.now();
+    for (const { tbl, id, json } of items) q.put.run(user.id, tbl, id, json, now, next());
+    addUsage(user.id, added);
   });
 }
+const putRecord = (user, tbl, id, data) => putRecords(user, [{ tbl, id, data }]);
 
 const str = (schema = {}) => ({ type: "string", ...schema });
 const text = (value, max) => String(value ?? "").slice(0, max);
@@ -827,6 +1241,7 @@ const TOOLS = [
         cards: {
           type: "array",
           minItems: 1,
+          maxItems: MCP_MAX_CARDS,
           items: { type: "object", properties: { front: str(), back: str() }, required: ["front", "back"] },
         },
       },
@@ -847,16 +1262,18 @@ const TOOLS = [
         learning_steps: 0,
         state: 0,
       });
-      let created = 0;
-      for (const c of Array.isArray(cards) ? cards.slice(0, 500) : []) {
+      if (Array.isArray(cards) && cards.length > MCP_MAX_CARDS)
+        throw new HttpError(400, `Au plus ${MCP_MAX_CARDS} cartes par appel : découpe la liste en plusieurs appels.`);
+      const rows = [];
+      for (const c of Array.isArray(cards) ? cards : []) {
         const front = text(c?.front, 10_000).trim();
         const back = text(c?.back, 10_000).trim();
         if (!front || !back) continue;
         const id = `extra:${uuid()}`;
-        putRecord(user, "cards", id, { id, page_id, front, back, fsrs, due: now, created_at: now });
-        created++;
+        rows.push({ tbl: "cards", id, data: { id, page_id, front, back, fsrs, due: now, created_at: now } });
       }
-      return { created };
+      putRecords(user, rows);
+      return { created: rows.length };
     },
   },
   {
@@ -870,6 +1287,7 @@ const TOOLS = [
         questions: {
           type: "array",
           minItems: 1,
+          maxItems: MCP_MAX_QUESTIONS,
           items: {
             type: "object",
             properties: {
@@ -886,7 +1304,9 @@ const TOOLS = [
     },
     run(user, { title, page_id, questions }) {
       if (page_id) findPage(user, page_id);
-      const clean = (Array.isArray(questions) ? questions.slice(0, 300) : [])
+      if (Array.isArray(questions) && questions.length > MCP_MAX_QUESTIONS)
+        throw new HttpError(400, `Au plus ${MCP_MAX_QUESTIONS} questions par quiz.`);
+      const clean = (Array.isArray(questions) ? questions : [])
         .map((x) => ({
           question: text(x?.question, 5_000).trim(),
           choices: (Array.isArray(x?.choices) ? x.choices.slice(0, 20) : []).map((c) => text(c, 2_000)),
@@ -1267,6 +1687,13 @@ const PREFLIGHT = {
   "Access-Control-Max-Age": "86400",
 };
 
+/**
+ * Chemin d'API ou du connecteur tel qu'il a été envoyé : rien que des segments `[\w-]`. Le parseur
+ * d'URL transforme `\` en `/` et résout `%2e%2e` ou `..` : sans ce contrôle, un identifiant forgé
+ * (`<id>\delete`, `%2e%2e\logout`) atteindrait une autre route que celle visée par l'application.
+ */
+const API_PATH = /^(?:\/[\w-]+)+$/;
+
 async function handle(req, res) {
   let path;
   try {
@@ -1282,7 +1709,10 @@ async function handle(req, res) {
     res.writeHead(status, { ...SECURITY, ...API_HEADERS, "Content-Type": "application/json; charset=utf-8", ...cors });
     res.end(JSON.stringify(body));
   };
-  const ip = clientIp(req);
+  const ip = ipKey(clientIp(req));
+
+  if ((isApi || isMcp) && (String(req.url).split("?")[0] !== path || !API_PATH.test(path)))
+    throw new HttpError(400, "bad path");
 
   if ((isApi || isMcp) && req.method === "OPTIONS")
     return void res.writeHead(204, { ...SECURITY, ...cors, ...PREFLIGHT }).end();
@@ -1296,14 +1726,25 @@ async function handle(req, res) {
     const { user } = authenticate(token, ["mcp", "session"]);
     if (!mcpHits.take(user.id)) throw new HttpError(429, "too many requests");
     const body = await readJson(req, MCP_BODY, true);
-    const out = Array.isArray(body)
-      ? body
-          .slice(0, 50)
-          .map((m) => mcpMessage(user, m))
-          .filter(Boolean)
-      : mcpMessage(user, body);
-    if (out === null || (Array.isArray(out) && out.length === 0))
-      return void res.writeHead(202, { ...SECURITY, ...cors }).end();
+    if (!Array.isArray(body)) {
+      const out = mcpMessage(user, body);
+      return out === null ? void res.writeHead(202, { ...SECURITY, ...cors }).end() : send(200, out);
+    }
+    // Requête groupée : quelques messages au plus, chacun compté dans la limite par minute.
+    const out = body
+      .map((m, i) => {
+        if (i >= MCP_BATCH || (i > 0 && !mcpHits.take(user.id)))
+          return m?.id === undefined
+            ? null
+            : {
+                jsonrpc: "2.0",
+                id: m.id,
+                error: { code: -32000, message: i >= MCP_BATCH ? "batch too large" : "too many requests" },
+              };
+        return mcpMessage(user, m);
+      })
+      .filter(Boolean);
+    if (out.length === 0) return void res.writeHead(202, { ...SECURITY, ...cors }).end();
     return send(200, out);
   }
   if (!isApi) {
@@ -1318,13 +1759,9 @@ async function handle(req, res) {
     if (!publicHits.take(ip)) throw new HttpError(429, "too many requests");
     const row = q.share.get(pub[1]);
     if (!row?.public) throw new HttpError(404, "not found");
-    if (!pub[2]) {
-      const room = rooms.get(row.id);
-      const ydoc = room ? Buffer.from(Y.encodeStateAsUpdate(room.doc)).toString("base64") : row.ydoc;
-      return send(200, { title: row.title, ydoc });
-    }
+    if (!pub[2]) return send(200, { title: row.title, ydoc: shareState(row) });
     if (!citesFile(row, pub[2])) throw new HttpError(404, "not found");
-    const record = q.sharedFile.get(pub[2], row.owner_id, row.id);
+    const record = q.sharedFile.get(row.id, pub[2], row.owner_id);
     if (!record) throw new HttpError(404, "not found");
     return sendFile(res, record, {});
   }
@@ -1334,15 +1771,15 @@ async function handle(req, res) {
     const { user } = authenticate(bearer(req));
     const { share: row } = shareAccess(sharedFile[1], user);
     if (!citesFile(row, sharedFile[2])) throw new HttpError(404, "not found");
-    const record = q.sharedFile.get(sharedFile[2], row.owner_id, row.id);
+    const record = q.sharedFile.get(row.id, sharedFile[2], row.owner_id);
     if (!record) throw new HttpError(404, "not found");
     return sendFile(res, record, cors);
   }
   const stream = /^\/api\/share\/([\w-]+)\/stream$/.exec(path);
   if (stream && req.method === "GET") {
-    const { user } = authenticate(bearer(req));
-    const { share, role } = shareAccess(stream[1], user, { join: true });
-    return shareStream(openRoom(share), req, res, user, role, { ...SECURITY, ...cors });
+    const auth = authenticate(bearer(req));
+    const { share, role } = shareAccess(stream[1], auth.user, { join: "open" });
+    return shareStream(openRoom(share, auth.user), req, res, auth, role, { ...SECURITY, ...cors });
   }
   if (req.method !== "POST") throw new HttpError(405, "method not allowed");
 
@@ -1355,9 +1792,15 @@ async function handle(req, res) {
   switch (path) {
     case "/api/logout":
       q.dropToken.run(auth.hash);
+      closeRevokedStreams();
       return send(200, { ok: true });
-    case "/api/logout-others":
-      return send(200, { ok: true, revoked: Number(q.dropOtherSessions.run(user.id, auth.hash).changes) });
+    case "/api/logout-others": {
+      // Toutes les autres sessions et tous les jetons MCP : l'un d'eux a pu être créé depuis un appareil volé.
+      const mcp = q.otherMcp.get(user.id, auth.hash).n;
+      const revoked = Number(q.dropOtherTokens.run(user.id, auth.hash).changes);
+      closeRevokedStreams();
+      return send(200, { ok: true, revoked: revoked - mcp, mcp });
+    }
     case "/api/password":
       return send(200, await changePassword(auth, await readJson(req, AUTH_BODY), ip));
     case "/api/sync":
@@ -1380,21 +1823,12 @@ async function handle(req, res) {
     case "/api/shares/state":
       return send(200, sharesState(user, await readJson(req, 2 * MB)));
   }
-  const share = /^\/api\/share\/([\w-]+)(?:\/(update|awareness|delete|public|access|member))?$/.exec(path);
+  const share =
+    /^\/api\/share\/([\w-]+)(?:\/(update|awareness|delete|public|access|member|leave|invite|preview))?$/.exec(path);
   if (!share) throw new HttpError(404, "not found");
   const [, id, action] = share;
   if (action === "delete") {
-    ownedShare(id, user);
-    const room = rooms.get(id);
-    if (room) {
-      broadcast(room, null, { type: "closed" });
-      for (const client of room.clients.values()) client.res.end();
-      clearTimeout(room.timer);
-      rooms.delete(id);
-    }
-    docTexts.delete(id);
-    q.dropShare.run(id);
-    q.dropMembers.run(id);
+    deleteShare(ownedShare(id, user));
     return send(200, { ok: true });
   }
   if (action === "access" || action === "member") {
@@ -1417,17 +1851,48 @@ async function handle(req, res) {
     q.setPublic.run(enabled ? 1 : 0, id);
     return send(200, { public: enabled });
   }
-  // Lire ou modifier : le droit du compte est vérifié à chaque requête.
-  const { share: row, role } = shareAccess(id, user, { write: action === "update", join: !action });
-  if (action === "update") return send(200, shareUpdate(openRoom(row), await readJson(req, SHARE_BODY)));
-  if (action === "awareness") {
-    const body = await readJson(req, SMALL_BODY);
-    // Personne n'est connecté à une salle fermée : rien à relayer.
-    const room = rooms.get(id);
-    if (room && typeof body.update === "string") broadcast(room, body.conn, { type: "awareness", update: body.update });
+  if (action === "invite") {
+    // Nouveau secret d'invitation : l'ancien lien ne permet plus de rejoindre ; les participants restent.
+    ownedShare(id, user);
+    const invite = randomBytes(16).toString("base64url");
+    q.setInvite.run(invite, id);
+    return send(200, { invite });
+  }
+  if (action === "leave") {
+    // Un participant quitte la page : il n'y a plus accès, et ses fichiers n'y sont plus servis.
+    const row = q.share.get(id);
+    if (!row) throw new HttpError(404, "share not found");
+    if (row.owner_id === user.id) throw new HttpError(400, "owner cannot leave");
+    q.leave.run(id, user.id, Date.now());
+    q.dropMemberFiles.run(id, user.id);
+    refreshRoles(id);
     return send(200, { ok: true });
   }
-  await readJson(req, SMALL_BODY);
+  const body = await readJson(req, action === "update" ? SHARE_BODY : SMALL_BODY);
+  const invite = typeof body.invite === "string" ? body.invite : undefined;
+  if (action === "preview") {
+    // Aperçu d'une invitation, sans rien changer : titre et propriétaire, si ce compte peut la rejoindre.
+    const row = q.share.get(id);
+    if (!row) throw new HttpError(404, "share not found");
+    const role = roleOf(row, user);
+    const member = role !== "none" && (role === "owner" || !!q.member.get(id, user.id));
+    const removed = q.member.get(id, user.id)?.role === "none";
+    if (!member && (removed || !invited(row, invite))) throw new HttpError(403, "forbidden");
+    return send(200, { title: row.title, owner: q.ownerName.get(row.owner_id)?.username ?? "", member });
+  }
+  // Lire ou modifier : le droit du compte est vérifié à chaque requête.
+  const { share: row, role } = shareAccess(id, user, {
+    write: action === "update",
+    join: action ? undefined : "link",
+    invite,
+  });
+  if (action === "update") return send(200, shareUpdate(openRoom(row, user), body, user));
+  if (action === "awareness") {
+    // Personne n'est connecté à une salle fermée : rien à relayer.
+    const room = rooms.get(id);
+    if (room) relayAwareness(room, user, role, body);
+    return send(200, { ok: true });
+  }
   return send(200, {
     title: row.title,
     owner: role === "owner",
@@ -1435,6 +1900,8 @@ async function handle(req, res) {
     access: row.access,
     public: !!row.public,
     members: role === "owner" ? q.members.all(id) : undefined,
+    // Le secret d'invitation, pour que le lien donné par l'application reste valable.
+    invite: row.invite ?? undefined,
     ydoc: Buffer.from(Y.encodeStateAsUpdate(shareDoc(row))).toString("base64"),
   });
 }
@@ -1468,7 +1935,7 @@ setInterval(() => {
   for (const counter of COUNTERS) counter.purge(now);
   if (now - lastPurge < 60 * MINUTE) return;
   lastPurge = now;
-  if (TOKEN_TTL > 0) q.expireTokens.run(now - TOKEN_TTL);
+  if (TOKEN_TTL > 0 && q.expireTokens.run(now - TOKEN_TTL).changes > 0) closeRevokedStreams();
   if (TOMBSTONE_TTL > 0) q.purgeTombstones.run(now - TOMBSTONE_TTL);
 }, 30_000).unref();
 
