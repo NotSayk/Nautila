@@ -1,6 +1,7 @@
 import { db } from "../db";
 import type { SqlValue, Statement } from "../db/types";
 import { cardStatements, insertCard } from "./cards";
+import { splitClozeId } from "./cloze";
 import { snapshotStatements } from "./versions";
 import { toFtsQuery, type Extracted } from "./extract";
 import { collectFiles, fileId, linkStatements } from "./files";
@@ -208,9 +209,14 @@ export async function duplicatePage(id: string, suffix: string): Promise<string>
       "SELECT id, front, back FROM cards WHERE page_id = ? ORDER BY created_at, id",
       [page.id],
     );
-    cards.forEach((c, i) =>
-      statements.push(insertCard(copiedCardId(page.id, newId, c.id), newId, c.front, c.back, now + i)),
-    );
+    // Les trous d'une même carte (« …#c1 », « …#c2 ») restent ensemble dans la copie.
+    const copied = new Map<string, string>();
+    cards.forEach((c, i) => {
+      const { base } = splitClozeId(c.id);
+      if (!copied.has(base)) copied.set(base, copiedCardId(page.id, newId, base));
+      const id = base === c.id ? copied.get(base)! : `${copied.get(base)}${c.id.slice(base.length)}`;
+      statements.push(insertCard(id, newId, c.front, c.back, now + i));
+    });
   }
   await db().batch(statements);
   return copyOf.get(id)!;

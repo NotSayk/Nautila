@@ -502,6 +502,17 @@ const fr = {
   shareMembers: "Participants",
   shareRoleOf: "Droit de",
   shareNoMembers: "Personne n’a encore rejoint la page.",
+  // Cartes à trous, formules et paquets Anki
+  clozeButton: "Trou",
+  clozeButtonHint: "Faire un trou de la sélection : {{c1::texte}}",
+  clozeHint:
+    "Carte à trous : sélectionne un mot dans la question puis « Trou » (un indice : {{c1::texte::indice}}). Formules : $x^2$ dans le texte, $$…$$ en bloc.",
+  clozeCount: "trous",
+  answerOptional: "Réponse (facultative pour une carte à trous)",
+  ankiImport: "Importer (Anki, .txt)",
+  ankiExport: "Exporter pour Anki",
+  ankiImported: "cartes importées",
+  ankiNothing: "Aucune carte trouvée dans ce fichier (une carte par ligne : recto, tabulation, verso).",
 };
 
 const en: typeof fr = {
@@ -1003,6 +1014,17 @@ const en: typeof fr = {
   shareMembers: "Members",
   shareRoleOf: "Access for",
   shareNoMembers: "No one has joined the page yet.",
+  // Cloze cards, formulas and Anki decks
+  clozeButton: "Cloze",
+  clozeButtonHint: "Turn the selection into a cloze: {{c1::text}}",
+  clozeHint:
+    "Cloze card: select a word in the question, then “Cloze” (with a hint: {{c1::text::hint}}). Formulas: $x^2$ inline, $$…$$ as a block.",
+  clozeCount: "clozes",
+  answerOptional: "Answer (optional for a cloze card)",
+  ankiImport: "Import (Anki, .txt)",
+  ankiExport: "Export for Anki",
+  ankiImported: "cards imported",
+  ankiNothing: "No card found in this file (one card per line: front, tab, back).",
 };
 
 export type Key = keyof typeof fr;

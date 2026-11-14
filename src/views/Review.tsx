@@ -1,6 +1,8 @@
 import {
   ArrowLeft,
   BookOpenCheck,
+  Brackets,
+  Download,
   Keyboard,
   Layers,
   ListChecks,
@@ -9,10 +11,13 @@ import {
   Puzzle,
   RefreshCcw,
   Trash2,
+  Upload,
   X,
 } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { Grade } from "ts-fsrs";
+import { parseAnkiText, toAnkiText } from "../data/anki";
+import { download } from "../data/backup";
 import {
   addCard,
   addCards,
@@ -20,6 +25,7 @@ import {
   deckCards,
   deleteCard,
   dueCards,
+  expandLooseClozes,
   gradeCard,
   isExtraCard,
   listDecks,
@@ -29,12 +35,14 @@ import {
   type CardRow,
   type Deck,
 } from "../data/cards";
+import { clozeOf, groupNotes, hasCloze, wrapCloze } from "../data/cloze";
 import { createPage } from "../data/pages";
 import { cleanQuestions, deleteQuiz, listQuizzes, saveQuiz, type Question, type Quiz } from "../data/quizzes";
 import { useT, type Key } from "../i18n";
 import { useStore } from "../store";
 import { IconButton, PageIcon, SectionTitle, TopBar, useOverlay } from "./common";
-import { confirmDialog } from "./dialogs";
+import { confirmDialog, notify } from "./dialogs";
+import { CardFront, ClozeText, MathText } from "./study/CardText";
 import { ChoiceMode, FlipMode, MatchMode, questionsFromCards, WriteMode } from "./study/modes";
 
 const GRADES: [Grade, Key][] = [
@@ -64,6 +72,43 @@ function submitOnCtrlEnter(e: React.KeyboardEvent<HTMLTextAreaElement>) {
     e.preventDefault();
     e.currentTarget.form?.requestSubmit();
   }
+}
+
+/**
+ * Bouton « Trou » : entoure la sélection du champ visé de `{{cN::…}}`. Le clic ne prend pas le focus,
+ * pour garder la sélection ; le curseur est ensuite replacé dans le champ.
+ */
+function ClozeButton({
+  target,
+  value,
+  onChange,
+}: {
+  target: React.RefObject<HTMLTextAreaElement | null>;
+  value: string;
+  onChange: (value: string) => void;
+}) {
+  const t = useT();
+  return (
+    <button
+      type="button"
+      title={t("clozeButtonHint")}
+      onMouseDown={(e) => e.preventDefault()}
+      onClick={() => {
+        const el = target.current;
+        const at = el ? { a: el.selectionStart, b: el.selectionEnd } : { a: value.length, b: value.length };
+        const next = wrapCloze(value, at.a, at.b);
+        onChange(next.text);
+        requestAnimationFrame(() => {
+          el?.focus();
+          el?.setSelectionRange(next.start, next.end);
+        });
+      }}
+      className="flex h-8 items-center gap-1.5 rounded-md px-2 text-muted hover:bg-hover"
+    >
+      <Brackets size={14} />
+      {t("clozeButton")}
+    </button>
+  );
 }
 
 /** Choix de la page qui portera un nouveau paquet : une page existante, ou une page créée pour l'occasion. */
@@ -357,6 +402,7 @@ function Spaced({ pageId, onExit }: { pageId?: string; onExit: () => void }) {
 
   const preview = previewIntervals(card, now);
   const source = pages.find((p) => p.id === card.page_id);
+  const { cloze } = clozeOf(card);
   return (
     <>
       <p className="mb-3 text-right text-xs text-faint">
@@ -373,12 +419,13 @@ function Spaced({ pageId, onExit }: { pageId?: string; onExit: () => void }) {
         </button>
       )}
       <div className="rounded-xl bg-pop shadow-[0_0_0_1px_var(--color-line),0_2px_8px_rgb(0_0_0/0.05)]">
+        {/* Carte à trous : le recto dévoilé remplace le recto, et le verso facultatif vient dessous. */}
         <div className="whitespace-pre-wrap px-8 py-14 text-center text-2xl font-semibold leading-snug">
-          {card.front}
+          {revealed && cloze ? <ClozeText text={card.front} gap={clozeOf(card).n} reveal /> : <CardFront card={card} />}
         </div>
-        {revealed && (
+        {revealed && (!cloze || card.back.trim()) && (
           <div className="whitespace-pre-wrap px-8 py-10 text-center text-lg shadow-[inset_0_1px_0_var(--color-line)]">
-            {card.back}
+            <MathText text={card.back} />
           </div>
         )}
       </div>
@@ -416,9 +463,32 @@ function DeckView({ pageId, onStart }: { pageId: string; onStart: (mode: Mode, c
   const [bulkText, setBulkText] = useState("");
   const [editing, setEditing] = useState<{ id: string; front: string; back: string } | null>(null);
   const frontRef = useRef<HTMLTextAreaElement>(null);
+  const bulkRef = useRef<HTMLTextAreaElement>(null);
+  const editRef = useRef<HTMLTextAreaElement>(null);
+  const ankiInput = useRef<HTMLInputElement>(null);
   const reload = useCallback(() => deckCards(pageId).then(setCards), [pageId]);
   useEffect(() => void reload(), [reload]);
   const due = cards.filter((c) => c.due <= Date.now()).length;
+  const notes = groupNotes(cards);
+  const complete = (f: string, b: string) => !!f.trim() && (!!b.trim() || hasCloze(f));
+
+  const importAnki = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    if (!file) return;
+    const list = parseAnkiText(await file.text());
+    if (!list.length) return notify(t("ankiNothing"));
+    await addCards(pageId, list);
+    await reload();
+    void useStore.getState().refreshDue();
+    notify(`${list.length} ${t("ankiImported")}`);
+  };
+  const exportAnki = () =>
+    download(
+      `${(page?.title || t("untitled")).replace(/[\\/:*?"<>|]+/g, "_")}.txt`,
+      toAnkiText(notes.map((n) => ({ front: n.front, back: n.back }))),
+      "text/plain",
+    );
 
   return (
     <>
@@ -470,7 +540,7 @@ function DeckView({ pageId, onStart }: { pageId: string; onStart: (mode: Mode, c
             setBulkText("");
             setBulk(false);
           } else {
-            if (!front.trim() || !back.trim()) return;
+            if (!complete(front, back)) return;
             await addCard(pageId, front.trim(), back.trim());
             setFront("");
             setBack("");
@@ -484,6 +554,7 @@ function DeckView({ pageId, onStart }: { pageId: string; onStart: (mode: Mode, c
           <>
             <textarea
               autoFocus
+              ref={bulkRef}
               value={bulkText}
               onChange={(e) => setBulkText(e.target.value)}
               rows={6}
@@ -512,13 +583,13 @@ function DeckView({ pageId, onStart }: { pageId: string; onStart: (mode: Mode, c
               onChange={(e) => setBack(e.target.value)}
               onKeyDown={submitOnCtrlEnter}
               rows={2}
-              placeholder={t("answer")}
+              placeholder={hasCloze(front) ? t("answerOptional") : t("answer")}
               aria-label={t("answer")}
               className={area}
             />
           </div>
         )}
-        <div className="mt-2 flex items-center gap-2">
+        <div className="mt-2 flex flex-wrap items-center gap-x-2 gap-y-1">
           <button
             type="button"
             className="h-8 rounded-md px-2 text-muted hover:bg-hover"
@@ -526,31 +597,55 @@ function DeckView({ pageId, onStart }: { pageId: string; onStart: (mode: Mode, c
           >
             {t(bulk ? "addOneCard" : "bulkImport")}
           </button>
+          {bulk ? (
+            <ClozeButton target={bulkRef} value={bulkText} onChange={setBulkText} />
+          ) : (
+            <ClozeButton target={frontRef} value={front} onChange={setFront} />
+          )}
           <span className="flex-1" />
           <button
-            disabled={bulk ? parseCardList(bulkText).length === 0 : !front.trim() || !back.trim()}
+            disabled={bulk ? parseCardList(bulkText).length === 0 : !complete(front, back)}
             className="h-8 rounded-md bg-accent px-3 font-medium text-white hover:brightness-95 disabled:opacity-40"
           >
             {t(bulk ? "addCards" : "addCard")}
           </button>
         </div>
+        <p className="mt-1 px-1 text-xs text-muted">{t("clozeHint")}</p>
       </form>
+      <div className="mb-2 flex flex-wrap justify-end gap-1">
+        <button type="button" className="flex h-7 items-center gap-1.5 rounded-md px-2 text-muted hover:bg-hover" onClick={() => ankiInput.current?.click()}>
+          <Upload size={14} />
+          {t("ankiImport")}
+        </button>
+        <button
+          type="button"
+          disabled={cards.length === 0}
+          className="flex h-7 items-center gap-1.5 rounded-md px-2 text-muted enabled:hover:bg-hover disabled:opacity-45"
+          onClick={exportAnki}
+        >
+          <Download size={14} />
+          {t("ankiExport")}
+        </button>
+        <input ref={ankiInput} type="file" accept=".txt,.tsv,.csv,text/plain,text/tab-separated-values" hidden onChange={importAnki} />
+      </div>
       {cards.length === 0 && <p className="py-4 text-muted">{t("deckEmpty")}</p>}
-      {cards.map((c) =>
+      {notes.map((c) =>
         editing?.id === c.id ? (
           <form
             key={c.id}
             className="grid gap-2 py-2 shadow-[inset_0_-1px_0_var(--color-line)] sm:grid-cols-2"
             onSubmit={async (e) => {
               e.preventDefault();
-              if (!editing.front.trim() || !editing.back.trim()) return;
+              if (!complete(editing.front, editing.back)) return;
               await updateCard(c.id, editing.front.trim(), editing.back.trim());
               setEditing(null);
               await reload();
+              void useStore.getState().refreshDue();
             }}
           >
             <textarea
               autoFocus
+              ref={editRef}
               value={editing.front}
               onChange={(e) => setEditing({ ...editing, front: e.target.value })}
               onKeyDown={submitOnCtrlEnter}
@@ -567,6 +662,8 @@ function DeckView({ pageId, onStart }: { pageId: string; onStart: (mode: Mode, c
               className={area}
             />
             <div className="flex justify-end gap-2 sm:col-span-2">
+              <ClozeButton target={editRef} value={editing.front} onChange={(front) => setEditing({ ...editing, front })} />
+              <span className="flex-1" />
               <button type="button" className="h-8 rounded-md px-3 hover:bg-hover" onClick={() => setEditing(null)}>
                 {t("cancel")}
               </button>
@@ -580,8 +677,17 @@ function DeckView({ pageId, onStart }: { pageId: string; onStart: (mode: Mode, c
             key={c.id}
             className="group grid grid-cols-[1fr_1fr_auto] items-start gap-3 py-2 shadow-[inset_0_-1px_0_var(--color-line)]"
           >
-            <span className="whitespace-pre-wrap font-medium">{c.front}</span>
-            <span className="whitespace-pre-wrap text-muted">{c.back}</span>
+            <span className="min-w-0 whitespace-pre-wrap break-words font-medium">
+              <ClozeText text={c.front} />
+              {c.gaps > 1 && (
+                <span className="ml-2 align-middle text-xs font-normal text-faint">
+                  {c.gaps} {t("clozeCount")}
+                </span>
+              )}
+            </span>
+            <span className="min-w-0 whitespace-pre-wrap break-words text-muted">
+              <MathText text={c.back} />
+            </span>
             {isExtraCard(c.id) ? (
               <span className="flex opacity-0 focus-within:opacity-100 group-hover:opacity-100 max-md:opacity-100">
                 <IconButton label={t("edit")} onClick={() => setEditing({ id: c.id, front: c.front, back: c.back })}>
@@ -630,7 +736,9 @@ export function Review() {
   const [stats, setStats] = useState({ due: 0, total: 0 });
   const [newDeck, setNewDeck] = useState(false);
 
-  const reload = useCallback(() => {
+  const reload = useCallback(async () => {
+    // Cartes à trous arrivées d'un seul tenant (connecteur MCP) : un trou par entrée planifiée.
+    if (await expandLooseClozes().catch(() => 0)) void useStore.getState().refreshDue();
     void listDecks().then(setDecks);
     void listQuizzes().then(setQuizzes);
     void cardStats().then(setStats);

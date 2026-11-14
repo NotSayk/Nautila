@@ -1,8 +1,10 @@
 import { useEffect, useMemo, useState } from "react";
 import type { CardRow } from "../../data/cards";
 import type { Question } from "../../data/quizzes";
+import { answerOf, promptOf } from "../../data/cloze";
 import { choicesFor, sameAnswer, shuffle } from "../../data/study";
 import { useT } from "../../i18n";
+import { CardBack, CardFront, MathText } from "./CardText";
 
 const PRIMARY = "h-9 rounded-md bg-accent px-4 font-medium text-white hover:brightness-95 disabled:opacity-40";
 const SECONDARY = "h-9 rounded-md px-4 font-medium shadow-[0_0_0_1px_var(--color-line)] hover:bg-hover";
@@ -93,7 +95,7 @@ export function FlipMode({ cards, onExit }: ModeProps) {
           flipped ? "text-xl" : "text-2xl font-semibold"
         }`}
       >
-        {flipped ? card.back : card.front}
+        <span>{flipped ? <CardBack card={card} /> : <CardFront card={card} />}</span>
       </button>
       <p className="mt-2 text-center text-xs text-faint">{t("flipHint")}</p>
       <div className="mt-5 flex items-center justify-between gap-2">
@@ -153,7 +155,9 @@ function ChoiceList({
             className={`flex min-h-12 items-center gap-3 whitespace-pre-wrap rounded-lg px-4 py-2.5 text-left shadow-[0_0_0_1px_var(--color-line)] enabled:hover:bg-hover ${state}`}
           >
             <span className="text-xs font-semibold text-faint">{i + 1}</span>
-            {choice}
+            <span className="min-w-0">
+              <MathText text={choice} />
+            </span>
           </button>
         );
       })}
@@ -204,11 +208,13 @@ export function ChoiceMode({ questions, onExit }: { questions: Question[]; onExi
   return (
     <>
       <Progress index={index} total={questions.length} />
-      <div className={`${CARD} whitespace-pre-wrap px-8 py-10 text-center text-xl font-semibold`}>{q.question}</div>
+      <div className={`${CARD} whitespace-pre-wrap px-8 py-10 text-center text-xl font-semibold`}>
+        <MathText text={q.question} />
+      </div>
       <ChoiceList choices={q.choices} answer={q.answer} picked={picked} onPick={pick} />
       {picked !== null && (
         <div className="mt-4 flex items-start justify-between gap-4">
-          <p className="text-muted">{q.explanation}</p>
+          <p className="whitespace-pre-wrap text-muted">{q.explanation && <MathText text={q.explanation} />}</p>
           <button autoFocus className={`${PRIMARY} shrink-0`} onClick={next}>
             {t("continue")}
           </button>
@@ -218,11 +224,13 @@ export function ChoiceMode({ questions, onExit }: { questions: Question[]; onExi
   );
 }
 
-/** Transforme un paquet en questions à choix multiples. */
+/** Transforme un paquet en questions à choix multiples (pour une carte à trous : retrouver le trou). */
 export function questionsFromCards(cards: CardRow[]): Question[] {
+  const answers = cards.map((c) => ({ id: c.id, back: answerOf(c) }));
   return shuffle(cards).map((card) => {
-    const choices = choicesFor(card, cards);
-    return { question: card.front, choices, answer: choices.indexOf(card.back) };
+    const own = { id: card.id, back: answerOf(card) };
+    const choices = choicesFor(own, answers);
+    return { question: promptOf(card), choices, answer: choices.indexOf(own.back) };
   });
 }
 
@@ -258,13 +266,15 @@ export function WriteMode({ cards, onExit }: ModeProps) {
   return (
     <>
       <Progress index={index} total={order.length} />
-      <div className={`${CARD} whitespace-pre-wrap px-8 py-10 text-center text-xl font-semibold`}>{card.front}</div>
+      <div className={`${CARD} whitespace-pre-wrap px-8 py-10 text-center text-xl font-semibold`}>
+        <CardFront card={card} />
+      </div>
       {checked === null ? (
         <form
           className="mt-4 flex gap-2"
           onSubmit={(e) => {
             e.preventDefault();
-            setChecked(sameAnswer(value, card.back));
+            setChecked(sameAnswer(value, answerOf(card)));
           }}
         >
           <input
@@ -282,7 +292,11 @@ export function WriteMode({ cards, onExit }: ModeProps) {
           <p className={`font-medium ${checked ? "text-[#448361]" : "text-danger"}`}>
             {checked ? t("correct") : `${t("expected")} :`}
           </p>
-          {!checked && <p className="mt-1 whitespace-pre-wrap text-lg">{card.back}</p>}
+          {!checked && (
+            <p className="mt-1 whitespace-pre-wrap text-lg">
+              <MathText text={answerOf(card)} />
+            </p>
+          )}
           <div className="mt-4 flex justify-end gap-2">
             {!checked && (
               <button className={SECONDARY} onClick={() => next(true)}>
@@ -309,8 +323,8 @@ export function MatchMode({ cards, onExit }: ModeProps) {
     const picked = shuffle(cards).slice(0, 6);
     return shuffle(
       picked.flatMap((c) => [
-        { key: `${c.id}:q`, cardId: c.id, text: c.front },
-        { key: `${c.id}:a`, cardId: c.id, text: c.back },
+        { key: `${c.id}:q`, cardId: c.id, text: promptOf(c) },
+        { key: `${c.id}:a`, cardId: c.id, text: answerOf(c) },
       ]),
     );
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -377,7 +391,9 @@ export function MatchMode({ cards, onExit }: ModeProps) {
                   : "bg-pop hover:bg-hover"
             }`}
           >
-            {tile.text}
+            <span>
+              <MathText text={tile.text} />
+            </span>
           </button>
         ))}
       </div>
