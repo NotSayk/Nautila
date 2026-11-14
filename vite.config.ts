@@ -8,6 +8,6 @@ export default defineConfig({
   optimizeDeps: { exclude: ["@sqlite.org/sqlite-wasm"] },
   worker: { format: "es" },
   clearScreen: false,
-  server: { port: 5173, strictPort: true },
+  server: { port: 5173, strictPort: true, watch: { ignored: ["**/.claude/**", "**/src-tauri/**"] } },
   test: { environment: "node", exclude: ["**/node_modules/**", "**/dist/**", ".claude/**", "src-tauri/**"] },
 });
