@@ -8,6 +8,7 @@
     "preview": "vite preview",
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
+    "version:set": "node scripts/version.mjs set",
     "tauri": "tauri"
   },
   "repository": {
