@@ -41,7 +41,7 @@ Tes notes restent sur ton appareil : pas de compte, pas de télémétrie.
 - Minuteur Pomodoro, tableau de bord du jour.
 
 **Données**
-- Tout est stocké sur l'appareil. Export Markdown, HTML et PDF par page.
+- Tout est stocké sur l'appareil. Export Markdown, HTML autonome (images et formules intégrées) et PDF par page.
 - Import Markdown, Word (.docx), PDF (une page par document) et export Notion (.zip : pages, images, bases de données, relations
   entre bases, choix multiples et liens entre pages) ; sauvegarde et restauration complètes en JSON.
 - Synchronisation entre appareils via un serveur auto-hébergé, avec comptes.
@@ -110,6 +110,25 @@ Chaque étudiant crée son compte depuis l'icône nuage de la barre latérale. R
 | `INVITE_CODE` | Code demandé à l'inscription | aucun |
 | `MAX_USER_MB` | Espace maximal par compte | 1024 |
 | `DATA_FILE` | Base SQLite du serveur | `/data/nautila.db` |
+| `TRUST_PROXY` | `1` si un relais (Caddy) est devant le serveur : l'adresse du visiteur est lue dans `X-Forwarded-For` | désactivé |
+| `CORS_ORIGINS` | Origines autorisées à appeler l'API, séparées par des virgules | `*` |
+| `TOKEN_TTL_DAYS` | Un jeton inutilisé expire après ce nombre de jours | 90 |
+| `MAX_SHARES` / `MAX_SHARE_MB` | Pages partagées par compte, taille d'un document partagé | 200 / 64 |
+| `LOGIN_MAX_PER_IP` / `LOGIN_MAX_PER_USER` | Échecs de connexion tolérés en 15 minutes | 30 / 10 |
+| `PUBLIC_MAX_PER_MINUTE` / `MCP_MAX_PER_MINUTE` | Requêtes par minute sur les liens publics, appels MCP par compte | 600 / 240 |
+| `TOMBSTONE_DAYS` | Oubli des anciennes suppressions (0 pour désactiver) | 365 |
+
+Sécurité :
+
+- Un code d'invitation vide ou laissé à la valeur d'exemple (`change-moi`) ferme les inscriptions ; les
+  comptes existants continuent de fonctionner. Derrière Caddy, définis `TRUST_PROXY=1`, sinon les limites
+  par adresse visent Caddy, donc tout le monde à la fois.
+- Les mots de passe trop faibles sont refusés à l'inscription. Depuis l'icône nuage, chacun peut changer
+  son mot de passe et déconnecter ses autres appareils.
+- Les fichiers d'une page publique ou partagée ne s'affichent en ligne que s'il s'agit d'images, d'audio,
+  de vidéo ou de PDF ; les autres sont proposés au téléchargement. Les documents partagés comptent dans
+  l'espace du propriétaire.
+- Le serveur demande Node 22.13 ou plus récent (l'image Docker fournie convient).
 
 Fonctionnement : chaque appareil garde toutes ses données et travaille hors connexion ; les
 modifications partent dès que le serveur est joignable. Le contenu des pages est fusionné (Yjs),
@@ -126,7 +145,8 @@ Les deux passent par le serveur de synchronisation, donc demandent un compte.
   connectée au même serveur qui possède le lien peut rejoindre la page. Dans la même boîte, le
   propriétaire règle ce que permet le lien (modifier ou lire seulement) et le droit de chaque participant.
 - **Connecteur MCP** : icône nuage, « Créer un jeton d'accès ». L'application affiche les réglages à
-  copier pour Claude Code, Codex et claude.ai. Le jeton donne accès à tout le compte.
+  copier pour Claude Code, Codex et claude.ai. Le jeton donne accès à tout le compte ; il est distinct
+  du jeton de synchronisation et se révoque depuis la même boîte.
 
 Outils exposés : `search_notes`, `list_pages`, `read_page`, `create_flashcards`, `create_quiz`,
 `create_page`, `list_tasks`, `list_files`, `get_file`.
