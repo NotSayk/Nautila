@@ -91,6 +91,17 @@ export const linkStatements = (ownerId: string, ids: (string | null)[]): Stateme
     id ? [{ sql: "INSERT OR IGNORE INTO page_files (page_id, file_id) VALUES (?, ?)", params: [ownerId, id] }] : [],
   );
 
+/** Fichier stocké sur l'appareil (contenu en base64), pour l'intégrer à un export ; null s'il n'y est pas. */
+export async function readStoredFile(url: string): Promise<{ name: string; mime: string; data: string } | null> {
+  const id = fileId(url);
+  if (!id) return null;
+  const [row] = await db().all<{ name: string; mime: string; data: string }>(
+    "SELECT name, mime, data FROM files WHERE id = ?",
+    [id],
+  );
+  return row ?? null;
+}
+
 /** Note qu'une page (ou un modèle) utilise ces fichiers. */
 export async function linkFiles(ownerId: string, ids: (string | null)[]) {
   const statements = linkStatements(ownerId, ids);

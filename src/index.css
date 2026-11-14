@@ -369,14 +369,100 @@ textarea:focus-visible,
   color: rgb(255 255 255 / 0.85);
 }
 
-/* Impression et export PDF : seul le contenu de la page est conservé. */
+/* Document exporté placé dans la page pour l'imprimer (repli de l'export PDF) : invisible à l'écran. */
+.print-export {
+  display: none;
+}
+
+/* Impression (Ctrl P) : seul le contenu de la page est conservé, toujours en thème clair. */
+@page {
+  margin: 18mm 16mm 20mm;
+}
 @media print {
+  :root,
+  .dark {
+    color-scheme: light;
+    --color-bg: #ffffff;
+    --color-panel: #f7f7f5;
+    --color-pop: #ffffff;
+    --color-hover: transparent;
+    --color-active: transparent;
+    --color-line: rgb(55 53 47 / 0.16);
+    --color-ink: #37352f;
+    --color-muted: rgb(55 53 47 / 0.8);
+    --color-faint: rgb(55 53 47 / 0.72);
+    --color-accent-text: #0b6bcb;
+    --color-danger: #c4372f;
+    --page-pad: 0px;
+  }
+  .bn-container[data-color-scheme] {
+    --bn-colors-highlights-gray-text: #9b9a97;
+    --bn-colors-highlights-gray-background: #ebeced;
+    --bn-colors-highlights-brown-text: #64473a;
+    --bn-colors-highlights-brown-background: #e9e5e3;
+    --bn-colors-highlights-red-text: #e03e3e;
+    --bn-colors-highlights-red-background: #fbe4e4;
+    --bn-colors-highlights-orange-text: #d9730d;
+    --bn-colors-highlights-orange-background: #f6e9d9;
+    --bn-colors-highlights-yellow-text: #dfab01;
+    --bn-colors-highlights-yellow-background: #fbf3db;
+    --bn-colors-highlights-green-text: #4d6461;
+    --bn-colors-highlights-green-background: #ddedea;
+    --bn-colors-highlights-blue-text: #0b6e99;
+    --bn-colors-highlights-blue-background: #ddebf1;
+    --bn-colors-highlights-purple-text: #6940a5;
+    --bn-colors-highlights-purple-background: #eae4f2;
+    --bn-colors-highlights-pink-text: #ad1a72;
+    --bn-colors-highlights-pink-background: #f4dfeb;
+  }
+  html,
+  body {
+    background: #fff !important;
+  }
+  * {
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+  .dark .bn-editor [data-content-type="codeBlock"] .shiki {
+    color: var(--shiki-light);
+  }
+  .dark .tag-gray {
+    background: #e3e2e0;
+    color: #32302c;
+  }
+
+  /* Interface : barres, menus, poignées, commandes des blocs. */
   aside,
   header,
+  .no-print,
   .bn-side-menu,
-  .no-print {
+  .bn-ui-container,
+  .bn-toggle-add-block-button,
+  .math-number-toggle,
+  .math-source,
+  .math-inline-source,
+  .sketch-tools,
+  .pdf-add,
+  .pdf-menu,
+  .bn-editor [data-content-type="codeBlock"] > div > select {
     display: none !important;
   }
+  /* Textes indicatifs des blocs vides (« Liste », « Titre »…) et des champs. */
+  .bn-block-content:has(.ProseMirror-trailingBreak:only-child)::after,
+  .bn-block-content:has(.ProseMirror-trailingBreak:only-child)::before {
+    content: none !important;
+  }
+  ::placeholder {
+    color: transparent !important;
+  }
+  .math-empty {
+    display: none;
+  }
+  /* Blocs repliés : imprimés ouverts. */
+  .bn-toggle-frame > .bn-toggle-slot > .bn-block-group {
+    display: block !important;
+  }
+
   html,
   body,
   #root,
@@ -386,8 +472,36 @@ textarea:focus-visible,
     overflow: visible !important;
     display: block !important;
   }
-  :root {
-    --page-pad: 0px;
+  .pdf-box,
+  .math-block-preview,
+  .bn-editor [data-content-type="codeBlock"] > pre {
+    max-height: none !important;
+    overflow: visible !important;
+  }
+  .bn-editor [data-content-type="codeBlock"] > pre {
+    padding-top: 16px;
+    white-space: pre-wrap;
+  }
+  .bn-editor [data-content-type="heading"] {
+    break-after: avoid;
+  }
+  .callout,
+  .flashcard,
+  .sketch,
+  .math-block,
+  .media-block,
+  .bn-editor table,
+  .bn-editor [data-content-type="image"],
+  .bn-editor [data-content-type="codeBlock"] {
+    break-inside: avoid;
+  }
+
+  /* Repli de l'export PDF : le document exporté remplace toute l'application. */
+  .printing-export body > :not(.print-export) {
+    display: none !important;
+  }
+  .printing-export .print-export {
+    display: block;
   }
 }
 
