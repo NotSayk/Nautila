@@ -313,6 +313,17 @@ export function JoinView({ id }: { id: string }) {
   );
 }
 
+/**
+ * Adresse d'un fichier cité par une page publique, écrite par un tiers : seuls les liens web
+ * ordinaires et les images matricielles en ligne passent (pas de javascript:, ni de HTML ou SVG en data:).
+ */
+export const publicFileUrl = (shareId: string, url: string) =>
+  url.startsWith("nautila-file:")
+    ? `${location.origin}/api/public/${shareId}/file/${encodeURIComponent(url.slice("nautila-file:".length))}`
+    : /^(https?:\/\/|data:image\/(png|jpeg|gif|webp|avif);)/i.test(url)
+      ? url
+      : "";
+
 /** Page publique en lecture seule : affichée sans compte, rien n'est enregistré sur l'appareil. */
 export function PublicView({ id }: { id: string }) {
   const t = useT();
@@ -337,11 +348,7 @@ export function PublicView({ id }: { id: string }) {
         initialDoc={page.ydoc}
         editable={false}
         ephemeral
-        fileResolver={async (url) =>
-          url.startsWith("nautila-file:")
-            ? `${location.origin}/api/public/${id}/file/${url.slice("nautila-file:".length)}`
-            : url
-        }
+        fileResolver={async (url) => publicFileUrl(id, url)}
       />
     </div>
   );

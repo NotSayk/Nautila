@@ -136,29 +136,39 @@ export async function syncSharedPages(): Promise<boolean> {
     if (!remote) continue;
     const role: ShareRole = remote.role === "gone" ? "none" : remote.role;
     rememberRole(page.share_id, role);
-    if (role === "none" || !remote.update) continue;
+    if (role === "none") continue;
 
     const doc = new Y.Doc();
-    if (page.ydoc) Y.applyUpdate(doc, fromBase64(page.ydoc));
-    let touched = false;
-    doc.on("update", () => (touched = true));
-    Y.applyUpdate(doc, fromBase64(remote.update), REMOTE);
-    let ydoc = page.ydoc;
-    if (touched || !ydoc) {
-      ydoc = toBase64(Y.encodeStateAsUpdate(doc));
-      // Enregistré comme une modification locale : les autres appareils du compte la recevront aussi.
-      await db().run("UPDATE pages SET ydoc = ? WHERE id = ?", [ydoc, page.id]);
-      window.dispatchEvent(new CustomEvent(REMOTE_DOC_EVENT, { detail: { id: page.id, ydoc: remote.update } }));
-      changed = true;
-    }
+    try {
+      if (page.ydoc) Y.applyUpdate(doc, fromBase64(page.ydoc));
+      let ydoc = page.ydoc;
+      // Rien de nouveau côté serveur : il faut quand même envoyer ce qui a été écrit ici hors connexion.
+      if (remote.update) {
+        let touched = false;
+        doc.on("update", () => (touched = true));
+        Y.applyUpdate(doc, fromBase64(remote.update), REMOTE);
+        if (touched || !ydoc) {
+          ydoc = toBase64(Y.encodeStateAsUpdate(doc));
+          // Enregistré comme une modification locale : les autres appareils du compte la recevront aussi.
+          await db().run("UPDATE pages SET ydoc = ? WHERE id = ?", [ydoc, page.id]);
+          window.dispatchEvent(new CustomEvent(REMOTE_DOC_EVENT, { detail: { id: page.id, ydoc: remote.update } }));
+          changed = true;
+        }
+      }
 
-    // Ce que cet appareil a écrit et que le serveur n'a pas encore (page modifiée hors du partage en direct).
-    if ((role === "owner" || role === "edit") && remote.sv && lastPushed(page.share_id) !== fingerprint(ydoc)) {
-      const missing = Y.encodeStateAsUpdate(doc, fromBase64(remote.sv));
-      await post(`share/${page.share_id}/update`, { update: toBase64(missing) });
-      markPushed(page.share_id, ydoc);
+      // Ce que cet appareil a écrit et que le serveur n'a pas encore (page modifiée hors du partage en direct).
+      if (ydoc && (role === "owner" || role === "edit") && lastPushed(page.share_id) !== fingerprint(ydoc)) {
+        const missing = Y.encodeStateAsUpdate(doc, remote.sv ? fromBase64(remote.sv) : undefined);
+        await post(`share/${page.share_id}/update`, { update: toBase64(missing) });
+        markPushed(page.share_id, ydoc);
+      }
+    } catch (err) {
+      // Une page refusée (trop grosse, espace plein…) ne doit pas empêcher les autres de passer.
+      if (err instanceof SyncError && (err.status === 0 || err.status === 401)) throw err;
+      console.warn(`Page partagée ${page.share_id} non synchronisée :`, err);
+    } finally {
+      doc.destroy();
     }
-    doc.destroy();
   }
   return changed;
 }
