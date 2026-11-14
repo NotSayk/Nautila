@@ -104,6 +104,8 @@ function matches(row: Row, filter: Filter, props: Prop[]): boolean {
 
   if (type === "number" || type === "formula") {
     const n = Number(filter.value);
+    // Tant que la valeur saisie n'est pas un nombre, le filtre ne masque rien.
+    if (Number.isNaN(n)) return true;
     if (typeof value !== "number") return filter.op === "is_not";
     return filter.op === "is"
       ? value === n
@@ -159,8 +161,74 @@ export function applyView(rows: Row[], view: DbView, props: Prop[]): Row[] {
     const ka = sortKey(a, sort.prop, props);
     const kb = sortKey(b, sort.prop, props);
     if (ka === null || kb === null) return ka === kb ? a.position - b.position : ka === null ? 1 : -1;
-    return ka < kb ? -dir : ka > kb ? dir : a.position - b.position;
+    const c = compareKeys(ka, kb);
+    return c === 0 ? a.position - b.position : c * dir;
   });
+}
+
+/** Nombres avant textes ; textes comparés selon la langue (accents, nombres dans le texte). */
+function compareKeys(a: string | number, b: string | number): number {
+  if (typeof a === "number" && typeof b === "number") return a < b ? -1 : a > b ? 1 : 0;
+  if (typeof a === "number") return -1;
+  if (typeof b === "number") return 1;
+  return a.localeCompare(b, undefined, { numeric: true, sensitivity: "base" });
+}
+
+/** Groupe d'une ligne pour une propriété « sélection » : "" (aucune valeur) si elle est vide ou ne correspond à aucune option. */
+export function groupKey(value: Value, prop: Prop): string {
+  const id = Array.isArray(value) ? value[0] : value;
+  return typeof id === "string" && (prop.options ?? []).some((o) => o.id === id) ? id : "";
+}
+
+/** Valeurs d'une ligne sans les options supprimées d'une propriété ; null si rien ne change. */
+export function stripOptions(
+  props: Record<string, Value>,
+  propId: string,
+  removed: string[],
+): Record<string, Value> | null {
+  const value = props[propId];
+  if (Array.isArray(value)) {
+    const kept = value.filter((id) => !removed.includes(id));
+    return kept.length === value.length ? null : { ...props, [propId]: kept.length ? kept : null };
+  }
+  return typeof value === "string" && removed.includes(value) ? { ...props, [propId]: null } : null;
+}
+
+/** Configuration sans la propriété : les filtres, tri, regroupement et dates des vues qui s'y référaient sont nettoyés. */
+export function removeProp(config: DbConfig, propId: string): DbConfig {
+  return {
+    props: config.props.filter((p) => p.id !== propId),
+    views: config.views.map((v) => {
+      const next: DbView = {
+        ...v,
+        filters: v.filters.filter((f) => f.prop !== propId),
+        sort: v.sort?.prop === propId ? null : v.sort,
+      };
+      if (v.groupBy === propId) delete next.groupBy;
+      if (v.dateProp === propId) delete next.dateProp;
+      if (v.endProp === propId) delete next.endProp;
+      return next;
+    }),
+  };
+}
+
+/** Jour « AAAA-MM-JJ » en millisecondes à midi, ou null si la date est invalide. */
+export function dayNoon(isoDate: unknown): number | null {
+  if (typeof isoDate !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(isoDate)) return null;
+  const t = new Date(`${isoDate}T12:00:00`).getTime();
+  return Number.isFinite(t) ? t : null;
+}
+
+const DAY = 86_400_000;
+/** Plage de la frise : toutes les lignes avec une marge, au moins cinq semaines, bornée à `maxDays` autour d'aujourd'hui. */
+export function timelineBounds(items: { start: number; end: number }[], today: number, maxDays = 730) {
+  let from = Math.min(today, ...items.map((i) => i.start)) - 3 * DAY;
+  let to = Math.max(from + 35 * DAY, ...items.map((i) => i.end + 7 * DAY));
+  if ((to - from) / DAY > maxDays) {
+    from = today - 30 * DAY;
+    to = from + maxDays * DAY;
+  }
+  return { from, to };
 }
 
 type FormulaValue = number | string | boolean;

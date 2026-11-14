@@ -1,5 +1,5 @@
 import { db } from "../db";
-import type { DbConfig, DbView, Row, Value, ViewType } from "./dbquery";
+import { stripOptions, type DbConfig, type DbView, type Row, type Value, type ViewType } from "./dbquery";
 import { createPage } from "./pages";
 
 const uid = () => crypto.randomUUID().slice(0, 8);
@@ -41,3 +41,15 @@ export async function createRow(databaseId: string, props: Record<string, Value>
 
 export const setRowProps = (pageId: string, props: Record<string, Value>) =>
   db().run("UPDATE pages SET props = ?, updated_at = ? WHERE id = ?", [JSON.stringify(props), Date.now(), pageId]);
+
+/** Retire des lignes de la base les options supprimées d'une propriété ; renvoie les lignes modifiées. */
+export async function purgeOptions(databaseId: string, propId: string, removed: string[]): Promise<Row[]> {
+  const changed: Row[] = [];
+  for (const row of await listRows(databaseId)) {
+    const props = stripOptions(row.props, propId, removed);
+    if (!props) continue;
+    await setRowProps(row.id, props);
+    changed.push({ ...row, props });
+  }
+  return changed;
+}
