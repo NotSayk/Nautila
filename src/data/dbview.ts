@@ -1,6 +1,16 @@
 /** Réglages des vues d'une base : ordre, filtres, copies, liens (fonctions pures). */
 import { convertTargets } from "./dbconvert";
-import { opsFor, orderedProps, type DbConfig, type DbView, type Filter, type Prop, type PropType } from "./dbquery";
+import { validDate } from "./dbdate";
+import {
+  opsFor,
+  orderedProps,
+  type DbConfig,
+  type DbView,
+  type Filter,
+  type Prop,
+  type PropType,
+  type Value,
+} from "./dbquery";
 
 /** Liste d'identifiants avec `id` replacé avant `beforeId` (à la fin si null). */
 export function moveItem(ids: string[], id: string, beforeId: string | null): string[] {
@@ -122,4 +132,32 @@ export function linkHref(type: PropType, value: unknown): string | null {
   if (/^https?:\/\/\S+$/i.test(v)) return v;
   // « exemple.fr/page » sans schéma : on suppose https.
   return /^[\w-]+(\.[\w-]+)+(\/\S*)?$/.test(v) ? `https://${v}` : null;
+}
+
+/**
+ * Valeurs d'une ligne créée sous des filtres, pour qu'elle reste visible : une condition « est »
+ * (ou « contient », « cochée »…) combinée en ET donne sa valeur à la propriété. Rien en OU.
+ */
+export function presetFromFilters(
+  filters: Filter[],
+  mode: "and" | "or" | undefined,
+  props: Prop[],
+): Record<string, Value> {
+  const preset: Record<string, Value> = {};
+  if (mode === "or") return preset;
+  for (const f of filters) {
+    const prop = f.group ? undefined : props.find((p) => p.id === f.prop);
+    if (!prop) continue;
+    const known = (prop.options ?? []).some((o) => o.id === f.value);
+    if (prop.type === "checkbox" && f.op === "checked") preset[prop.id] = true;
+    else if (!f.value) continue;
+    else if (prop.type === "select" && f.op === "is" && known) preset[prop.id] = f.value;
+    else if (prop.type === "multi_select" && f.op === "contains" && known) preset[prop.id] = [f.value];
+    else if (prop.type === "relation" && f.op === "contains") preset[prop.id] = [f.value];
+    else if (prop.type === "date" && f.op === "is" && validDate(f.value)) preset[prop.id] = f.value;
+    else if (prop.type === "number" && f.op === "eq" && Number.isFinite(Number(f.value.replace(",", "."))))
+      preset[prop.id] = Number(f.value.replace(",", "."));
+    else if (["text", "url", "email", "phone"].includes(prop.type) && f.op === "is") preset[prop.id] = f.value;
+  }
+  return preset;
 }

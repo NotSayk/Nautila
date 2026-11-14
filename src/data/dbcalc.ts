@@ -1,6 +1,6 @@
 /** Calculs en pied de colonne, rollups et formats de nombres (fonctions pures). */
 import { parseDateValue } from "./dbdate";
-import { isEmpty, type CalcFn, type Prop, type PropType, type Row, type RollupFn, type Value } from "./dbquery";
+import { isEmpty, withFormulas, type CalcFn, type Prop, type PropType, type Row, type RollupFn, type Value } from "./dbquery";
 
 const NUMERIC: PropType[] = ["number", "formula", "rollup"];
 const DATED: PropType[] = ["date", "created_time", "last_edited_time"];
@@ -145,3 +145,7 @@ export function withRollups(rows: Row[], props: Prop[], related: Map<string, Rel
     return { ...row, props: values };
   });
 }
+
+/** Lignes avec toutes leurs valeurs calculées : cumuls d'abord, puis formules (qui peuvent s'en servir) et dates de création. */
+export const withComputed = (rows: Row[], props: Prop[], related: Map<string, RelatedBase>): Row[] =>
+  withFormulas(withRollups(rows, props, related), props);

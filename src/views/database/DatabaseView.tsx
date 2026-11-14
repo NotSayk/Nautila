@@ -1,55 +1,78 @@
 import {
   ArrowUpDown,
   CalendarDays,
-  ChevronLeft,
-  ChevronRight,
   Columns3,
+  Copy,
   GanttChart,
+  Layers,
   LayoutGrid,
   List,
   ListFilter,
+  MoreHorizontal,
+  Pencil,
   Plus,
+  Search,
+  SlidersHorizontal,
   Table2,
   Trash2,
   X,
 } from "lucide-react";
-import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { rollupTargets, withComputed, type RelatedBase } from "../../data/dbcalc";
+import { convertColumn, convertTargets } from "../../data/dbconvert";
 import {
+  addMirror,
   createRow,
+  duplicateRow,
   getDatabase,
   listRows,
+  loadRelated,
   newView,
   purgeOptions,
+  restoreValues,
   saveDatabase,
+  setRowPosition,
   setRowProps,
+  syncTwin,
+  unlinkTwin,
+  updateRows,
 } from "../../data/databases";
+import { weekStartFor } from "../../data/dbdate";
+import { GROUPABLE, groupRows, type Group } from "../../data/dbgroup";
 import {
   applyView,
-  dayNoon,
-  evalFormula,
-  groupKey,
+  isComputed,
+  isEmpty,
+  positionBefore,
   removeProp,
-  timelineBounds,
-  withFormulas,
-  opsFor,
+  searchRows,
+  storedValues,
+  viewSorts,
+  visibleProps,
   type DbConfig,
   type DbView,
-  type Filter,
-  type FilterOp,
   type Option,
   type Prop,
-  type PropType,
   type Row,
   type Value,
   type ViewType,
 } from "../../data/dbquery";
-import { trashPage, updatePageMeta, type PageMeta } from "../../data/pages";
+import { countFilters, duplicateProp, duplicateView, presetFromFilters } from "../../data/dbview";
+import { restorePage, trashPage, updatePageMeta, type PageMeta } from "../../data/pages";
 import { useT, type Key } from "../../i18n";
 import { useStore } from "../../store";
-import { Cover, IconButton, Menu, PageIcon, Popover } from "../common";
-import { PropEditor, PropValue } from "./Cells";
+import { Menu } from "../common";
+import { BoardView } from "./BoardView";
+import { CalendarView } from "./CalendarView";
+import { GalleryView } from "./GalleryView";
+import { ListView } from "./ListView";
+import { RowPeek } from "./RowPeek";
+import { TableView } from "./TableView";
+import { TimelineView } from "./TimelineView";
+import { FilterEditor, GroupEditor, PopButton, PropertiesEditor, SortEditor } from "./Toolbar";
+import { LINE, uid, type Api } from "./shared";
 
-const uid = () => crypto.randomUUID().slice(0, 8);
+export { RowProperties } from "./RowProperties";
 
 const VIEW_TYPES: [ViewType, Key, typeof Table2][] = [
   ["table", "viewTable", Table2],
@@ -59,800 +82,42 @@ const VIEW_TYPES: [ViewType, Key, typeof Table2][] = [
   ["gallery", "viewGallery", LayoutGrid],
   ["timeline", "viewTimeline", GanttChart],
 ];
-const PROP_TYPES: [PropType, Key][] = [
-  ["text", "propText"],
-  ["number", "propNumber"],
-  ["select", "propSelect"],
-  ["multi_select", "propMulti"],
-  ["date", "propDate"],
-  ["checkbox", "propCheckbox"],
-  ["url", "propUrl"],
-  ["formula", "propFormula"],
-  ["relation", "propRelation"],
-];
-const OP_LABELS: Record<FilterOp, Key> = {
-  contains: "opContains",
-  not_contains: "opNotContains",
-  starts_with: "opStartsWith",
-  ends_with: "opEndsWith",
-  eq: "opEq",
-  neq: "opNeq",
-  lt: "opLt",
-  lte: "opLte",
-  gt: "opGt",
-  gte: "opGte",
-  on_or_before: "opOnOrBefore",
-  on_or_after: "opOnOrAfter",
-  between: "opBetween",
-  relative: "opRelative",
-  is: "opIs",
-  is_not: "opIsNot",
-  empty: "opEmpty",
-  not_empty: "opNotEmpty",
-  before: "opBefore",
-  after: "opAfter",
-  checked: "opChecked",
-  unchecked: "opUnchecked",
-};
-const FIELD = "h-7 rounded bg-hover px-1.5";
-const LINE = "shadow-[inset_0_-1px_0_var(--color-line)]";
 
-/** Tout ce dont les vues ont besoin pour lire et modifier la base. */
-type Api = {
-  props: Prop[];
-  rows: Row[];
-  view: DbView;
-  open: (id: string) => void;
-  add: (props?: Record<string, Value>) => Promise<void>;
-  remove: (id: string) => Promise<void>;
-  setTitle: (id: string, title: string) => Promise<void>;
-  setValue: (row: Row, propId: string, value: Value) => Promise<void>;
-  setOptions: (propId: string, options: Option[]) => void;
-  setConfig: (update: (config: DbConfig) => DbConfig) => void;
-  databaseId: string;
-  /** Ligne tout juste créée, dont le nom doit recevoir le curseur. */
-  fresh: string | null;
-  clearFresh: () => void;
-  patchView: (patch: Partial<DbView>) => void;
-};
-
-/** Vue dont la propriété de regroupement ou de date a disparu : on propose d'en choisir une autre. */
-function MissingProp({ api, type, field }: { api: Api; type: PropType; field: "groupBy" | "dateProp" }) {
-  const t = useT();
-  const eligible = api.props.filter((p) => p.type === type);
-  return (
-    <div className="flex flex-col items-start gap-2 py-6 text-muted">
-      <p>{t(field === "groupBy" ? "needGroupProp" : "needDateProp")}</p>
-      {eligible.length === 0 ? (
-        <p className="text-faint">{t("noEligibleProp")}</p>
-      ) : (
-        <select
-          aria-label={t(field === "groupBy" ? "groupBy" : "propDate")}
-          value=""
-          className={FIELD}
-          onChange={(e) => e.target.value && api.patchView({ [field]: e.target.value })}
-        >
-          <option value="">{t("chooseProp")}</option>
-          {eligible.map((p) => (
-            <option key={p.id} value={p.id}>
-              {p.name}
-            </option>
-          ))}
-        </select>
-      )}
-    </div>
-  );
-}
-
-function PopButton({
-  label,
-  icon,
-  active,
-  width,
-  children,
-}: {
-  label: string;
-  icon: React.ReactNode;
-  active?: boolean;
-  width: number;
-  children: React.ReactNode;
-}) {
-  const [anchor, setAnchor] = useState<DOMRect | null>(null);
-  return (
-    <>
-      <button
-        className={`flex h-7 items-center gap-1.5 rounded-md px-2 hover:bg-hover ${active ? "text-accent-text" : "text-muted"}`}
-        onClick={(e) => setAnchor(e.currentTarget.getBoundingClientRect())}
-      >
-        {icon}
-        {label}
-      </button>
-      {anchor && (
-        <Popover anchor={anchor} onClose={() => setAnchor(null)} width={width} align="right">
-          <div className="p-1">{children}</div>
-        </Popover>
-      )}
-    </>
-  );
-}
-
-function FilterEditor({ api }: { api: Api }) {
-  const t = useT();
-  const { view, props } = api;
-  const fields = [{ id: "title", name: t("name"), type: "title" as const }, ...props];
-  const update = (filters: Filter[]) =>
-    api.setConfig((c) => ({ ...c, views: c.views.map((v) => (v.id === view.id ? { ...v, filters } : v)) }));
-  const patch = (id: string, p: Partial<Filter>) => update(view.filters.map((f) => (f.id === id ? { ...f, ...p } : f)));
-
-  return (
-    <div className="space-y-1.5">
-      {view.filters.map((f) => {
-        const field = fields.find((x) => x.id === f.prop) ?? fields[0];
-        const noValue = ["empty", "not_empty", "checked", "unchecked"].includes(f.op);
-        const options = "options" in field ? field.options : undefined;
-        return (
-          <div key={f.id} className="flex items-center gap-1">
-            <select
-              aria-label={t("name")}
-              value={field.id}
-              className={`${FIELD} w-28`}
-              onChange={(e) => {
-                const next = fields.find((x) => x.id === e.target.value)!;
-                patch(f.id, { prop: next.id, op: opsFor(next.type)[0], value: "" });
-              }}
-            >
-              {fields.map((x) => (
-                <option key={x.id} value={x.id}>
-                  {x.name}
-                </option>
-              ))}
-            </select>
-            <select
-              aria-label={t("filter")}
-              value={f.op}
-              className={`${FIELD} w-32`}
-              onChange={(e) => patch(f.id, { op: e.target.value as FilterOp })}
-            >
-              {opsFor(field.type).map((op) => (
-                <option key={op} value={op}>
-                  {t(OP_LABELS[op])}
-                </option>
-              ))}
-            </select>
-            {noValue ? (
-              <span className="flex-1" />
-            ) : options ? (
-              <select
-                aria-label={t("value")}
-                value={f.value}
-                className={`${FIELD} min-w-0 flex-1`}
-                onChange={(e) => patch(f.id, { value: e.target.value })}
-              >
-                <option value="" />
-                {options.map((o) => (
-                  <option key={o.id} value={o.id}>
-                    {o.name}
-                  </option>
-                ))}
-              </select>
-            ) : (
-              <input
-                aria-label={t("value")}
-                type={field.type === "date" ? "date" : "text"}
-                value={f.value}
-                placeholder={t("value")}
-                className={`${FIELD} min-w-0 flex-1 placeholder:text-faint`}
-                onChange={(e) => patch(f.id, { value: e.target.value })}
-              />
-            )}
-            <IconButton label={t("delete")} onClick={() => update(view.filters.filter((x) => x.id !== f.id))}>
-              <X size={14} />
-            </IconButton>
-          </div>
-        );
-      })}
-      <button
-        className="flex h-7 items-center gap-1.5 rounded px-1.5 text-muted hover:bg-hover"
-        onClick={() => update([...view.filters, { id: uid(), prop: "title", op: "contains", value: "" }])}
-      >
-        <Plus size={14} />
-        {t("addFilter")}
-      </button>
-    </div>
-  );
-}
-
-function SortEditor({ api }: { api: Api }) {
-  const t = useT();
-  const { view, props } = api;
-  const set = (sort: DbView["sort"]) =>
-    api.setConfig((c) => ({ ...c, views: c.views.map((v) => (v.id === view.id ? { ...v, sort } : v)) }));
-  // Un tri sur une propriété supprimée est traité comme absent.
-  const sort = view.sort && (view.sort.prop === "title" || props.some((p) => p.id === view.sort!.prop)) ? view.sort : null;
-  return (
-    <div className="flex gap-1">
-      <select
-        aria-label={t("sort")}
-        value={sort?.prop ?? ""}
-        className={`${FIELD} min-w-0 flex-1`}
-        onChange={(e) => set(e.target.value ? { prop: e.target.value, dir: sort?.dir ?? "asc" } : null)}
-      >
-        <option value="">{t("noSort")}</option>
-        <option value="title">{t("name")}</option>
-        {props.map((p) => (
-          <option key={p.id} value={p.id}>
-            {p.name}
-          </option>
-        ))}
-      </select>
-      {sort && (
-        <select
-          aria-label={t("ascending")}
-          value={sort.dir}
-          className={FIELD}
-          onChange={(e) => set({ prop: sort.prop, dir: e.target.value as "asc" | "desc" })}
-        >
-          <option value="asc">{t("ascending")}</option>
-          <option value="desc">{t("descending")}</option>
-        </select>
-      )}
-    </div>
-  );
-}
-
-function TitleInput({ row, api, className = "" }: { row: Row; api: Api; className?: string }) {
-  const t = useT();
-  const ref = useRef<HTMLInputElement>(null);
-  const { fresh, clearFresh } = api;
-  // Le curseur va une seule fois au nom d'une ligne tout juste créée.
-  useEffect(() => {
-    if (fresh !== row.id) return;
-    ref.current?.focus();
-    clearFresh();
-  }, [fresh, row.id, clearFresh]);
-  return (
-    <input
-      ref={ref}
-      key={row.title}
-      aria-label={t("name")}
-      defaultValue={row.title}
-      placeholder={t("untitled")}
-      onBlur={(e) => e.target.value !== row.title && api.setTitle(row.id, e.target.value)}
-      onKeyDown={(e) => e.key === "Enter" && e.currentTarget.blur()}
-      className={`min-w-0 flex-1 bg-transparent font-medium placeholder:text-faint ${className}`}
-    />
-  );
-}
-
-function AddRow({ onClick }: { onClick: () => void }) {
-  const t = useT();
-  return (
-    <button
-      onClick={onClick}
-      className="flex h-8 w-full items-center gap-1.5 rounded px-2 text-left text-faint hover:bg-hover"
-    >
-      <Plus size={14} />
-      {t("newRow")}
-    </button>
-  );
-}
-
-function PropHeader({ prop, api }: { prop: Prop; api: Api }) {
-  const t = useT();
-  const databases = useStore((s) => s.pages).filter((p) => p.kind === "database");
-  const [anchor, setAnchor] = useState<DOMRect | null>(null);
-  const update = (patch: Partial<Prop>) =>
-    api.setConfig((c) => ({ ...c, props: c.props.map((p) => (p.id === prop.id ? { ...p, ...patch } : p)) }));
-  return (
-    <>
-      <button
-        className="flex h-full w-full items-center truncate px-2 text-left text-muted hover:bg-hover"
-        onClick={(e) => setAnchor(e.currentTarget.getBoundingClientRect())}
-      >
-        {prop.name}
-      </button>
-      {anchor && (
-        <Popover anchor={anchor} onClose={() => setAnchor(null)} width={220}>
-          <input
-            autoFocus
-            aria-label={t("name")}
-            defaultValue={prop.name}
-            onBlur={(e) =>
-              e.target.value.trim() && e.target.value !== prop.name && update({ name: e.target.value.trim() })
-            }
-            onKeyDown={(e) => e.key === "Enter" && e.currentTarget.blur()}
-            className="mb-1 h-7 w-full rounded bg-hover px-2"
-          />
-          <p className="px-2 py-1 text-xs text-faint">{t(PROP_TYPES.find(([type]) => type === prop.type)?.[1] ?? "propText")}</p>
-          {prop.type === "formula" && (
-            <input
-              aria-label={t("propFormula")}
-              defaultValue={prop.formula ?? ""}
-              placeholder={t("formulaHint")}
-              spellCheck={false}
-              onBlur={(e) => e.target.value !== (prop.formula ?? "") && update({ formula: e.target.value })}
-              onKeyDown={(e) => e.key === "Enter" && e.currentTarget.blur()}
-              className="mb-1 h-7 w-full rounded bg-hover px-2 font-mono text-[13px] placeholder:text-faint"
-            />
-          )}
-          {prop.type === "relation" && (
-            <select
-              aria-label={t("relatedDb")}
-              value={prop.target ?? ""}
-              onChange={(e) => update({ target: e.target.value })}
-              className="mb-1 h-7 w-full rounded bg-hover px-1.5"
-            >
-              {databases.map((d) => (
-                <option key={d.id} value={d.id}>
-                  {d.title || t("untitled")}
-                </option>
-              ))}
-            </select>
-          )}
-          <button
-            className="flex h-7 w-full items-center gap-2 rounded px-2 text-left text-danger hover:bg-hover"
-            onClick={() => {
-              setAnchor(null);
-              api.setConfig((c) => removeProp(c, prop.id));
-            }}
-          >
-            <Trash2 size={16} />
-            {t("deleteProperty")}
-          </button>
-        </Popover>
-      )}
-    </>
-  );
-}
-
-function TableLayout({ api }: { api: Api }) {
-  const t = useT();
-  const { props, rows } = api;
-  const columns = `280px ${props.map(() => "180px").join(" ")} 40px`;
-  const cell = "min-w-0 shadow-[inset_-1px_0_0_var(--color-line)]";
-  // Regroupement facultatif par une propriété « sélection » : une section par option.
-  const group = props.find((p) => p.id === api.view.groupBy && p.type === "select");
-  const groups: { id: string; option?: Option; rows: Row[] }[] = group
-    ? [...(group.options ?? []).map((o) => ({ id: o.id, option: o })), { id: "" }]
-        .map((g) => ({ ...g, rows: rows.filter((r) => groupKey(r.props[group.id], group) === g.id) }))
-        .filter((g) => g.rows.length > 0)
-    : [{ id: "", rows }];
-  return (
-    <div className="overflow-x-auto">
-      <div className="min-w-max">
-        <div
-          className={`grid h-8 text-[13px] ${LINE} shadow-[inset_0_1px_0_var(--color-line),inset_0_-1px_0_var(--color-line)]`}
-          style={{ gridTemplateColumns: columns }}
-        >
-          <span className={`${cell} flex items-center px-2 text-muted`}>{t("name")}</span>
-          {props.map((p) => (
-            <span key={p.id} className={cell}>
-              <PropHeader prop={p} api={api} />
-            </span>
-          ))}
-          <Menu
-            label={t("addProperty")}
-            align="right"
-            className="grid h-full place-items-center text-muted hover:bg-hover"
-            trigger={<Plus size={15} />}
-            items={PROP_TYPES.map(([type, key]) => ({
-              label: t(key),
-              onClick: () =>
-                api.setConfig((c) => ({
-                  ...c,
-                  props: [
-                    ...c.props,
-                    { id: uid(), name: t(key), type, ...(type === "relation" ? { target: api.databaseId } : {}) },
-                  ],
-                })),
-            }))}
-          />
-        </div>
-        {groups.map((g) => (
-          <Fragment key={g.id}>
-            {group && (
-              <div className={`flex h-9 items-center gap-2 px-2 ${LINE}`}>
-                {g.option ? (
-                  <span className={`tag tag-${g.option.color}`}>{g.option.name}</span>
-                ) : (
-                  <span className="text-muted">{t("noValue")}</span>
-                )}
-                <span className="text-faint">{g.rows.length}</span>
-              </div>
-            )}
-            {g.rows.map((row) => (
-              <div key={row.id} className={`group grid min-h-9 ${LINE}`} style={{ gridTemplateColumns: columns }}>
-                <span className={`${cell} flex items-center gap-1.5 pl-2 pr-1`}>
-                  <PageIcon page={{ icon: row.icon, kind: "note" }} size={16} />
-                  <TitleInput row={row} api={api} className="h-full" />
-                  <button
-                    onClick={() => api.open(row.id)}
-                    className="h-6 shrink-0 rounded bg-pop px-1.5 text-xs text-muted opacity-0 shadow-[0_0_0_1px_var(--color-line)] hover:bg-hover focus:opacity-100 group-focus-within:opacity-100 group-hover:opacity-100 pointer-coarse:opacity-100 max-sm:opacity-100"
-                  >
-                    {t("open")}
-                  </button>
-                </span>
-                {props.map((p) => (
-                  <span key={p.id} className={cell}>
-                    <PropEditor
-                      prop={p}
-                      value={row.props[p.id]}
-                      onChange={(v) => api.setValue(row, p.id, v)}
-                      onOptions={(o) => api.setOptions(p.id, o)}
-                    />
-                  </span>
-                ))}
-                <IconButton
-                  label={t("moveToTrash")}
-                  onClick={() => api.remove(row.id)}
-                  className="m-auto opacity-0 focus:opacity-100 group-focus-within:opacity-100 group-hover:opacity-100 pointer-coarse:opacity-100 max-sm:opacity-100"
-                >
-                  <Trash2 size={14} />
-                </IconButton>
-              </div>
-            ))}
-          </Fragment>
-        ))}
-        <AddRow onClick={() => api.add()} />
-      </div>
-    </div>
-  );
-}
-
-function CardProps({ row, api, skip }: { row: Row; api: Api; skip?: string }) {
-  return (
-    <>
-      {api.props
-        .filter((p) => p.id !== skip)
-        .map((p) => (
-          <PropValue key={p.id} prop={p} value={row.props[p.id]} />
-        ))}
-    </>
-  );
-}
-
-function BoardLayout({ api }: { api: Api }) {
-  const t = useT();
-  const group = api.props.find((p) => p.id === api.view.groupBy && p.type === "select");
-  const [dragId, setDragId] = useState<string | null>(null);
-  const [over, setOver] = useState<string | null>(null);
-  if (!group) return <MissingProp api={api} type="select" field="groupBy" />;
-  const columns: { id: string; option?: Option }[] = [
-    { id: "" },
-    ...(group.options ?? []).map((o) => ({ id: o.id, option: o })),
-  ];
-
-  return (
-    <div className="flex gap-3 overflow-x-auto pb-4">
-      {columns.map(({ id, option }) => {
-        const cards = api.rows.filter((r) => groupKey(r.props[group.id], group) === id);
-        if (!option && cards.length === 0) return null;
-        return (
-          <div
-            key={id}
-            className={`w-64 shrink-0 rounded-lg p-1.5 ${over === id ? "bg-hover" : ""}`}
-            onDragOver={(e) => {
-              if (!dragId) return;
-              e.preventDefault();
-              setOver(id);
-            }}
-            onDragLeave={() => setOver((o) => (o === id ? null : o))}
-            onDrop={(e) => {
-              e.preventDefault();
-              const row = api.rows.find((r) => r.id === dragId);
-              if (row) void api.setValue(row, group.id, id || null);
-              setDragId(null);
-              setOver(null);
-            }}
-          >
-            <div className="mb-2 flex h-7 items-center gap-2 px-1">
-              {option ? (
-                <span className={`tag tag-${option.color}`}>{option.name}</span>
-              ) : (
-                <span className="text-muted">{t("noValue")}</span>
-              )}
-              <span className="text-faint">{cards.length}</span>
-            </div>
-            <div className="space-y-1.5">
-              {cards.map((row) => (
-                <button
-                  key={row.id}
-                  draggable
-                  onDragStart={() => setDragId(row.id)}
-                  onDragEnd={() => setDragId(null)}
-                  onClick={() => api.open(row.id)}
-                  className={`flex w-full flex-col gap-1.5 rounded-md bg-pop p-2.5 text-left text-[13px] shadow-[0_0_0_1px_var(--color-line),0_1px_2px_rgb(0_0_0/0.05)] hover:bg-hover ${
-                    dragId === row.id ? "opacity-40" : ""
-                  }`}
-                >
-                  <span className="flex items-center gap-1.5 text-sm font-medium">
-                    {row.icon && <span>{row.icon}</span>}
-                    {row.title || <span className="text-faint">{t("untitled")}</span>}
-                  </span>
-                  <CardProps row={row} api={api} skip={group.id} />
-                </button>
-              ))}
-              <AddRow onClick={() => api.add(id ? { [group.id]: id } : {})} />
-            </div>
-          </div>
-        );
-      })}
-    </div>
-  );
-}
-
-const iso = (d: Date) =>
-  `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
-
-function CalendarLayout({ api }: { api: Api }) {
-  const t = useT();
-  const lang = useStore((s) => s.lang);
-  const dateProp = api.props.find((p) => p.id === api.view.dateProp && p.type === "date");
-  const [month, setMonth] = useState(() => new Date(new Date().getFullYear(), new Date().getMonth(), 1));
-  const [dragId, setDragId] = useState<string | null>(null);
-  if (!dateProp) return <MissingProp api={api} type="date" field="dateProp" />;
-
-  // Grille de six semaines commençant un lundi.
-  const start = new Date(month);
-  start.setDate(1 - ((month.getDay() + 6) % 7));
-  const days = Array.from(
-    { length: 42 },
-    (_, i) => new Date(start.getFullYear(), start.getMonth(), start.getDate() + i),
-  );
-  const today = iso(new Date());
-  const weekday = new Intl.DateTimeFormat(lang, { weekday: "short" });
-  const shift = (n: number) => setMonth(new Date(month.getFullYear(), month.getMonth() + n, 1));
-
-  return (
-    <div>
-      <div className="mb-2 flex items-center gap-1">
-        <span className="flex-1 font-semibold first-letter:uppercase">
-          {new Intl.DateTimeFormat(lang, { month: "long", year: "numeric" }).format(month)}
-        </span>
-        <IconButton label={t("previous")} onClick={() => shift(-1)}>
-          <ChevronLeft size={16} />
-        </IconButton>
-        <button
-          className="h-7 rounded-md px-2 text-muted hover:bg-hover"
-          onClick={() => setMonth(new Date(new Date().getFullYear(), new Date().getMonth(), 1))}
-        >
-          {t("today")}
-        </button>
-        <IconButton label={t("next")} onClick={() => shift(1)}>
-          <ChevronRight size={16} />
-        </IconButton>
-      </div>
-      <div className="grid grid-cols-7 text-xs text-faint">
-        {days.slice(0, 7).map((d) => (
-          <span key={d.getDay()} className="px-2 pb-1 text-right">
-            {weekday.format(d)}
-          </span>
-        ))}
-      </div>
-      <div className="grid grid-cols-7 shadow-[inset_1px_1px_0_var(--color-line)]">
-        {days.map((d) => {
-          const key = iso(d);
-          const items = api.rows.filter((r) => r.props[dateProp.id] === key);
-          return (
-            <div
-              key={key}
-              className={`group min-h-28 p-1 shadow-[inset_-1px_-1px_0_var(--color-line)] ${d.getMonth() === month.getMonth() ? "" : "bg-panel"}`}
-              onDragOver={(e) => dragId && e.preventDefault()}
-              onDrop={(e) => {
-                e.preventDefault();
-                const row = api.rows.find((r) => r.id === dragId);
-                if (row) void api.setValue(row, dateProp.id, key);
-                setDragId(null);
-              }}
-            >
-              <div className="mb-1 flex h-6 items-center justify-between">
-                <button
-                  aria-label={`${t("newRow")} ${key}`}
-                  onClick={() => api.add({ [dateProp.id]: key })}
-                  className="grid size-5 place-items-center rounded text-faint opacity-0 hover:bg-hover focus:opacity-100 group-hover:opacity-100 pointer-coarse:opacity-100"
-                >
-                  <Plus size={13} />
-                </button>
-                <span
-                  className={`grid h-6 min-w-6 place-items-center rounded-full px-1 text-xs ${key === today ? "bg-danger font-medium text-white" : "text-muted"}`}
-                >
-                  {d.getDate()}
-                </span>
-              </div>
-              <div className="space-y-1">
-                {items.map((row) => (
-                  <button
-                    key={row.id}
-                    draggable
-                    onDragStart={() => setDragId(row.id)}
-                    onDragEnd={() => setDragId(null)}
-                    onClick={() => api.open(row.id)}
-                    className="block w-full truncate rounded bg-pop px-1.5 py-1 text-left text-xs font-medium shadow-[0_0_0_1px_var(--color-line)] hover:bg-hover"
-                  >
-                    {row.icon} {row.title || t("untitled")}
-                  </button>
-                ))}
-              </div>
-            </div>
-          );
-        })}
-      </div>
-    </div>
-  );
-}
-
-function ListLayout({ api }: { api: Api }) {
-  const t = useT();
-  return (
-    <div>
-      {api.rows.map((row) => (
-        <div key={row.id} className="group flex min-h-9 items-center gap-2 rounded-md px-2 hover:bg-hover">
-          <button className="flex min-w-0 flex-1 items-center gap-2 py-1.5 text-left" onClick={() => api.open(row.id)}>
-            <PageIcon page={{ icon: row.icon, kind: "note" }} />
-            <span className="truncate font-medium">
-              {row.title || <span className="text-faint">{t("untitled")}</span>}
-            </span>
-          </button>
-          <span className="flex min-w-0 shrink items-center gap-3 text-[13px] max-sm:hidden">
-            <CardProps row={row} api={api} />
-          </span>
-          <IconButton
-            label={t("moveToTrash")}
-            onClick={() => api.remove(row.id)}
-            className="opacity-0 focus:opacity-100 group-focus-within:opacity-100 group-hover:opacity-100 pointer-coarse:opacity-100 max-sm:opacity-100"
-          >
-            <Trash2 size={14} />
-          </IconButton>
-        </div>
-      ))}
-      <AddRow onClick={() => api.add()} />
-    </div>
-  );
-}
-
-function GalleryLayout({ api }: { api: Api }) {
-  const t = useT();
-  return (
-    <div className="grid grid-cols-[repeat(auto-fill,minmax(220px,1fr))] gap-4">
-      {api.rows.map((row) => (
-        <button
-          key={row.id}
-          onClick={() => api.open(row.id)}
-          className="flex flex-col overflow-hidden rounded-lg bg-pop text-left shadow-[0_0_0_1px_var(--color-line),0_2px_4px_rgb(0_0_0/0.04)] hover:bg-hover"
-        >
-          <span className="grid h-28 w-full place-items-center bg-panel text-4xl">
-            {row.cover ? <Cover value={row.cover} /> : row.icon}
-          </span>
-          <span className="flex flex-col gap-1.5 p-3 text-[13px]">
-            <span className="text-sm font-medium">
-              {row.title || <span className="text-faint">{t("untitled")}</span>}
-            </span>
-            <CardProps row={row} api={api} />
-          </span>
-        </button>
-      ))}
-      <button
-        onClick={() => api.add()}
-        className="grid min-h-40 place-items-center rounded-lg text-faint shadow-[0_0_0_1px_var(--color-line)] hover:bg-hover"
-      >
-        <Plus size={18} />
-      </button>
-    </div>
-  );
-}
-
-const DAY_MS = 86_400_000;
-const DAY_W = 30;
-
-function TimelineLayout({ api }: { api: Api }) {
-  const t = useT();
-  const lang = useStore((s) => s.lang);
-  const startProp = api.props.find((p) => p.id === api.view.dateProp && p.type === "date");
-  const endProp = api.props.find((p) => p.id === api.view.endProp && p.type === "date");
-  if (!startProp) return <MissingProp api={api} type="date" field="dateProp" />;
-
-  // Les dates invalides sont ignorées (la ligne compte comme sans date).
-  const dated = api.rows.flatMap((row) => {
-    const start = dayNoon(row.props[startProp.id]);
-    if (start === null) return [];
-    const end = endProp ? dayNoon(row.props[endProp.id]) : null;
-    return [{ row, start, end: Math.max(end ?? start, start) }];
-  });
-  const undated = api.rows.length - dated.length;
-  // La frise couvre toutes les lignes, avec une marge, et au moins cinq semaines ; elle est bornée.
-  const today = new Date().setHours(12, 0, 0, 0);
-  const { from, to } = timelineBounds(dated, today);
-  // Les lignes hors de la plage sont comptées à part ; celles qui la débordent sont rognées.
-  const items = dated
-    .filter((i) => i.end >= from && i.start <= to)
-    .map((i) => ({ ...i, start: Math.max(i.start, from), end: Math.min(i.end, to) }));
-  const outOfRange = dated.length - items.length;
-  const days = Array.from({ length: Math.round((to - from) / DAY_MS) + 1 }, (_, i) => new Date(from + i * DAY_MS));
-  const month = new Intl.DateTimeFormat(lang, { month: "long", year: "numeric" });
-
-  return (
-    <div>
-      <div className="overflow-x-auto pb-2">
-        <div className="relative" style={{ width: days.length * DAY_W }}>
-          <div className="flex h-6 text-xs text-muted">
-            {days.map((d, i) => (
-              <span key={i} className="shrink-0 whitespace-nowrap first-letter:uppercase" style={{ width: DAY_W }}>
-                {(i === 0 || d.getDate() === 1) && month.format(d)}
-              </span>
-            ))}
-          </div>
-          <div className={`flex h-6 text-xs text-faint ${LINE}`}>
-            {days.map((d, i) => (
-              <span
-                key={i}
-                className={`shrink-0 text-center ${d.getTime() === today ? "font-semibold text-danger" : ""}`}
-                style={{ width: DAY_W }}
-              >
-                {d.getDate()}
-              </span>
-            ))}
-          </div>
-          <div
-            className="relative"
-            style={{
-              height: Math.max(items.length, 1) * 40 + 8,
-              backgroundImage: "linear-gradient(90deg, var(--color-line) 1px, transparent 1px)",
-              backgroundSize: `${DAY_W * 7}px 100%`,
-              backgroundPositionX: -(((new Date(from).getDay() + 6) % 7) * DAY_W),
-            }}
-          >
-            {items.map(({ row, start, end }, i) => (
-              <button
-                key={row.id}
-                onClick={() => api.open(row.id)}
-                className="absolute flex h-8 items-center gap-1.5 overflow-hidden rounded-md bg-pop px-2 text-left text-[13px] font-medium shadow-[0_0_0_1px_var(--color-line),0_1px_2px_rgb(0_0_0/0.06)] hover:bg-hover"
-                style={{
-                  top: 8 + i * 40,
-                  left: Math.round((start - from) / DAY_MS) * DAY_W + 2,
-                  minWidth: (Math.round((end - start) / DAY_MS) + 1) * DAY_W - 4,
-                }}
-              >
-                {row.icon && <span>{row.icon}</span>}
-                <span className="whitespace-nowrap">{row.title || t("untitled")}</span>
-              </button>
-            ))}
-          </div>
-        </div>
-      </div>
-      {undated > 0 && (
-        <p className="mt-2 text-xs text-faint">
-          {undated} {t("noDate")}
-        </p>
-      )}
-      {outOfRange > 0 && (
-        <p className="mt-2 text-xs text-faint">
-          {outOfRange} {t("outOfRange")}
-        </p>
-      )}
-      <AddRow onClick={() => api.add({ [startProp.id]: iso(new Date()) })} />
-    </div>
-  );
-}
+/** Message de retour avec une action pour annuler pendant quelques secondes. */
+const toastUndo = (message: string, label: string, run: () => void | Promise<void>) =>
+  useStore.setState({ toast: { message, action: { label, run } } });
 
 export function DatabaseView({ page, embedded }: { page: PageMeta; embedded?: boolean }) {
   const t = useT();
   const navigate = useStore((s) => s.navigate);
+  const lang = useStore((s) => s.lang);
+  const pages = useStore((s) => s.pages);
   const [config, setConfigState] = useState<DbConfig | null>(null);
   const [rows, setRows] = useState<Row[]>([]);
+  const [related, setRelated] = useState<Map<string, RelatedBase>>(new Map());
   const [viewId, setViewId] = useState<string | null>(null);
   const [fresh, setFresh] = useState<string | null>(null);
   const [renaming, setRenaming] = useState<string | null>(null);
+  const [query, setQuery] = useState("");
+  const [peekId, setPeekId] = useState<string | null>(null);
+  const [selected, setSelectedState] = useState<Set<string>>(new Set());
+  const [filterSignal, setFilterSignal] = useState(0);
 
   const configRef = useRef<DbConfig | null>(null);
+  const rowsRef = useRef<Row[]>([]);
   const loadSeq = useRef(0);
-  const pages = useStore((s) => s.pages);
+
+  const putRows = useCallback((next: Row[] | ((list: Row[]) => Row[])) => {
+    rowsRef.current = typeof next === "function" ? next(rowsRef.current) : next;
+    setRows(rowsRef.current);
+  }, []);
 
   // Une réponse tardive d'un chargement précédent est ignorée.
   const reload = useCallback(async () => {
     const seq = ++loadSeq.current;
     const list = await listRows(page.id);
-    if (seq === loadSeq.current) setRows(list);
-  }, [page.id]);
+    if (seq === loadSeq.current) putRows(list);
+  }, [page.id, putRows]);
 
   // La liste des pages change (synchro, partage, autre onglet) : on relit les lignes.
   const firstPages = useRef(true);
@@ -867,6 +132,9 @@ export function DatabaseView({ page, embedded }: { page: PageMeta; embedded?: bo
   useEffect(() => {
     let live = true;
     configRef.current = null;
+    setPeekId(null);
+    setSelectedState(new Set());
+    setQuery("");
     (async () => {
       let loaded = await getDatabase(page.id);
       if (!loaded) {
@@ -878,7 +146,7 @@ export function DatabaseView({ page, embedded }: { page: PageMeta; embedded?: bo
       if (!live) return;
       configRef.current = loaded;
       setConfigState(loaded);
-      if (seq === loadSeq.current) setRows(list);
+      if (seq === loadSeq.current) putRows(list);
     })();
     return () => {
       live = false;
@@ -900,63 +168,240 @@ export function DatabaseView({ page, embedded }: { page: PageMeta; embedded?: bo
   );
   const clearFresh = useCallback(() => setFresh(null), []);
 
+  // Les lignes des bases liées par un cumul.
+  const targets = config ? rollupTargets(config.props).join(",") : "";
+  useEffect(() => {
+    let live = true;
+    if (!targets) setRelated((m) => (m.size ? new Map() : m));
+    else void loadRelated(targets.split(",")).then((m) => live && setRelated(m));
+    return () => {
+      live = false;
+    };
+  }, [targets, pages, rows]);
+
   const view = config?.views.find((v) => v.id === viewId) ?? config?.views[0];
+  const ctx = useMemo(() => ({ weekStart: weekStartFor(lang) }), [lang]);
+  const computed = useMemo(() => (config ? withComputed(rows, config.props, related) : []), [rows, config, related]);
   const visible = useMemo(
-    () => (config && view ? applyView(withFormulas(rows, config.props), view, config.props) : []),
-    [rows, view, config],
+    () => (config && view ? searchRows(applyView(computed, view, config.props, ctx), query, config.props) : []),
+    [computed, view, config, ctx, query],
   );
+  const titleOf = useCallback((id: string) => pages.find((p) => p.id === id)?.title ?? null, [pages]);
+
+  const groupProp = config?.props.find((p) => p.id === view?.groupBy && GROUPABLE.includes(p.type));
+  const groups = useMemo<Group[] | null>(
+    () =>
+      groupProp && view
+        ? groupRows(visible, groupProp, {
+            by: view.groupDate,
+            weekStart: ctx.weekStart,
+            keepEmpty: view.type === "board" && !view.hideEmptyGroups,
+            noneFirst: view.type === "board",
+            titleOf,
+          })
+        : null,
+    [visible, groupProp, view, ctx, titleOf],
+  );
+
+  // La sélection ne garde que les lignes qui existent encore.
+  useEffect(() => {
+    setSelectedState((s) => {
+      const alive = new Set([...s].filter((id) => rows.some((r) => r.id === id)));
+      return alive.size === s.size ? s : alive;
+    });
+  }, [rows]);
+
   if (!config || !view) return null;
 
   const refreshPages = () => useStore.getState().refreshPages();
   const patchView = (patch: Partial<DbView>) =>
     setConfig((c) => ({ ...c, views: c.views.map((v) => (v.id === view.id ? { ...v, ...patch } : v)) }));
+  const hasSort = viewSorts(view).some((s) => s.prop === "title" || config.props.some((p) => p.id === s.prop));
+  const rawRow = (id: string) => rowsRef.current.find((r) => r.id === id);
+
+  const trash = async (ids: string[]) => {
+    for (const id of ids) await trashPage(id);
+    setSelectedState(new Set());
+    await reload();
+    await refreshPages();
+    toastUndo(t("rowsTrashed"), t("undoAction"), async () => {
+      for (const id of ids) await restorePage(id);
+      await reload();
+      await refreshPages();
+    });
+  };
+
+  const setValues = async (row: Row, patch: Record<string, Value>) => {
+    // On repart de la ligne brute : `row` peut porter des résultats calculés qu'on ne stocke pas.
+    const raw = rawRow(row.id) ?? row;
+    const props = storedValues({ ...raw.props, ...patch }, config.props);
+    putRows((list) => list.map((r) => (r.id === row.id ? { ...r, props, updated_at: Date.now() } : r)));
+    await setRowProps(row.id, props);
+    // Relations bidirectionnelles : le miroir des lignes liées suit.
+    let mirrored = false;
+    for (const p of config.props)
+      if (p.type === "relation" && p.twin && p.id in patch) {
+        await syncTwin(row.id, p, raw.props[p.id], patch[p.id]);
+        mirrored ||= p.target === page.id;
+      }
+    if (mirrored) await reload();
+  };
+
   const api: Api = {
     databaseId: page.id,
     props: config.props,
+    shown: visibleProps(config.props, view),
     rows: visible,
+    groups,
+    groupProp,
     view,
+    related,
+    ctx,
+    lang,
+    canReorder: !hasSort && !groupProp && !query.trim(),
     fresh,
     clearFresh,
+    peek: setPeekId,
+    openPage: (id) => navigate({ view: "page", id }),
     patchView,
     setConfig,
-    open: (id) => navigate({ view: "page", id }),
+    titleOf,
+    rowById: (id) => computed.find((r) => r.id === id),
+    selected,
+    toggleSelected: (id) =>
+      setSelectedState((s) => {
+        const next = new Set(s);
+        if (!next.delete(id)) next.add(id);
+        return next;
+      }),
+    setSelected: (ids) => setSelectedState(new Set(ids)),
+    openFilters: () => setFilterSignal((n) => n + 1),
     add: async (props = {}) => {
-      // Une ligne créée sous un filtre « est » reçoit la valeur filtrée, pour rester visible.
-      const preset: Record<string, Value> = {};
-      for (const f of view.filters) if (f.op === "is" && f.prop !== "title" && f.value) preset[f.prop] = f.value;
-      const id = await createRow(page.id, { ...preset, ...props });
+      // Une ligne créée sous des filtres reçoit leurs valeurs, pour rester visible.
+      const id = await createRow(page.id, {
+        ...presetFromFilters(view.filters, view.filterMode, config.props),
+        ...props,
+      });
       setFresh(id);
       await reload();
       await refreshPages();
     },
-    remove: async (id) => {
-      await trashPage(id);
+    remove: (id) => trash([id]),
+    removeMany: trash,
+    duplicate: async (id) => {
+      const at = visible.findIndex((r) => r.id === id);
+      const original = visible[at];
+      if (!original) return;
+      // La copie vient juste après l'original dans l'ordre manuel.
+      const next = visible[at + 1];
+      const position = next ? (original.position + next.position) / 2 : original.position + 1;
+      const copy = await duplicateRow(id, ` (${t("propCopy")})`, position);
+      for (const p of config.props)
+        if (p.type === "relation" && p.twin) await syncTwin(copy, p, null, original.props[p.id]);
       await reload();
       await refreshPages();
+      setFresh(copy);
+      useStore.setState({ toast: { message: t("rowDuplicated") } });
+    },
+    moveRow: async (id, beforeId) => {
+      const position = positionBefore(visible, id, beforeId);
+      if (position === null) return;
+      putRows((list) => list.map((r) => (r.id === id ? { ...r, position } : r)));
+      await setRowPosition(id, position);
     },
     setTitle: async (id, title) => {
       await updatePageMeta(id, { title });
       await reload();
       await refreshPages();
     },
-    setValue: async (row, propId, value) => {
-      // On repart de la ligne brute : `row` peut porter des résultats de formules qu'on ne stocke pas.
-      const raw = rows.find((r) => r.id === row.id) ?? row;
-      const props = { ...raw.props, [propId]: value };
-      for (const p of config.props) if (p.type === "formula") delete props[p.id];
-      setRows((list) => list.map((r) => (r.id === row.id ? { ...r, props } : r)));
-      await setRowProps(row.id, props);
-    },
-    setOptions: (propId, options) => {
+    setValue: (row, propId, value) => setValues(row, { [propId]: value }),
+    setValues,
+    setOptions: (propId, options: Option[]) => {
       const before = config.props.find((p) => p.id === propId)?.options ?? [];
       const removed = before.filter((o) => !options.some((x) => x.id === o.id)).map((o) => o.id);
       setConfig((c) => ({ ...c, props: c.props.map((p) => (p.id === propId ? { ...p, options } : p)) }));
       // Une option supprimée disparaît de toutes les lignes, pas seulement de la cellule courante.
       if (removed.length)
         void purgeOptions(page.id, propId, removed).then((changed) => {
-          if (changed.length)
-            setRows((list) => list.map((r) => changed.find((c) => c.id === r.id) ?? r));
+          if (changed.length) putRows((list) => list.map((r) => changed.find((c) => c.id === r.id) ?? r));
         });
+    },
+    updateProp: (propId, patch) =>
+      setConfig((c) => ({ ...c, props: c.props.map((p) => (p.id === propId ? { ...p, ...patch } : p)) })),
+    convertProp: async (propId, to) => {
+      const old = configRef.current?.props.find((p) => p.id === propId);
+      if (!old || old.type === to) return;
+      const cells = computed.map((r) => ({ id: r.id, value: r.props[propId] }));
+      const had = cells.some((c) => !isEmpty(c.value));
+      let next: Prop;
+      let values = new Map<string, Value>();
+      if (!had && !convertTargets(old.type).includes(to)) {
+        // Colonne vide : le type change sans rien à convertir.
+        next = { id: old.id, name: old.name, type: to, ...(to === "relation" ? { target: page.id } : {}) };
+      } else ({ prop: next, values } = convertColumn(cells, old, to));
+      setConfig((c) => ({ ...c, props: c.props.map((p) => (p.id === propId ? next : p)) }));
+      if (values.size && !isComputed(to)) {
+        const changed = await updateRows(page.id, (props, row) =>
+          values.has(row.id) ? { ...props, [propId]: values.get(row.id) } : null,
+        );
+        putRows((list) => list.map((r) => changed.find((c) => c.id === r.id) ?? r));
+      }
+      // Annuler remet l'ancienne propriété et les valeurs d'avant (rien à remettre pour un type calculé).
+      const before = new Map(cells.map((c) => [c.id, isComputed(old.type) ? undefined : c.value]));
+      toastUndo(t("typeChanged"), t("undoAction"), async () => {
+        setConfig((c) => ({ ...c, props: c.props.map((p) => (p.id === propId ? old : p)) }));
+        const restored = await restoreValues(page.id, propId, before);
+        putRows((list) => list.map((r) => restored.find((c) => c.id === r.id) ?? r));
+      });
+    },
+    duplicateProp: async (propId) => {
+      const old = configRef.current?.props.find((p) => p.id === propId);
+      if (!old) return;
+      const id = uid();
+      setConfig((c) => duplicateProp(c, propId, id, `${old.name} (${t("propCopy")})`));
+      if (isComputed(old.type)) return;
+      const changed = await updateRows(page.id, (props) =>
+        isEmpty(props[propId]) ? null : { ...props, [id]: props[propId] },
+      );
+      putRows((list) => list.map((r) => changed.find((c) => c.id === r.id) ?? r));
+    },
+    deleteProp: (propId) => {
+      const snapshot = configRef.current;
+      const old = snapshot?.props.find((p) => p.id === propId);
+      if (!snapshot || !old) return;
+      setConfig((c) => removeProp(c, propId));
+      if (old.twin && old.target && old.target !== page.id) void unlinkTwin(old.target, old.twin);
+      // Annuler rend la propriété et ses réglages ; une relation bidirectionnelle revient simple.
+      const { twin: _twin, ...restored } = old;
+      toastUndo(t("propDeleted"), t("undoAction"), () =>
+        setConfig(() => ({
+          ...snapshot,
+          props: snapshot.props
+            .filter((p) => !(old.twin && p.id === old.twin && old.target === page.id))
+            .map((p) => (p.id === propId ? restored : p)),
+        })),
+      );
+    },
+    setTwin: async (propId, on) => {
+      const current = configRef.current;
+      const prop = current?.props.find((p) => p.id === propId);
+      if (!current || !prop) return;
+      if (on) {
+        const next = await addMirror(page.id, current, propId, page.title || t("database"));
+        setConfig(() => next);
+        await reload();
+        return;
+      }
+      const { twin, target } = prop;
+      setConfig((c) => ({
+        ...c,
+        props: c.props.map((p) => {
+          if (p.id !== propId && !(target === page.id && p.id === twin)) return p;
+          const { twin: _gone, ...rest } = p;
+          return rest;
+        }),
+      }));
+      if (twin && target && target !== page.id) await unlinkTwin(target, twin);
     },
   };
 
@@ -995,13 +440,64 @@ export function DatabaseView({ page, embedded }: { page: PageMeta; embedded?: bo
     setViewId(next.id);
   };
 
+  const copyView = () => {
+    const copy = duplicateView(view, uid(), `${view.name} (${t("propCopy")})`, uid);
+    setConfig((c) => {
+      const at = c.views.findIndex((v) => v.id === view.id);
+      const views = [...c.views];
+      views.splice(at + 1, 0, copy);
+      return { ...c, views };
+    });
+    setViewId(copy.id);
+  };
+  const deleteView = () => {
+    const snapshot = config.views;
+    const gone = view;
+    setViewId(null);
+    setConfig((c) => ({ ...c, views: c.views.filter((v) => v.id !== gone.id) }));
+    toastUndo(t("viewDeleted"), t("undoAction"), () => {
+      setConfig((c) => {
+        if (c.views.some((v) => v.id === gone.id)) return c;
+        const at = snapshot.findIndex((v) => v.id === gone.id);
+        const views = [...c.views];
+        views.splice(Math.min(at, views.length), 0, gone);
+        return { ...c, views };
+      });
+      setViewId(gone.id);
+    });
+  };
+
   // Type de vue inconnu (base plus récente, import) : repli sur le tableau.
   const layout: ViewType = VIEW_TYPES.some(([type]) => type === view.type) ? view.type : "table";
-  const pickers: [keyof DbView, PropType, boolean][] = [
-    ["groupBy", "select", view.type === "board" || view.type === "table"],
-    ["dateProp", "date", view.type === "calendar" || view.type === "timeline"],
-    ["endProp", "date", view.type === "timeline"],
-  ];
+  const dated = layout === "calendar" || layout === "timeline";
+  const filterCount = countFilters(view.filters);
+  const dateSelect = (key: "dateProp" | "endProp") => {
+    // Une propriété supprimée n'est plus sélectionnée : le sélecteur reflète l'état réel.
+    const current = config.props.some((p) => p.id === view[key] && p.type === "date") ? (view[key] as string) : "";
+    return (
+      <select
+        key={key}
+        aria-label={t(key === "endProp" ? "endDate" : "propDate")}
+        value={current}
+        onChange={(e) => patchView({ [key]: e.target.value || undefined })}
+        className="h-7 max-w-36 rounded-md bg-transparent px-1 text-muted hover:bg-hover"
+      >
+        {key === "dateProp" && !current && <option value="">{t("chooseProp")}</option>}
+        {key === "endProp" && (
+          <option value="">
+            {t("endDate")} : {t("none").toLowerCase()}
+          </option>
+        )}
+        {config.props
+          .filter((p) => p.type === "date")
+          .map((p) => (
+            <option key={p.id} value={p.id}>
+              {p.name}
+            </option>
+          ))}
+      </select>
+    );
+  };
 
   return (
     <div className={embedded ? "" : "px-(--page-pad) pb-32 pt-4"}>
@@ -1020,97 +516,113 @@ export function DatabaseView({ page, embedded }: { page: PageMeta; embedded?: bo
                   setRenaming(null);
                   if (e.target.value.trim()) patchView({ name: e.target.value.trim() });
                 }}
-                onKeyDown={(e) => e.key === "Enter" && e.currentTarget.blur()}
+                onKeyDown={(e) => {
+                  if (e.key === "Escape") e.currentTarget.value = v.name;
+                  if (e.key === "Enter" || e.key === "Escape") e.currentTarget.blur();
+                }}
                 className="mb-1 h-7 w-32 rounded bg-hover px-2"
               />
             ) : (
-              <button
-                key={v.id}
-                onClick={() => setViewId(v.id)}
-                onDoubleClick={() => setRenaming(v.id)}
-                className={`mb-[-1px] flex h-9 shrink-0 items-center gap-1.5 border-b-2 px-2 font-medium ${
-                  active ? "border-ink" : "border-transparent text-muted hover:text-ink"
-                }`}
-              >
-                <Icon size={15} strokeWidth={1.75} />
-                {v.name}
-              </button>
+              <span key={v.id} className="mb-[-1px] flex shrink-0 items-center">
+                <button
+                  onClick={() => setViewId(v.id)}
+                  onDoubleClick={() => setRenaming(v.id)}
+                  aria-current={active ? "true" : undefined}
+                  className={`flex h-9 shrink-0 items-center gap-1.5 border-b-2 pl-2 ${active ? "pr-1" : "pr-2"} font-medium ${
+                    active ? "border-ink" : "border-transparent text-muted hover:text-ink"
+                  }`}
+                >
+                  <Icon size={15} strokeWidth={1.75} />
+                  {v.name}
+                </button>
+                {active && (
+                  <Menu
+                    label={t("viewMenu")}
+                    className="mr-1 grid size-6 place-items-center rounded text-muted hover:bg-hover"
+                    trigger={<MoreHorizontal size={14} />}
+                    items={[
+                      { icon: <Pencil size={16} />, label: t("renameView"), onClick: () => setRenaming(v.id) },
+                      { icon: <Copy size={16} />, label: t("duplicateView"), onClick: copyView },
+                      ...(config.views.length > 1
+                        ? [
+                            "separator" as const,
+                            {
+                              icon: <Trash2 size={16} />,
+                              label: t("deleteView"),
+                              danger: true,
+                              onClick: deleteView,
+                            },
+                          ]
+                        : []),
+                    ]}
+                  />
+                )}
+              </span>
             );
           })}
           <Menu
             label={t("addView")}
             className="grid size-7 shrink-0 place-items-center rounded-md text-muted hover:bg-hover"
             trigger={<Plus size={15} />}
-            items={[
-              ...VIEW_TYPES.map(([type, key, Icon]) => ({
-                icon: <Icon size={16} />,
-                label: t(key),
-                onClick: () => addView(type, t(key)),
-              })),
-              ...(config.views.length > 1
-                ? [
-                    "separator" as const,
-                    {
-                      icon: <Trash2 size={16} />,
-                      label: `${t("deleteView")} « ${view.name} »`,
-                      danger: true,
-                      onClick: () => {
-                        setViewId(null);
-                        setConfig((c) => ({ ...c, views: c.views.filter((v) => v.id !== view.id) }));
-                      },
-                    },
-                  ]
-                : []),
-            ]}
+            items={VIEW_TYPES.map(([type, key, Icon]) => ({
+              icon: <Icon size={16} />,
+              label: t(key),
+              onClick: () => addView(type, t(key)),
+            }))}
           />
         </div>
-        <div className="flex items-center gap-0.5 pb-1">
-          {pickers.map(([key, type, shown]) => {
-            if (!shown) return null;
-            // Une propriété supprimée n'est plus sélectionnée : le sélecteur reflète l'état réel.
-            const current = config.props.some((p) => p.id === view[key] && p.type === type) ? (view[key] as string) : "";
-            return (
-                <select
-                  key={key}
-                  aria-label={t(key === "groupBy" ? "groupBy" : key === "endProp" ? "endDate" : "propDate")}
-                  value={current}
-                  onChange={(e) => patchView({ [key]: e.target.value || undefined })}
-                  className="h-7 max-w-36 rounded-md bg-transparent px-1 text-muted hover:bg-hover"
-                >
-                  {!current && !(key === "endProp" || (key === "groupBy" && view.type === "table")) && (
-                    <option value="">{t("chooseProp")}</option>
-                  )}
-                  {key === "groupBy" && view.type === "table" && (
-                    <option value="">
-                      {t("groupBy")} : {t("none").toLowerCase()}
-                    </option>
-                  )}
-                  {key === "endProp" && (
-                    <option value="">
-                      {t("endDate")} : {t("none").toLowerCase()}
-                    </option>
-                  )}
-                  {config.props
-                    .filter((p) => p.type === type)
-                    .map((p) => (
-                      <option key={p.id} value={p.id}>
-                        {p.name}
-                      </option>
-                    ))}
-                </select>
-            );
-          })}
+        <div className="flex flex-wrap items-center gap-0.5 pb-1">
+          {dated && dateSelect("dateProp")}
+          {dated && dateSelect("endProp")}
+          <label className="relative flex h-7 items-center">
+            <Search size={14} className="pointer-events-none absolute left-2 text-faint" />
+            <input
+              type="search"
+              aria-label={t("searchView")}
+              placeholder={t("search")}
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              onKeyDown={(e) => e.key === "Escape" && setQuery("")}
+              className="h-7 w-28 rounded-md bg-transparent pl-7 pr-1 placeholder:text-faint hover:bg-hover focus:w-44 focus:bg-hover max-sm:w-24 [&::-webkit-search-cancel-button]:appearance-none"
+            />
+            {query && (
+              <button
+                aria-label={t("clearSearch")}
+                title={t("clearSearch")}
+                onClick={() => setQuery("")}
+                className="absolute right-1 grid size-5 place-items-center rounded text-muted hover:bg-active"
+              >
+                <X size={12} />
+              </button>
+            )}
+          </label>
           <PopButton
-            label={view.filters.length ? `${t("filter")} · ${view.filters.length}` : t("filter")}
+            label={filterCount ? `${t("filter")} · ${filterCount}` : t("filter")}
             icon={<ListFilter size={15} />}
-            active={view.filters.length > 0}
-            width={420}
+            active={filterCount > 0}
+            width={460}
+            signal={filterSignal}
           >
             <FilterEditor api={api} />
           </PopButton>
-          <PopButton label={t("sort")} icon={<ArrowUpDown size={15} />} active={!!view.sort} width={300}>
+          <PopButton label={t("sort")} icon={<ArrowUpDown size={15} />} active={hasSort} width={380}>
             <SortEditor api={api} />
           </PopButton>
+          {!dated && (
+            <PopButton label={t("group")} icon={<Layers size={15} />} active={!!groupProp} width={280}>
+              <GroupEditor api={api} />
+            </PopButton>
+          )}
+          {!dated && (
+            <PopButton
+              label={t("properties")}
+              icon={<SlidersHorizontal size={15} />}
+              active={(view.hidden?.length ?? 0) > 0}
+              width={300}
+            >
+              <PropertiesEditor api={api} />
+            </PopButton>
+          )}
           <button
             onClick={() => api.add()}
             className="ml-1 h-7 rounded-md bg-accent px-2.5 font-medium text-white hover:brightness-95"
@@ -1120,61 +632,36 @@ export function DatabaseView({ page, embedded }: { page: PageMeta; embedded?: bo
         </div>
       </div>
 
-      {layout === "table" && <TableLayout api={api} />}
-      {layout === "board" && <BoardLayout api={api} />}
-      {layout === "calendar" && <CalendarLayout api={api} />}
-      {layout === "list" && <ListLayout api={api} />}
-      {layout === "gallery" && <GalleryLayout api={api} />}
-      {layout === "timeline" && <TimelineLayout api={api} />}
+      {layout === "table" && <TableView api={api} />}
+      {layout === "board" && <BoardView api={api} />}
+      {layout === "calendar" && <CalendarView api={api} />}
+      {layout === "list" && <ListView api={api} />}
+      {layout === "gallery" && <GalleryView api={api} />}
+      {layout === "timeline" && <TimelineView api={api} />}
       {visible.length === 0 && rows.length > 0 && <p className="py-6 text-center text-muted">{t("emptyDb")}</p>}
-    </div>
-  );
-}
 
-/** Propriétés d'une ligne, affichées en tête de sa page. */
-export function RowProperties({ page, databaseId }: { page: PageMeta; databaseId: string }) {
-  const [config, setConfig] = useState<DbConfig | null>(null);
-  const [values, setValues] = useState<Record<string, Value>>({});
-
-  useEffect(() => {
-    let live = true;
-    Promise.all([getDatabase(databaseId), listRows(databaseId)]).then(([c, rows]) => {
-      if (!live) return;
-      setConfig(c);
-      setValues(rows.find((r) => r.id === page.id)?.props ?? {});
-    });
-    return () => {
-      live = false;
-    };
-  }, [databaseId, page.id]);
-
-  if (!config || config.props.length === 0) return null;
-  return (
-    <div className={`mt-3 pb-3 ${LINE}`}>
-      {config.props.map((p) => (
-        <div key={p.id} className="flex min-h-8 items-stretch text-[14px]">
-          <span className="flex w-40 shrink-0 items-center truncate text-muted">{p.name}</span>
-          <span className="min-w-0 flex-1 rounded hover:bg-hover">
-            <PropEditor
-              prop={p}
-              value={p.type === "formula" ? evalFormula(p.formula ?? "", values, config.props) : values[p.id]}
-              onChange={(v) => {
-                const next = { ...values, [p.id]: v };
-                setValues(next);
-                void setRowProps(page.id, next);
-              }}
-              onOptions={(options) => {
-                const next = { ...config, props: config.props.map((x) => (x.id === p.id ? { ...x, options } : x)) };
-                const before = p.options ?? [];
-                const removed = before.filter((o) => !options.some((x) => x.id === o.id)).map((o) => o.id);
-                setConfig(next);
-                void saveDatabase(databaseId, next);
-                if (removed.length) void purgeOptions(databaseId, p.id, removed);
-              }}
-            />
+      {selected.size > 0 && (
+        <div
+          role="toolbar"
+          aria-label={`${selected.size} ${t("selectedRows")}`}
+          className="fixed bottom-4 left-1/2 z-30 flex h-10 -translate-x-1/2 items-center gap-1 rounded-lg bg-pop px-2 text-sm shadow-pop"
+        >
+          <span className="px-2">
+            {selected.size} {t("selectedRows")}
           </span>
+          <button
+            onClick={() => void api.removeMany([...selected])}
+            className="flex h-7 items-center gap-1.5 rounded px-2 text-danger hover:bg-hover"
+          >
+            <Trash2 size={14} />
+            {t("deleteSelected")}
+          </button>
+          <button onClick={() => setSelectedState(new Set())} className="h-7 rounded px-2 text-muted hover:bg-hover">
+            {t("clearSelection")}
+          </button>
         </div>
-      ))}
+      )}
+      {peekId && <RowPeek api={api} rowId={peekId} onClose={() => setPeekId(null)} />}
     </div>
   );
 }

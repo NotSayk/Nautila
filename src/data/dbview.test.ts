@@ -13,6 +13,7 @@ import {
   moveProp,
   newFilter,
   nudgeProp,
+  presetFromFilters,
   toggleCollapsed,
 } from "./dbview";
 
@@ -99,6 +100,43 @@ describe("arbre de filtres", () => {
     expect(dropFilter(tree, "g1")).toHaveLength(1);
     expect(dropFilter(tree, "f")).toHaveLength(1);
     expect(countFilters(tree)).toBe(2);
+  });
+});
+
+describe("valeurs d'une ligne créée sous des filtres", () => {
+  const fields: Prop[] = [
+    { id: "s", name: "S", type: "select", options: [{ id: "o1", name: "Un", color: "gray" }] },
+    { id: "m", name: "M", type: "multi_select", options: [{ id: "o1", name: "Un", color: "gray" }] },
+    { id: "k", name: "K", type: "checkbox" },
+    { id: "n", name: "N", type: "number" },
+    { id: "d", name: "D", type: "date" },
+    { id: "t", name: "T", type: "text" },
+  ];
+  const f = (prop: string, op: Filter["op"], value = ""): Filter => ({ id: prop, prop, op, value });
+
+  it("donne leur valeur aux propriétés filtrées en ET", () => {
+    const filters = [
+      f("s", "is", "o1"),
+      f("m", "contains", "o1"),
+      f("k", "checked"),
+      f("n", "eq", "2,5"),
+      f("d", "is", "2026-01-02"),
+      f("t", "is", "x"),
+    ];
+    expect(presetFromFilters(filters, "and", fields)).toEqual({
+      s: "o1",
+      m: ["o1"],
+      k: true,
+      n: 2.5,
+      d: "2026-01-02",
+      t: "x",
+    });
+  });
+
+  it("ignore le OU, les valeurs inconnues et les filtres incomplets", () => {
+    expect(presetFromFilters([f("s", "is", "o1")], "or", fields)).toEqual({});
+    expect(presetFromFilters([f("s", "is", "zzz"), f("n", "eq", "abc"), f("t", "is", ""), f("d", "is", "2026-02-31")], undefined, fields)).toEqual({});
+    expect(presetFromFilters([f("s", "is_not", "o1"), f("inconnue", "is", "x")], undefined, fields)).toEqual({});
   });
 });
 

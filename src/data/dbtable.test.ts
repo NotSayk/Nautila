@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { calcFnsFor, computeCalc, formatNumber, rollupTargets, withRollups, type RelatedBase } from "./dbcalc";
+import { calcFnsFor, computeCalc, formatNumber, rollupTargets, withComputed, withRollups, type RelatedBase } from "./dbcalc";
 import { convertColumn, convertTargets } from "./dbconvert";
 import { groupRows, valueForGroup } from "./dbgroup";
 import {
@@ -418,6 +418,13 @@ describe("rollups", () => {
     expect(calc("sum", "pts", ["supprimée"])).toBe(0);
     const none = withRollups([row("1", "", { rel: ["x"] })], mine, new Map());
     expect(none[0].props.r1).toBeNull();
+  });
+
+  it("laisse une formule se servir d'un cumul", () => {
+    const withFormula: Prop[] = [...mine, { id: "f", name: "Double", type: "formula", formula: "{Somme} * 2" }];
+    const [result] = withComputed([row("1", "", { rel: ["x", "y"] })], withFormula, related);
+    expect(result.props.r1).toBe(30);
+    expect(result.props.f).toBe(60);
   });
 
   it("liste les bases nécessaires et laisse passer les lignes sans rollup", () => {
