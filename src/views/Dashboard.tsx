@@ -1,6 +1,8 @@
-import { CalendarCheck, CalendarDays, Clock, Flame, Layers } from "lucide-react";
+import { CalendarCheck, CalendarClock, CalendarDays, Clock, Flame, Layers } from "lucide-react";
 import { useEffect, useState } from "react";
 import { cardStats } from "../data/cards";
+import { upcomingExams } from "../data/plan";
+import { openExamPlan } from "./study/ExamPlan";
 import { dailyGoal, reviewSummary, setDailyGoal } from "../data/stats";
 import { dayClasses, listEvents, type DayClass } from "../data/events";
 import { listSlots } from "../data/school";
@@ -94,6 +96,7 @@ export function Dashboard() {
   const [tasks, setTasks] = useState<Task[]>([]);
   const [classes, setClasses] = useState<DayClass[]>([]);
   const [summary, setSummary] = useState<Summary | null>(null);
+  const [exams, setExams] = useState<Task[]>([]);
   // Jour courant : relu chaque minute pour que l'accueil suive le changement de jour.
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
@@ -116,7 +119,10 @@ export function Dashboard() {
     Promise.all([listSlots(), listEvents(dayStart, dayEnd)]).then(([slots, events]) =>
       setClasses(dayClasses(slots, events, dayStart, dayEnd, weekday)),
     );
-    listTasks().then((all) => setTasks(all.filter((x) => !x.done && x.due_at !== null && daysUntil(x.due_at) <= 14)));
+    listTasks().then((all) => {
+      setTasks(all.filter((x) => !x.done && x.due_at !== null && daysUntil(x.due_at) <= 14));
+      setExams(upcomingExams(all).slice(0, 4));
+    });
   }, [dayStart]);
 
   const hour = new Date(now).getHours();
@@ -181,6 +187,44 @@ export function Dashboard() {
                       <span className="truncate text-muted">{c.room}</span>
                     </button>
                   ))}
+                </div>
+              </>
+            )}
+            {exams.length > 0 && (
+              <>
+                <SectionTitle>
+                  <CalendarClock size={14} />
+                  {t("upcomingExams")}
+                </SectionTitle>
+                <div className="mb-8 grid gap-2 sm:grid-cols-2">
+                  {exams.map((exam) => {
+                    const days = daysUntil(exam.due_at!);
+                    return (
+                      <button
+                        key={exam.id}
+                        onClick={() => openExamPlan(exam.id)}
+                        title={t("examPlan")}
+                        className="flex items-center gap-3 rounded-xl bg-panel px-3 py-2.5 text-left hover:bg-hover"
+                      >
+                        <span className="grid w-12 shrink-0 place-items-center">
+                          {days === 0 ? (
+                            <span className="text-base font-bold text-danger">{t("todayShort")}</span>
+                          ) : (
+                            <>
+                              <span className="text-[26px] font-bold leading-none tabular-nums">{days}</span>
+                              <span className="text-[11px] text-muted">{t(days > 1 ? "daysLong" : "dayLong")}</span>
+                            </>
+                          )}
+                        </span>
+                        <span className="min-w-0">
+                          <span className="block truncate font-medium">{exam.title}</span>
+                          <span className="block truncate text-xs text-muted">
+                            {[courseName(exam.course_id), formatDue(exam.due_at!, lang)].filter(Boolean).join(" · ")}
+                          </span>
+                        </span>
+                      </button>
+                    );
+                  })}
                 </div>
               </>
             )}

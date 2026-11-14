@@ -1,4 +1,4 @@
-import { Pencil, Trash2 } from "lucide-react";
+import { CalendarClock, Pencil, Trash2 } from "lucide-react";
 import { useEffect, useState } from "react";
 import {
   addTask,
@@ -14,9 +14,10 @@ import { useT } from "../i18n";
 import { useStore } from "../store";
 import { daysUntil, formatDue, IconButton, View } from "./common";
 import { notify } from "./dialogs";
+import { openExamPlan } from "./study/ExamPlan";
 
 const COLS =
-  "grid grid-cols-[20px_minmax(0,1fr)_auto_auto_60px] items-center gap-3 sm:grid-cols-[20px_minmax(0,1fr)_84px_150px_120px_60px]";
+  "grid grid-cols-[20px_minmax(0,1fr)_auto_auto_88px] items-center gap-3 sm:grid-cols-[20px_minmax(0,1fr)_84px_150px_120px_88px]";
 const field = "h-8 rounded-md bg-transparent px-2 hover:bg-hover focus:bg-hover";
 /** Midi, heure locale : la date choisie reste la même quel que soit le fuseau. */
 const toTimestamp = (day: string) => (day ? new Date(`${day}T12:00:00`).getTime() : null);
@@ -152,6 +153,11 @@ export function Tasks() {
           {task.due_at !== null && formatDue(task.due_at, lang)}
         </span>
         <span className="flex">
+          {task.kind === "exam" && !task.done && (
+            <IconButton label={t("examPlan")} onClick={() => openExamPlan(task.id)} className={HIDE_UNTIL_HOVER}>
+              <CalendarClock size={14} />
+            </IconButton>
+          )}
           <IconButton label={t("editTask")} onClick={() => setEditing(task.id)} className={HIDE_UNTIL_HOVER}>
             <Pencil size={14} />
           </IconButton>

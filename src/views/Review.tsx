@@ -2,6 +2,7 @@ import {
   ArrowLeft,
   BookOpenCheck,
   Brackets,
+  CalendarClock,
   ChartColumn,
   Download,
   Keyboard,
@@ -38,14 +39,17 @@ import {
 } from "../data/cards";
 import { clozeOf, groupNotes, hasCloze, wrapCloze } from "../data/cloze";
 import { createPage } from "../data/pages";
+import { examSessionCards, upcomingExams } from "../data/plan";
+import { listTasks, type Task } from "../data/tasks";
 import { cleanQuestions, deleteQuiz, listQuizzes, saveQuiz, type Question, type Quiz } from "../data/quizzes";
 import { useT, type Key } from "../i18n";
 import { useStore } from "../store";
-import { IconButton, PageIcon, SectionTitle, TopBar, useOverlay } from "./common";
+import { daysUntil, IconButton, PageIcon, SectionTitle, TopBar, useOverlay } from "./common";
 import { confirmDialog, notify } from "./dialogs";
 import { CardFront, ClozeText, MathText } from "./study/CardText";
 import { ChoiceMode, FlipMode, MatchMode, questionsFromCards, WriteMode } from "./study/modes";
 import { StatsView } from "./study/Stats";
+import { daysLeftLabel, ExamPlanView, useStudyIntent } from "./study/ExamPlan";
 
 const GRADES: [Grade, Key][] = [
   [1, "again"],
@@ -340,18 +344,25 @@ function interval(due: Date, now: Date, lang: string): string {
   return `${Math.round(min / 43_200)} ${lang === "fr" ? "mois" : "mo"}`;
 }
 
-/** Révision espacée : les cartes dues, notées de « à revoir » à « facile ». */
-function Spaced({ pageId, onExit }: { pageId?: string; onExit: () => void }) {
+/**
+ * Révision espacée : les cartes dues, notées de « à revoir » à « facile ». Avec `pageIds` (révision
+ * pour un examen), les cartes dues de ces pages d'abord, puis leurs nouvelles cartes.
+ */
+function Spaced({ pageId, pageIds, onExit }: { pageId?: string; pageIds?: string[]; onExit: () => void }) {
   const t = useT();
   const lang = useStore((s) => s.lang);
   const pages = useStore((s) => s.pages);
   const navigate = useStore((s) => s.navigate);
   const [queue, setQueue] = useState<CardRow[] | undefined>();
   const [revealed, setRevealed] = useState(false);
+  const load = useCallback(
+    (at: number) => (pageIds ? examSessionCards(pageIds, at) : dueCards(at, pageId)),
+    [pageId, pageIds],
+  );
 
   useEffect(() => {
-    dueCards(Date.now(), pageId).then(setQueue);
-  }, [pageId]);
+    void load(Date.now()).then(setQueue);
+  }, [load]);
 
   const card = queue?.[0];
   const now = new Date();
@@ -372,8 +383,8 @@ function Spaced({ pageId, onExit }: { pageId?: string; onExit: () => void }) {
       setRevealed(false);
       // Quand la file est vide, on avance les cartes dues dans les 10 minutes
       // (étapes d'apprentissage) pour finir la séance sans attendre.
-      const next = await dueCards(Date.now(), pageId);
-      setQueue(next.length ? next : await dueCards(Date.now() + 10 * 60_000, pageId));
+      const next = await load(Date.now());
+      setQueue(next.length ? next : await load(Date.now() + 10 * 60_000));
       void useStore.getState().refreshDue();
     } finally {
       grading.current = false;
@@ -688,7 +699,7 @@ function DeckView({ pageId, onStart }: { pageId: string; onStart: (mode: Mode, c
             <span className="min-w-0 whitespace-pre-wrap break-words font-medium">
               <ClozeText text={c.front} />
               {c.gaps > 1 && (
-                <span className="ml-2 align-middle text-xs font-normal text-faint">
+                <span className="ml-2 whitespace-nowrap align-middle text-xs font-normal text-faint">
                   {c.gaps} {t("clozeCount")}
                 </span>
               )}
@@ -731,7 +742,17 @@ function DeckView({ pageId, onStart }: { pageId: string; onStart: (mode: Mode, c
 type Screen =
   | { name: "home" }
   | { name: "deck"; pageId: string }
-  | { name: "study"; mode: Mode; cards: CardRow[]; pageId?: string; questions?: Question[] }
+  | {
+      name: "study";
+      mode: Mode;
+      cards: CardRow[];
+      pageId?: string;
+      questions?: Question[];
+      /** Révision pour un examen : pages de la matière, et examen auquel revenir. */
+      pageIds?: string[];
+      examId?: string;
+    }
+  | { name: "exam"; taskId: string }
   | { name: "quiz"; quiz: Quiz }
   | { name: "editQuiz"; quiz: Quiz | null }
   | { name: "stats" };
@@ -739,7 +760,13 @@ type Screen =
 export function Review() {
   const t = useT();
   const pages = useStore((s) => s.pages);
-  const [screen, setScreen] = useState<Screen>({ name: "home" });
+  // Ouverture depuis l'accueil ou les devoirs : directement sur le plan d'un examen.
+  const [screen, setScreen] = useState<Screen>(() => {
+    const exam = useStudyIntent.getState().exam;
+    useStudyIntent.setState({ exam: null });
+    return exam ? { name: "exam", taskId: exam } : { name: "home" };
+  });
+  const [exams, setExams] = useState<Task[]>([]);
   const [decks, setDecks] = useState<Deck[]>([]);
   const [quizzes, setQuizzes] = useState<Quiz[]>([]);
   const [stats, setStats] = useState({ due: 0, total: 0 });
@@ -749,6 +776,7 @@ export function Review() {
     // Cartes à trous arrivées d'un seul tenant (connecteur MCP) : un trou par entrée planifiée.
     if (await expandLooseClozes().catch(() => 0)) void useStore.getState().refreshDue();
     void listDecks().then(setDecks);
+    void listTasks().then((all) => setExams(upcomingExams(all)));
     void listQuizzes().then(setQuizzes);
     void cardStats().then(setStats);
   }, []);
@@ -757,7 +785,13 @@ export function Review() {
   }, [screen.name, reload]);
 
   const back = () =>
-    setScreen(screen.name === "study" && screen.pageId ? { name: "deck", pageId: screen.pageId } : { name: "home" });
+    setScreen(
+      screen.name === "study" && screen.examId
+        ? { name: "exam", taskId: screen.examId }
+        : screen.name === "study" && screen.pageId
+          ? { name: "deck", pageId: screen.pageId }
+          : { name: "home" },
+    );
   const title = (id: string | null) => pages.find((p) => p.id === id);
 
   return (
@@ -805,6 +839,29 @@ export function Review() {
                 {t("statsTitle")}
               </button>
             </div>
+
+            {exams.length > 0 && (
+              <>
+                <SectionTitle>
+                  <CalendarClock size={14} />
+                  {t("upcomingExams")}
+                </SectionTitle>
+                <div className="mb-10">
+                  {exams.map((exam) => (
+                    <button
+                      key={exam.id}
+                      onClick={() => setScreen({ name: "exam", taskId: exam.id })}
+                      className="flex min-h-11 w-full items-center gap-2.5 rounded-md px-2 text-left shadow-[inset_0_-1px_0_var(--color-line)] hover:bg-hover"
+                    >
+                      <span className="tag tag-red">{t("exam")}</span>
+                      <span className="min-w-0 flex-1 truncate font-medium">{exam.title}</span>
+                      <span className="truncate text-muted max-sm:hidden">{title(exam.course_id)?.title}</span>
+                      <span className="text-muted">{daysLeftLabel(daysUntil(exam.due_at!), t)}</span>
+                    </button>
+                  ))}
+                </div>
+              </>
+            )}
 
             <SectionTitle>
               <Layers size={14} />
@@ -897,7 +954,16 @@ export function Review() {
             }
           />
         )}
-        {screen.name === "study" && screen.mode === "spaced" && <Spaced pageId={screen.pageId} onExit={back} />}
+        {screen.name === "study" && screen.mode === "spaced" && (
+          <Spaced pageId={screen.pageId} pageIds={screen.pageIds} onExit={back} />
+        )}
+        {screen.name === "exam" && (
+          <ExamPlanView
+            key={screen.taskId}
+            taskId={screen.taskId}
+            onReview={(pageIds) => setScreen({ name: "study", mode: "spaced", cards: [], pageIds, examId: screen.taskId })}
+          />
+        )}
         {screen.name === "study" && screen.mode === "flip" && <FlipMode cards={screen.cards} onExit={back} />}
         {screen.name === "study" && screen.mode === "choice" && (
           <ChoiceMode questions={screen.questions ?? []} onExit={back} />

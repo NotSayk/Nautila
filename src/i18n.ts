@@ -548,6 +548,29 @@ const fr = {
   dailyGoalCards: "Cartes à réviser chaque jour",
   editGoal: "Modifier l'objectif",
   goalReached: "Objectif atteint, bravo !",
+  // Examens : compte à rebours et plan de révision
+  upcomingExams: "Prochains examens",
+  inDays: "dans",
+  examPlan: "Plan de révision",
+  examMissing: "Cet examen n'existe plus.",
+  examNoDate: "Ajoute une date à cet examen dans Devoirs et examens pour calculer le plan.",
+  examNoCourse: "Lie une matière à cet examen dans Devoirs et examens : le plan se calcule avec les cartes de la matière et de ses sous-pages.",
+  examFresh: "cartes jamais vues",
+  examDue: "à revoir d'ici là",
+  examDaysLeft: "jours de révision",
+  examPerDay: "cartes par jour",
+  examPast: "Cet examen est passé.",
+  examAllDone: "Rien à rattraper : aucune carte nouvelle ni due avant l'examen.",
+  examNoCards: "Aucune carte dans cette matière pour l'instant. Ajoute des paquets à ses pages.",
+  examLoad: "Pour tout voir à temps : environ",
+  cardsPerDay: "cartes par jour",
+  examLoadHint: "Les nouvelles cartes demandent aussi quelques répétitions le jour même.",
+  examHeavy:
+    "Charge quotidienne irréaliste : commence dès aujourd'hui, révise les paquets les plus importants en premier, ou étale sur plus de jours si c'est possible.",
+  examReview: "Réviser pour cet examen",
+  mockExam: "Examen blanc",
+  examByPage: "Cartes par page de la matière",
+  dueBefore: "à revoir",
 };
 
 const en: typeof fr = {
@@ -1095,6 +1118,29 @@ const en: typeof fr = {
   dailyGoalCards: "Cards to review each day",
   editGoal: "Change goal",
   goalReached: "Goal reached, well done!",
+  // Exams: countdown and study plan
+  upcomingExams: "Upcoming exams",
+  inDays: "in",
+  examPlan: "Study plan",
+  examMissing: "This exam no longer exists.",
+  examNoDate: "Give this exam a date in Homework and exams to compute the plan.",
+  examNoCourse: "Link a course to this exam in Homework and exams: the plan uses the cards of the course and its subpages.",
+  examFresh: "cards never seen",
+  examDue: "to review by then",
+  examDaysLeft: "study days",
+  examPerDay: "cards per day",
+  examPast: "This exam is over.",
+  examAllDone: "Nothing to catch up on: no new or due card before the exam.",
+  examNoCards: "No card in this course yet. Add decks to its pages.",
+  examLoad: "To cover everything in time: about",
+  cardsPerDay: "cards per day",
+  examLoadHint: "New cards also need a few repetitions on the same day.",
+  examHeavy:
+    "Unrealistic daily load: start today, review the most important decks first, or spread it over more days if you can.",
+  examReview: "Review for this exam",
+  mockExam: "Mock exam",
+  examByPage: "Cards per page of the course",
+  dueBefore: "to review",
 };
 
 export type Key = keyof typeof fr;
