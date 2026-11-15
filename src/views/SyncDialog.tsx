@@ -16,6 +16,7 @@ import {
   syncNow,
   type AccessToken,
 } from "../sync/engine";
+import { logoutOthersNotice } from "../sync/notices";
 import { relativeTime, useOverlay } from "./common";
 
 const FIELD = "mt-1 h-8 w-full rounded-md bg-hover px-2 text-sm text-ink placeholder:text-faint";
@@ -135,7 +136,7 @@ function AccountSecurity() {
             className={OUTLINE}
             disabled={busy}
             onClick={() =>
-              run(async () => `${t("logoutOthersDone")} ${(await logoutOtherDevices()).revoked}`)
+              run(async () => logoutOthersNotice(await logoutOtherDevices(), t))
             }
           >
             {t("logoutOthers")}

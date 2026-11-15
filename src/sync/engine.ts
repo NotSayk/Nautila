@@ -147,8 +147,8 @@ export const revokeAccessToken = (id: string) => accountApi("token/revoke", { id
 export const changePassword = (current: string, password: string) =>
   accountApi<{ revoked: number }>("password", { current, password });
 
-/** Déconnecte tous les autres appareils du compte (celui-ci reste connecté). */
-export const logoutOtherDevices = () => accountApi<{ revoked: number }>("logout-others");
+/** Déconnecte tous les autres appareils du compte (celui-ci reste connecté) et révoque les jetons MCP. */
+export const logoutOtherDevices = () => accountApi<{ revoked: number; mcp?: number }>("logout-others");
 
 export async function disconnect() {
   const state = await getSyncState();

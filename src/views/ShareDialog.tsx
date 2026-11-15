@@ -3,18 +3,24 @@ import type { PageMeta } from "../data/pages";
 import { useT } from "../i18n";
 import { useStore } from "../store";
 import { useOverlay } from "./common";
+import { confirmDialog, notify } from "./dialogs";
+import { SyncError } from "../sync/engine";
+import { parseShareLink, validShareId } from "../sync/ids";
+import { isExternalUrl, publicFileUrl } from "../sync/publicFiles";
 import {
   createShare,
   joinShare,
   leaveShare,
-  parseShareId,
   publicLink,
+  regenerateInvite,
   setMemberRole,
   setShareAccess,
   setSharePublic,
   shareInfo,
   shareLink,
+  sharePreview,
   type ShareInfo,
+  type SharePreview,
   type ShareRole,
 } from "../sync/share";
 import { PageEditor } from "../editor/PageEditor";
@@ -67,14 +73,21 @@ export function ShareDialog({
 
   const [info, setInfo] = useState<ShareInfo>();
   const [viewLink, setViewLink] = useState("");
+  /** Propriétaire d'après le serveur, à défaut d'après le dernier droit connu sur cet appareil. */
+  const owner = info?.owner ?? role === "owner";
 
   useEffect(() => {
     if (!page.share_id || !connected) return;
-    void shareLink(page.share_id).then(setLink);
     void publicLink(page.share_id).then(setViewLink);
     void shareInfo(page.share_id).then(setInfo, () => undefined);
     // Rechargé quand quelqu'un rejoint ou part, pour que la liste des participants reste à jour.
   }, [page.share_id, connected, peers]);
+
+  // Le lien porte le secret d'invitation quand le propriétaire l'a régénéré.
+  useEffect(() => {
+    if (!page.share_id || !connected) return;
+    void shareLink(page.share_id, info?.invite).then(setLink);
+  }, [page.share_id, connected, info?.invite]);
 
   const run = async (action: () => Promise<unknown>) => {
     setBusy(true);
@@ -179,6 +192,25 @@ export function ShareDialog({
               {(info.members ?? []).length === 0 && (
                 <p className="mt-1 text-[13px] text-muted">{t("shareNoMembers")}</p>
               )}
+              <button
+                className={`${BUTTON} mt-2 shadow-[0_0_0_1px_var(--color-line)] hover:bg-hover`}
+                disabled={busy}
+                onClick={async () => {
+                  // Retirer quelqu'un ne suffit pas si le lien circule : un nouveau secret le rend caduc.
+                  const ok = await confirmDialog({
+                    message: t("shareRegenerateConfirm"),
+                    confirmLabel: t("shareRegenerate"),
+                  });
+                  if (!ok) return;
+                  await run(async () => {
+                    setInfo({ ...info, ...(await regenerateInvite(page.share_id!)) });
+                    setCopied(false);
+                    notify(t("shareRegenerated"));
+                  });
+                }}
+              >
+                {t("shareRegenerate")}
+              </button>
             </div>
           )}
           {info?.owner && (
@@ -209,9 +241,17 @@ export function ShareDialog({
             <button
               className={`${BUTTON} text-danger hover:bg-hover`}
               disabled={busy}
-              onClick={() => run(() => leaveShare(page.id, page.share_id!))}
+              onClick={async () => {
+                // Propriétaire : le partage s'arrête pour tous ; participant : il quitte la page (le serveur le retire).
+                const ok = await confirmDialog({
+                  message: t(owner ? "shareStopConfirm" : "shareLeaveConfirm"),
+                  confirmLabel: t(owner ? "shareStop" : "shareLeave"),
+                  danger: true,
+                });
+                if (ok) await run(() => leaveShare(page.id, page.share_id!, owner));
+              }}
             >
-              {t("shareStop")}
+              {t(owner ? "shareStop" : "shareLeave")}
             </button>
             <button
               className={`${BUTTON} bg-accent text-white`}
@@ -245,16 +285,16 @@ export function JoinDialog({ onClose }: { onClose: () => void }) {
   const t = useT();
   const navigate = useStore((s) => s.navigate);
   const [value, setValue] = useState("");
-  const id = parseShareId(value);
+  const link = parseShareLink(value);
   return (
     <Shell label={t("joinShared")} onClose={onClose}>
       <form
         className="mt-3 flex gap-2"
         onSubmit={(e) => {
           e.preventDefault();
-          if (!id) return;
+          if (!link) return;
           onClose();
-          navigate({ view: "join", id });
+          navigate({ view: "join", ...link });
         }}
       >
         <input
@@ -264,7 +304,7 @@ export function JoinDialog({ onClose }: { onClose: () => void }) {
           placeholder={t("joinPlaceholder")}
           className={FIELD}
         />
-        <button disabled={!id} className={`${BUTTON} shrink-0 bg-accent text-white`}>
+        <button disabled={!link} className={`${BUTTON} shrink-0 bg-accent text-white`}>
           {t("join")}
         </button>
       </form>
@@ -272,26 +312,52 @@ export function JoinDialog({ onClose }: { onClose: () => void }) {
   );
 }
 
-/** Écran d'arrivée d'un lien d'invitation : ajoute la page à cet appareil puis l'ouvre. */
-export function JoinView({ id }: { id: string }) {
+/**
+ * Écran d'arrivée d'un lien d'invitation : montre la page proposée (titre, propriétaire) et ne la
+ * rejoint qu'après confirmation — un lien reçu peut avoir été forgé. Déjà participant : la page s'ouvre.
+ */
+export function JoinView({ id, invite }: { id: string; invite?: string }) {
   const t = useT();
   const connected = useStore((s) => s.sync.status !== "off");
-  const [failed, setFailed] = useState(false);
+  const navigate = useStore((s) => s.navigate);
+  const [state, setState] = useState<"loading" | "confirm" | "joining" | "failed" | "forbidden">("loading");
+  const [preview, setPreview] = useState<SharePreview | null>(null);
+
+  const join = () => {
+    setState("joining");
+    joinShare(id, invite).then(
+      async (pageId) => {
+        await useStore.getState().refreshPages();
+        navigate({ view: "page", id: pageId });
+      },
+      (err) => setState(err instanceof SyncError && err.status === 403 ? "forbidden" : "failed"),
+    );
+  };
 
   useEffect(() => {
     if (!connected) return;
     let live = true;
-    joinShare(id).then(
-      async (pageId) => {
-        await useStore.getState().refreshPages();
-        if (live) useStore.getState().navigate({ view: "page", id: pageId });
+    setState("loading");
+    sharePreview(id, invite).then(
+      (p) => {
+        if (!live) return;
+        setPreview(p);
+        if (p.member) join();
+        else setState("confirm");
       },
-      () => live && setFailed(true),
+      (err) => {
+        if (!live) return;
+        // Serveur plus ancien, sans aperçu : la confirmation est demandée sans détails.
+        if (err instanceof SyncError && err.status === 404 && err.message === "not found") {
+          setPreview(null);
+          setState("confirm");
+        } else setState(err instanceof SyncError && err.status === 403 ? "forbidden" : "failed");
+      },
     );
     return () => {
       live = false;
     };
-  }, [id, connected]);
+  }, [id, invite, connected]);
 
   return (
     <div className="mx-auto max-w-md px-6 pt-[18vh] text-center">
@@ -306,31 +372,48 @@ export function JoinView({ id }: { id: string }) {
             {t("signIn")}
           </button>
         </>
+      ) : state === "confirm" ? (
+        <>
+          <p className="font-medium">{t("joinConfirmTitle")}</p>
+          <p className="mt-2 break-words">
+            {preview
+              ? t("joinConfirmFrom")
+                  .replace("{title}", preview.title || t("untitled"))
+                  .replace("{owner}", preview.owner)
+              : t("joinConfirmUnknown")}
+          </p>
+          <p className="mt-2 text-[13px] text-muted">{t("joinConfirmHint")}</p>
+          <div className="mt-4 flex justify-center gap-2">
+            <button className={`${BUTTON} hover:bg-hover`} onClick={() => navigate({ view: "home" })}>
+              {t("cancel")}
+            </button>
+            <button autoFocus className={`${BUTTON} bg-accent text-white`} onClick={join}>
+              {t("join")}
+            </button>
+          </div>
+        </>
       ) : (
-        <p className={failed ? "text-danger" : "text-muted"}>{t(failed ? "joinFailed" : "joining")}</p>
+        <p className={state === "failed" || state === "forbidden" ? "text-danger" : "text-muted"}>
+          {t(state === "failed" ? "joinFailed" : state === "forbidden" ? "joinForbidden" : "joining")}
+        </p>
       )}
     </div>
   );
 }
 
 /**
- * Adresse d'un fichier cité par une page publique, écrite par un tiers : seuls les liens web
- * ordinaires et les images matricielles en ligne passent (pas de javascript:, ni de HTML ou SVG en data:).
+ * Page publique en lecture seule : affichée sans compte, rien n'est enregistré sur l'appareil.
+ * Les images d'autres sites ne sont chargées que si le lecteur le demande.
  */
-export const publicFileUrl = (shareId: string, url: string) =>
-  url.startsWith("nautila-file:")
-    ? `${location.origin}/api/public/${shareId}/file/${encodeURIComponent(url.slice("nautila-file:".length))}`
-    : /^(https?:\/\/|data:image\/(png|jpeg|gif|webp|avif);)/i.test(url)
-      ? url
-      : "";
-
-/** Page publique en lecture seule : affichée sans compte, rien n'est enregistré sur l'appareil. */
 export function PublicView({ id }: { id: string }) {
   const t = useT();
   const [page, setPage] = useState<{ title: string; ydoc: string | null } | null>();
+  const [external, setExternal] = useState(false);
+  const [blocked, setBlocked] = useState(false);
 
   useEffect(() => {
-    fetch(`${location.origin}/api/public/${id}`)
+    if (!validShareId(id)) return void setPage(null);
+    fetch(`${location.origin}/api/public/${encodeURIComponent(id)}`)
       .then((res) => (res.ok ? res.json() : null))
       .then(setPage, () => setPage(null));
   }, [id]);
@@ -342,13 +425,29 @@ export function PublicView({ id }: { id: string }) {
       <div className="px-(--page-pad)">
         <p className="mb-2 text-xs font-medium text-muted">Nautila · {t("publicView")}</p>
         <h1 className="mb-2 text-[40px] font-bold leading-[1.2]">{page.title || t("untitled")}</h1>
+        {blocked && !external && (
+          <p className="mb-2 flex flex-wrap items-center gap-2 text-[13px] text-muted">
+            {t("publicExternalHidden")}
+            <button
+              className={`${BUTTON} shadow-[0_0_0_1px_var(--color-line)] hover:bg-hover`}
+              onClick={() => setExternal(true)}
+            >
+              {t("publicExternalShow")}
+            </button>
+          </p>
+        )}
       </div>
       <PageEditor
+        // Remonté quand le lecteur autorise les images externes, pour qu'elles soient résolues de nouveau.
+        key={external ? "external" : "local"}
         pageId={`public:${id}`}
         initialDoc={page.ydoc}
         editable={false}
         ephemeral
-        fileResolver={async (url) => publicFileUrl(id, url)}
+        fileResolver={async (url) => {
+          if (!external && isExternalUrl(url)) setBlocked(true);
+          return publicFileUrl(location.origin, id, url, external);
+        }}
       />
     </div>
   );

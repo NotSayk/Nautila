@@ -140,6 +140,9 @@ Chaque étudiant crée son compte depuis l'icône nuage de la barre latérale. R
 | `LOGIN_MAX_PER_IP` / `LOGIN_MAX_PER_USER` | Échecs de connexion tolérés en 15 minutes | 30 / 10 |
 | `PUBLIC_MAX_PER_MINUTE` / `MCP_MAX_PER_MINUTE` | Requêtes par minute sur les liens publics, appels MCP par compte | 600 / 240 |
 | `TOMBSTONE_DAYS` | Oubli des anciennes suppressions (0 pour désactiver) | 365 |
+| `CSP_CONNECT_SRC` | Origines supplémentaires auxquelles l'application web servie peut se connecter | son propre serveur |
+| `MAX_OPEN_SHARES_MB` | Mémoire des pages partagées qu'un compte peut faire ouvrir | 256 |
+| `SCRYPT_CONCURRENCY` | Calculs de mot de passe simultanés | 4 |
 
 Sécurité :
 
@@ -151,6 +154,12 @@ Sécurité :
 - Les fichiers d'une page publique ou partagée ne s'affichent en ligne que s'il s'agit d'images, d'audio,
   de vidéo ou de PDF ; les autres sont proposés au téléchargement. Les documents partagés comptent dans
   l'espace du propriétaire.
+- Un lien d'invitation peut être régénéré (« Régénérer le lien ») : l'ancien ne permet plus de rejoindre
+  la page, les participants gardent leur accès. Rejoindre une page demande une confirmation. Les clients
+  0.2.5 ne savent pas rejoindre par un lien régénéré.
+- Une page partagée ne sert que les fichiers mis par leur propriétaire. Les fichiers ajoutés par d'autres
+  participants avant la version 0.3.0 réapparaissent à leur prochaine modification de la page.
+- « Déconnecter les autres appareils » révoque aussi les jetons du connecteur IA et ferme les flux ouverts.
 - Le serveur demande Node 22.13 ou plus récent (l'image Docker fournie convient).
 
 Fonctionnement : chaque appareil garde toutes ses données et travaille hors connexion ; les

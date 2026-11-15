@@ -27,15 +27,20 @@ jobs:
       # Sans clé de signature, les installateurs seraient construits mais aucune mise à jour ne serait publiée.
       - name: Vérifier la clé de signature des mises à jour
         shell: bash
+        # Seule la présence de la clé est transmise ici, jamais la clé elle-même.
         env:
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          HAS_SIGNING_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY != '' }}
         run: |
-          if [ -z "$TAURI_SIGNING_PRIVATE_KEY" ]; then
+          if [ "$HAS_SIGNING_KEY" != "true" ]; then
             echo "::error title=Clé de signature manquante::Le secret GitHub TAURI_SIGNING_PRIVATE_KEY est vide ou absent. Ajoute-le dans Settings > Secrets and variables > Actions (contenu du fichier de clé privée générée par « tauri signer generate »), puis relance le workflow."
             exit 1
           fi
 
-      - uses: actions/checkout@v4
+      # Actions tierces épinglées par empreinte de commit (version en commentaire) : une étiquette peut être déplacée.
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          # Le jeton GitHub n'est pas laissé dans .git/config pour les étapes suivantes.
+          persist-credentials: false
 
       # L'étiquette « v… » doit correspondre à la version de package.json, tauri.conf.json et Cargo.toml.
       - name: Vérifier la version
@@ -53,25 +58,27 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 22
           cache: npm
 
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # branche stable
         with:
+          toolchain: stable
           targets: ${{ startsWith(matrix.os, 'macos') && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
 
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           workspaces: src-tauri
 
       - run: npm ci
 
-      - uses: tauri-apps/tauri-action@v0
+      - uses: tauri-apps/tauri-action@84b9d35b5fc46c1e45415bdb6144030364f7ebc5 # v0.6.2
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          # Signature des mises à jour (la clé n'a pas de mot de passe : le second secret peut rester absent).
+          # Signature des mises à jour, donnée à cette seule étape (la clé n'a pas de mot de passe : le second
+          # secret peut rester absent).
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
