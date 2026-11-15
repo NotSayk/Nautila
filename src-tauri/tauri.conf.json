@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "Nautila",
-  "version": "0.2.5",
+  "version": "0.3.0",
   "identifier": "app.nautila.desktop",
   "build": {
     "beforeDevCommand": "npm run dev",
@@ -10,7 +10,15 @@
     "frontendDist": "../dist"
   },
   "app": {
-    "windows": [{ "title": "Nautila", "width": 1200, "height": 800, "minWidth": 380, "minHeight": 500 }],
+    "windows": [
+      {
+        "title": "Nautila",
+        "width": 1200,
+        "height": 800,
+        "minWidth": 380,
+        "minHeight": 500
+      }
+    ],
     "security": {
       "csp": {
         "default-src": "'self'",
@@ -27,20 +35,32 @@
         "form-action": "'none'"
       },
       "devCsp": null,
-      "dangerousDisableAssetCspModification": ["style-src"]
+      "dangerousDisableAssetCspModification": [
+        "style-src"
+      ]
     }
   },
   "bundle": {
     "active": true,
     "targets": "all",
     "createUpdaterArtifacts": true,
-    "icon": ["icons/32x32.png", "icons/128x128.png", "icons/128x128@2x.png", "icons/icon.icns", "icons/icon.ico"]
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ]
   },
   "plugins": {
     "updater": {
-      "endpoints": ["https://github.com/NotSayk/Nautila/releases/latest/download/latest.json"],
+      "endpoints": [
+        "https://github.com/NotSayk/Nautila/releases/latest/download/latest.json"
+      ],
       "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDBCQkNDOTMxNDhGQzFEMEIKUldRTEhmeElNY204QzFBMHJZU3hadnRlaEJjK2lheGExNFlFY3FOVllrdzVzcFlGS1hpeFE3S00K",
-      "windows": { "installMode": "passive" }
+      "windows": {
+        "installMode": "passive"
+      }
     }
   }
 }
