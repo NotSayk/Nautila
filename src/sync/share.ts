@@ -9,6 +9,7 @@ import { db } from "../db";
 import { createPage, updatePageMeta } from "../data/pages";
 import { fromBase64, toBase64 } from "../util/base64";
 import { getSyncState, REMOTE_DOC_EVENT, SyncError } from "./engine";
+import { sharePath, validShareId } from "./ids";
 
 const REMOTE = "share-remote";
 
@@ -35,13 +36,11 @@ async function post<T>(path: string, body: unknown): Promise<T> {
   return json as T;
 }
 
-/** Adresse à transmettre pour inviter quelqu'un sur une page partagée. */
-export async function shareLink(shareId: string) {
-  return `${(await account()).server}/#/join/${shareId}`;
+/** Adresse à transmettre pour inviter quelqu'un sur une page partagée (avec le secret d'invitation s'il y en a un). */
+export async function shareLink(shareId: string, invite?: string) {
+  if (!validShareId(shareId) || (invite && !validShareId(invite))) return "";
+  return `${(await account()).server}/#/join/${shareId}${invite ? `/${invite}` : ""}`;
 }
-
-/** Identifiant de partage contenu dans une adresse d'invitation, ou saisi tel quel. */
-export const parseShareId = (input: string) => /([\w-]{16,})\s*$/.exec(input.trim())?.[1] ?? null;
 
 /** Met une page en partage ; renvoie l'identifiant à transmettre. */
 export async function createShare(pageId: string, title: string, ydoc: string | null): Promise<string> {
@@ -50,21 +49,35 @@ export async function createShare(pageId: string, title: string, ydoc: string | 
   return id;
 }
 
+/** Ce que le serveur dit d'une invitation, sans la rejoindre : titre, propriétaire, et si ce compte y est déjà. */
+export type SharePreview = { title: string; owner: string; member: boolean };
+export const sharePreview = (shareId: string, invite?: string) =>
+  post<SharePreview>(sharePath(shareId, "preview"), invite ? { invite } : {});
+
 /** Ajoute une page partagée à cet appareil (ou retrouve celle qui y est déjà). */
-export async function joinShare(shareId: string): Promise<string> {
+export async function joinShare(shareId: string, invite?: string): Promise<string> {
+  const path = sharePath(shareId);
   const [existing] = await db().all<{ id: string }>("SELECT id FROM pages WHERE share_id = ? AND deleted_at IS NULL", [
     shareId,
   ]);
   if (existing) return existing.id;
-  const share = await post<{ title: string; ydoc: string }>(`share/${shareId}`, {});
+  const share = await post<{ title: string; ydoc: string }>(path, invite ? { invite } : {});
   const page = await createPage({ title: share.title });
   await db().run("UPDATE pages SET ydoc = ?, share_id = ? WHERE id = ?", [share.ydoc, shareId, page.id]);
   return page.id;
 }
 
-/** Arrête le partage pour tout le monde (propriétaire) ou détache seulement cet appareil. */
-export async function leaveShare(pageId: string, shareId: string) {
-  await post(`share/${shareId}/delete`, {}).catch(() => undefined);
+/**
+ * Arrête le partage pour tout le monde (propriétaire, `owner`) ou quitte la page (participant :
+ * le serveur le retire, et ses fichiers n'y sont plus servis). La page reste sur l'appareil, détachée.
+ * Hors connexion, rien n'est détaché : le serveur doit d'abord l'apprendre.
+ */
+export async function leaveShare(pageId: string, shareId: string, owner: boolean) {
+  if (validShareId(shareId))
+    await post(sharePath(shareId, owner ? "delete" : "leave"), {}).catch((err) => {
+      // Page déjà supprimée, accès déjà retiré, ou serveur plus ancien sans « leave » : on détache quand même.
+      if (!(err instanceof SyncError) || err.status === 0 || err.status >= 500) throw err;
+    });
   await updatePageMeta(pageId, { share_id: null });
 }
 
@@ -122,8 +135,15 @@ export async function syncSharedPages(): Promise<boolean> {
     "SELECT id, share_id, ydoc FROM pages WHERE share_id IS NOT NULL AND deleted_at IS NULL",
   );
   if (pages.length === 0) return false;
+  // Ordre aléatoire : si le serveur en omet une partie (trop de données d'un coup), ce ne sont pas toujours les mêmes.
+  const shuffled = pages
+    .filter((p) => validShareId(p.share_id))
+    .map((p) => ({ p, k: Math.random() }))
+    .sort((a, b) => a.k - b.k)
+    .map(({ p }) => p);
+  if (shuffled.length === 0) return false;
   const { shares } = await post<{ shares: RemoteShare[] }>("shares/state", {
-    shares: pages.map((p) => ({
+    shares: shuffled.map((p) => ({
       id: p.share_id,
       sv: p.ydoc ? toBase64(Y.encodeStateVectorFromUpdate(fromBase64(p.ydoc))) : "",
     })),
@@ -131,7 +151,7 @@ export async function syncSharedPages(): Promise<boolean> {
   const byId = new Map(shares.map((s) => [s.id, s]));
   let changed = false;
 
-  for (const page of pages) {
+  for (const page of shuffled) {
     const remote = byId.get(page.share_id);
     if (!remote) continue;
     const role: ShareRole = remote.role === "gone" ? "none" : remote.role;
@@ -159,7 +179,7 @@ export async function syncSharedPages(): Promise<boolean> {
       // Ce que cet appareil a écrit et que le serveur n'a pas encore (page modifiée hors du partage en direct).
       if (ydoc && (role === "owner" || role === "edit") && lastPushed(page.share_id) !== fingerprint(ydoc)) {
         const missing = Y.encodeStateAsUpdate(doc, remote.sv ? fromBase64(remote.sv) : undefined);
-        await post(`share/${page.share_id}/update`, { update: toBase64(missing) });
+        await post(sharePath(page.share_id, "update"), { update: toBase64(missing) });
         markPushed(page.share_id, ydoc);
       }
     } catch (err) {
@@ -185,6 +205,11 @@ type Handlers = {
  * Renvoie la fonction qui ferme la session.
  */
 export function startShareSession(shareId: string, doc: Y.Doc, awareness: Awareness, handlers: Handlers): () => void {
+  // Identifiant invalide (base locale modifiée à la main) : aucune requête n'est faite.
+  if (!validShareId(shareId)) {
+    handlers.onState(false);
+    return () => undefined;
+  }
   const abort = new AbortController();
   let conn: string | null = null;
   let queue: Uint8Array[] = [];
@@ -199,7 +224,7 @@ export function startShareSession(shareId: string, doc: Y.Doc, awareness: Awaren
     const update = Y.mergeUpdates(queue);
     queue = [];
     try {
-      await post(`share/${shareId}/update`, { conn, update: toBase64(update) });
+      await post(sharePath(shareId, "update"), { conn, update: toBase64(update) });
     } catch {
       queue.unshift(update); // sera renvoyé à la reconnexion
     }
@@ -218,7 +243,7 @@ export function startShareSession(shareId: string, doc: Y.Doc, awareness: Awaren
   ) => {
     if (origin === REMOTE || !conn) return;
     const update = toBase64(encodeAwarenessUpdate(awareness, [...added, ...updated, ...removed]));
-    void post(`share/${shareId}/awareness`, { conn, update }).catch(() => undefined);
+    void post(sharePath(shareId, "awareness"), { conn, update }).catch(() => undefined);
   };
   doc.on("update", onUpdate);
   awareness.on("update", onAwareness);
@@ -249,7 +274,7 @@ export function startShareSession(shareId: string, doc: Y.Doc, awareness: Awaren
     while (!abort.signal.aborted) {
       try {
         const { server, token } = await account();
-        const res = await fetch(`${server}/api/share/${shareId}/stream`, {
+        const res = await fetch(`${server}/api/${sharePath(shareId, "stream")}`, {
           headers: { Authorization: `Bearer ${token}` },
           signal: abort.signal,
         });
@@ -307,23 +332,28 @@ export type ShareInfo = {
   public: boolean;
   /** Participants, visibles du propriétaire seulement. */
   members?: ShareMember[];
+  /** Secret d'invitation, s'il a été régénéré : il fait partie du lien à transmettre. */
+  invite?: string;
 };
 
 /** Réglages d'une page partagée, vus par ce compte. */
-export const shareInfo = (shareId: string) => post<ShareInfo>(`share/${shareId}`, {});
+export const shareInfo = (shareId: string) => post<ShareInfo>(sharePath(shareId), {});
 
 /** Droit général de ceux qui rejoignent par le lien (propriétaire seulement). */
 export const setShareAccess = (shareId: string, access: "edit" | "view") =>
-  post<Pick<ShareInfo, "access" | "members">>(`share/${shareId}/access`, { access });
+  post<Pick<ShareInfo, "access" | "members">>(sharePath(shareId, "access"), { access });
 
 /** Droit d'un participant ; `null` le remet sur le réglage général, "none" le retire. */
 export const setMemberRole = (shareId: string, user: number, role: ShareMember["role"]) =>
-  post<Pick<ShareInfo, "access" | "members">>(`share/${shareId}/member`, { user, role });
+  post<Pick<ShareInfo, "access" | "members">>(sharePath(shareId, "member"), { user, role });
 
 /** Active ou coupe le lien public en lecture seule (propriétaire seulement). */
 export const setSharePublic = (shareId: string, enabled: boolean) =>
-  post<{ public: boolean }>(`share/${shareId}/public`, { public: enabled });
+  post<{ public: boolean }>(sharePath(shareId, "public"), { public: enabled });
+
+/** Nouveau lien d'invitation (propriétaire seulement) : l'ancien ne permet plus de rejoindre, les participants restent. */
+export const regenerateInvite = (shareId: string) => post<{ invite: string }>(sharePath(shareId, "invite"), {});
 
 export async function publicLink(shareId: string) {
-  return `${(await account()).server}/#/view/${shareId}`;
+  return validShareId(shareId) ? `${(await account()).server}/#/view/${shareId}` : "";
 }

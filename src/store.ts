@@ -2,24 +2,11 @@ import { create } from "zustand";
 import { cardStats } from "./data/cards";
 import { createPage, listPages, type PageKind, type PageMeta } from "./data/pages";
 import { translate, type Lang } from "./i18n";
+import { parseRoute, routeHash, type Route } from "./route";
 
-export type Route =
-  | { view: "home" }
-  | { view: "review" }
-  | { view: "tasks" }
-  | { view: "trash" }
-  | { view: "timetable" }
-  | { view: "join"; id: string }
-  | { view: "view"; id: string }
-  | { view: "page"; id: string };
+export type { Route } from "./route";
 
-function parseHash(): Route {
-  const [view, id] = location.hash.replace(/^#\/?/, "").split("/");
-  if ((view === "page" || view === "join" || view === "view") && id) return { view, id };
-  if (view === "review" || view === "tasks" || view === "trash" || view === "timetable")
-    return { view };
-  return { view: "home" };
-}
+const parseHash = (): Route => parseRoute(location.hash);
 
 const stored = (key: string) => {
   try {
@@ -35,13 +22,6 @@ const store = (key: string, value: string) => {
     /* préférence non mémorisée, sans gravité */
   }
 };
-
-const routeHash = (route: Route) =>
-  route.view === "page" || route.view === "join" || route.view === "view"
-    ? `/${route.view}/${route.id}`
-    : route.view === "home"
-      ? "/"
-      : `/${route.view}`;
 
 /** Onglets rouverts au lancement ; l'adresse courante l'emporte sur l'onglet actif mémorisé. */
 function restoreTabs(): { tabs: Route[]; tab: number } {

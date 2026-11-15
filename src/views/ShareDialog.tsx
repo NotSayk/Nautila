@@ -3,18 +3,21 @@ import type { PageMeta } from "../data/pages";
 import { useT } from "../i18n";
 import { useStore } from "../store";
 import { useOverlay } from "./common";
+import { SyncError } from "../sync/engine";
+import { parseShareLink, validShareId } from "../sync/ids";
 import {
   createShare,
   joinShare,
   leaveShare,
-  parseShareId,
   publicLink,
   setMemberRole,
   setShareAccess,
   setSharePublic,
   shareInfo,
   shareLink,
+  sharePreview,
   type ShareInfo,
+  type SharePreview,
   type ShareRole,
 } from "../sync/share";
 import { PageEditor } from "../editor/PageEditor";
@@ -209,7 +212,7 @@ export function ShareDialog({
             <button
               className={`${BUTTON} text-danger hover:bg-hover`}
               disabled={busy}
-              onClick={() => run(() => leaveShare(page.id, page.share_id!))}
+              onClick={() => run(() => leaveShare(page.id, page.share_id!, info?.owner ?? role === "owner"))}
             >
               {t("shareStop")}
             </button>
@@ -245,16 +248,16 @@ export function JoinDialog({ onClose }: { onClose: () => void }) {
   const t = useT();
   const navigate = useStore((s) => s.navigate);
   const [value, setValue] = useState("");
-  const id = parseShareId(value);
+  const link = parseShareLink(value);
   return (
     <Shell label={t("joinShared")} onClose={onClose}>
       <form
         className="mt-3 flex gap-2"
         onSubmit={(e) => {
           e.preventDefault();
-          if (!id) return;
+          if (!link) return;
           onClose();
-          navigate({ view: "join", id });
+          navigate({ view: "join", ...link });
         }}
       >
         <input
@@ -264,7 +267,7 @@ export function JoinDialog({ onClose }: { onClose: () => void }) {
           placeholder={t("joinPlaceholder")}
           className={FIELD}
         />
-        <button disabled={!id} className={`${BUTTON} shrink-0 bg-accent text-white`}>
+        <button disabled={!link} className={`${BUTTON} shrink-0 bg-accent text-white`}>
           {t("join")}
         </button>
       </form>
@@ -272,26 +275,52 @@ export function JoinDialog({ onClose }: { onClose: () => void }) {
   );
 }
 
-/** Écran d'arrivée d'un lien d'invitation : ajoute la page à cet appareil puis l'ouvre. */
-export function JoinView({ id }: { id: string }) {
+/**
+ * Écran d'arrivée d'un lien d'invitation : montre la page proposée (titre, propriétaire) et ne la
+ * rejoint qu'après confirmation — un lien reçu peut avoir été forgé. Déjà participant : la page s'ouvre.
+ */
+export function JoinView({ id, invite }: { id: string; invite?: string }) {
   const t = useT();
   const connected = useStore((s) => s.sync.status !== "off");
-  const [failed, setFailed] = useState(false);
+  const navigate = useStore((s) => s.navigate);
+  const [state, setState] = useState<"loading" | "confirm" | "joining" | "failed" | "forbidden">("loading");
+  const [preview, setPreview] = useState<SharePreview | null>(null);
+
+  const join = () => {
+    setState("joining");
+    joinShare(id, invite).then(
+      async (pageId) => {
+        await useStore.getState().refreshPages();
+        navigate({ view: "page", id: pageId });
+      },
+      (err) => setState(err instanceof SyncError && err.status === 403 ? "forbidden" : "failed"),
+    );
+  };
 
   useEffect(() => {
     if (!connected) return;
     let live = true;
-    joinShare(id).then(
-      async (pageId) => {
-        await useStore.getState().refreshPages();
-        if (live) useStore.getState().navigate({ view: "page", id: pageId });
+    setState("loading");
+    sharePreview(id, invite).then(
+      (p) => {
+        if (!live) return;
+        setPreview(p);
+        if (p.member) join();
+        else setState("confirm");
       },
-      () => live && setFailed(true),
+      (err) => {
+        if (!live) return;
+        // Serveur plus ancien, sans aperçu : la confirmation est demandée sans détails.
+        if (err instanceof SyncError && err.status === 404 && err.message === "not found") {
+          setPreview(null);
+          setState("confirm");
+        } else setState(err instanceof SyncError && err.status === 403 ? "forbidden" : "failed");
+      },
     );
     return () => {
       live = false;
     };
-  }, [id, connected]);
+  }, [id, invite, connected]);
 
   return (
     <div className="mx-auto max-w-md px-6 pt-[18vh] text-center">
@@ -306,8 +335,30 @@ export function JoinView({ id }: { id: string }) {
             {t("signIn")}
           </button>
         </>
+      ) : state === "confirm" ? (
+        <>
+          <p className="font-medium">{t("joinConfirmTitle")}</p>
+          <p className="mt-2 break-words">
+            {preview
+              ? t("joinConfirmFrom")
+                  .replace("{title}", preview.title || t("untitled"))
+                  .replace("{owner}", preview.owner)
+              : t("joinConfirmUnknown")}
+          </p>
+          <p className="mt-2 text-[13px] text-muted">{t("joinConfirmHint")}</p>
+          <div className="mt-4 flex justify-center gap-2">
+            <button className={`${BUTTON} hover:bg-hover`} onClick={() => navigate({ view: "home" })}>
+              {t("cancel")}
+            </button>
+            <button autoFocus className={`${BUTTON} bg-accent text-white`} onClick={join}>
+              {t("join")}
+            </button>
+          </div>
+        </>
       ) : (
-        <p className={failed ? "text-danger" : "text-muted"}>{t(failed ? "joinFailed" : "joining")}</p>
+        <p className={state === "failed" || state === "forbidden" ? "text-danger" : "text-muted"}>
+          {t(state === "failed" ? "joinFailed" : state === "forbidden" ? "joinForbidden" : "joining")}
+        </p>
       )}
     </div>
   );
@@ -319,7 +370,9 @@ export function JoinView({ id }: { id: string }) {
  */
 export const publicFileUrl = (shareId: string, url: string) =>
   url.startsWith("nautila-file:")
-    ? `${location.origin}/api/public/${shareId}/file/${encodeURIComponent(url.slice("nautila-file:".length))}`
+    ? validShareId(shareId)
+      ? `${location.origin}/api/public/${encodeURIComponent(shareId)}/file/${encodeURIComponent(url.slice("nautila-file:".length))}`
+      : ""
     : /^(https?:\/\/|data:image\/(png|jpeg|gif|webp|avif);)/i.test(url)
       ? url
       : "";
@@ -330,7 +383,8 @@ export function PublicView({ id }: { id: string }) {
   const [page, setPage] = useState<{ title: string; ydoc: string | null } | null>();
 
   useEffect(() => {
-    fetch(`${location.origin}/api/public/${id}`)
+    if (!validShareId(id)) return void setPage(null);
+    fetch(`${location.origin}/api/public/${encodeURIComponent(id)}`)
       .then((res) => (res.ok ? res.json() : null))
       .then(setPage, () => setPage(null));
   }, [id]);

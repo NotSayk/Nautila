@@ -214,7 +214,7 @@ export function App() {
           {route.view === "tasks" && <Tasks />}
           {route.view === "trash" && <Trash />}
           {route.view === "timetable" && <Timetable />}
-          {route.view === "join" && <JoinView id={route.id} />}
+          {route.view === "join" && <JoinView id={route.id} invite={route.invite} />}
           {route.view === "view" && <PublicView id={route.id} />}
         </main>
       </div>

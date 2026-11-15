@@ -1,5 +1,6 @@
 import { db } from "../db";
 import type { Statement } from "../db/types";
+import { sharePath, validFileId, validShareId } from "../sync/ids";
 
 /** Préfixe des adresses de fichiers stockés dans la base locale. */
 export const FILE_SCHEME = "nautila-file:";
@@ -44,13 +45,14 @@ export function watchSharedFiles(shareId: string): () => void {
 
 /** Fichier ajouté à une page partagée par un autre participant : demandé au serveur. */
 async function fetchSharedFile(id: string): Promise<Blob | null> {
-  if (openShares.size === 0) return null;
+  if (openShares.size === 0 || !validFileId(id)) return null;
   const { getSyncState } = await import("../sync/engine");
   const { server, token } = await getSyncState();
   if (!server || !token) return null;
   for (const shareId of openShares.keys()) {
+    if (!validShareId(shareId)) continue;
     try {
-      const res = await fetch(`${server}/api/share/${shareId}/file/${id}`, {
+      const res = await fetch(`${server}/api/${sharePath(shareId, "file")}/${encodeURIComponent(id)}`, {
         headers: { Authorization: `Bearer ${token}` },
       });
       if (res.ok) return await res.blob();
