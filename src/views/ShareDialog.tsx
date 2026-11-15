@@ -3,6 +3,7 @@ import type { PageMeta } from "../data/pages";
 import { useT } from "../i18n";
 import { useStore } from "../store";
 import { useOverlay } from "./common";
+import { confirmDialog, notify } from "./dialogs";
 import { SyncError } from "../sync/engine";
 import { parseShareLink, validShareId } from "../sync/ids";
 import {
@@ -10,6 +11,7 @@ import {
   joinShare,
   leaveShare,
   publicLink,
+  regenerateInvite,
   setMemberRole,
   setShareAccess,
   setSharePublic,
@@ -70,14 +72,21 @@ export function ShareDialog({
 
   const [info, setInfo] = useState<ShareInfo>();
   const [viewLink, setViewLink] = useState("");
+  /** Propriétaire d'après le serveur, à défaut d'après le dernier droit connu sur cet appareil. */
+  const owner = info?.owner ?? role === "owner";
 
   useEffect(() => {
     if (!page.share_id || !connected) return;
-    void shareLink(page.share_id).then(setLink);
     void publicLink(page.share_id).then(setViewLink);
     void shareInfo(page.share_id).then(setInfo, () => undefined);
     // Rechargé quand quelqu'un rejoint ou part, pour que la liste des participants reste à jour.
   }, [page.share_id, connected, peers]);
+
+  // Le lien porte le secret d'invitation quand le propriétaire l'a régénéré.
+  useEffect(() => {
+    if (!page.share_id || !connected) return;
+    void shareLink(page.share_id, info?.invite).then(setLink);
+  }, [page.share_id, connected, info?.invite]);
 
   const run = async (action: () => Promise<unknown>) => {
     setBusy(true);
@@ -182,6 +191,25 @@ export function ShareDialog({
               {(info.members ?? []).length === 0 && (
                 <p className="mt-1 text-[13px] text-muted">{t("shareNoMembers")}</p>
               )}
+              <button
+                className={`${BUTTON} mt-2 shadow-[0_0_0_1px_var(--color-line)] hover:bg-hover`}
+                disabled={busy}
+                onClick={async () => {
+                  // Retirer quelqu'un ne suffit pas si le lien circule : un nouveau secret le rend caduc.
+                  const ok = await confirmDialog({
+                    message: t("shareRegenerateConfirm"),
+                    confirmLabel: t("shareRegenerate"),
+                  });
+                  if (!ok) return;
+                  await run(async () => {
+                    setInfo({ ...info, ...(await regenerateInvite(page.share_id!)) });
+                    setCopied(false);
+                    notify(t("shareRegenerated"));
+                  });
+                }}
+              >
+                {t("shareRegenerate")}
+              </button>
             </div>
           )}
           {info?.owner && (
@@ -212,9 +240,17 @@ export function ShareDialog({
             <button
               className={`${BUTTON} text-danger hover:bg-hover`}
               disabled={busy}
-              onClick={() => run(() => leaveShare(page.id, page.share_id!, info?.owner ?? role === "owner"))}
+              onClick={async () => {
+                // Propriétaire : le partage s'arrête pour tous ; participant : il quitte la page (le serveur le retire).
+                const ok = await confirmDialog({
+                  message: t(owner ? "shareStopConfirm" : "shareLeaveConfirm"),
+                  confirmLabel: t(owner ? "shareStop" : "shareLeave"),
+                  danger: true,
+                });
+                if (ok) await run(() => leaveShare(page.id, page.share_id!, owner));
+              }}
             >
-              {t("shareStop")}
+              {t(owner ? "shareStop" : "shareLeave")}
             </button>
             <button
               className={`${BUTTON} bg-accent text-white`}
