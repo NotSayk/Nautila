@@ -6,6 +6,7 @@ import { useOverlay } from "./common";
 import { confirmDialog, notify } from "./dialogs";
 import { SyncError } from "../sync/engine";
 import { parseShareLink, validShareId } from "../sync/ids";
+import { isExternalUrl, publicFileUrl } from "../sync/publicFiles";
 import {
   createShare,
   joinShare,
@@ -401,22 +402,14 @@ export function JoinView({ id, invite }: { id: string; invite?: string }) {
 }
 
 /**
- * Adresse d'un fichier cité par une page publique, écrite par un tiers : seuls les liens web
- * ordinaires et les images matricielles en ligne passent (pas de javascript:, ni de HTML ou SVG en data:).
+ * Page publique en lecture seule : affichée sans compte, rien n'est enregistré sur l'appareil.
+ * Les images d'autres sites ne sont chargées que si le lecteur le demande.
  */
-export const publicFileUrl = (shareId: string, url: string) =>
-  url.startsWith("nautila-file:")
-    ? validShareId(shareId)
-      ? `${location.origin}/api/public/${encodeURIComponent(shareId)}/file/${encodeURIComponent(url.slice("nautila-file:".length))}`
-      : ""
-    : /^(https?:\/\/|data:image\/(png|jpeg|gif|webp|avif);)/i.test(url)
-      ? url
-      : "";
-
-/** Page publique en lecture seule : affichée sans compte, rien n'est enregistré sur l'appareil. */
 export function PublicView({ id }: { id: string }) {
   const t = useT();
   const [page, setPage] = useState<{ title: string; ydoc: string | null } | null>();
+  const [external, setExternal] = useState(false);
+  const [blocked, setBlocked] = useState(false);
 
   useEffect(() => {
     if (!validShareId(id)) return void setPage(null);
@@ -432,13 +425,29 @@ export function PublicView({ id }: { id: string }) {
       <div className="px-(--page-pad)">
         <p className="mb-2 text-xs font-medium text-muted">Nautila · {t("publicView")}</p>
         <h1 className="mb-2 text-[40px] font-bold leading-[1.2]">{page.title || t("untitled")}</h1>
+        {blocked && !external && (
+          <p className="mb-2 flex flex-wrap items-center gap-2 text-[13px] text-muted">
+            {t("publicExternalHidden")}
+            <button
+              className={`${BUTTON} shadow-[0_0_0_1px_var(--color-line)] hover:bg-hover`}
+              onClick={() => setExternal(true)}
+            >
+              {t("publicExternalShow")}
+            </button>
+          </p>
+        )}
       </div>
       <PageEditor
+        // Remonté quand le lecteur autorise les images externes, pour qu'elles soient résolues de nouveau.
+        key={external ? "external" : "local"}
         pageId={`public:${id}`}
         initialDoc={page.ydoc}
         editable={false}
         ephemeral
-        fileResolver={async (url) => publicFileUrl(id, url)}
+        fileResolver={async (url) => {
+          if (!external && isExternalUrl(url)) setBlocked(true);
+          return publicFileUrl(location.origin, id, url, external);
+        }}
       />
     </div>
   );

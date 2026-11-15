@@ -1,5 +1,6 @@
 // Tests des corrections de la relecture de sécurité : chaque groupe lance un vrai serveur.
 //   cd server && npm test
+import { writeFileSync } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
 import net from "node:net";
 import { join } from "node:path";
@@ -406,6 +407,21 @@ describe("sécurité", () => {
     assert.ok(await until(() => watcher.frames.some((f) => f.type === "peers" && f.peers === 1), 3000));
     watcher.close();
     sock.destroy();
+  });
+});
+
+describe("politique de sécurité de l'application web", () => {
+  it("limite les connexions à ce serveur, plus les origines déclarées", async () => {
+    const web = tempDir();
+    writeFileSync(join(web, "index.html"), "<!doctype html><title>Nautila</title>");
+    const srv = await start({ STATIC_DIR: web, CSP_CONNECT_SRC: "https://autre.example, javascript:x" });
+    try {
+      const csp = (await call(srv.url, "/", { method: "GET" })).headers["content-security-policy"];
+      const connect = csp.split("; ").find((d) => d.startsWith("connect-src"));
+      assert.equal(connect, "connect-src 'self' https://autre.example data: blob:");
+    } finally {
+      await srv.stop();
+    }
   });
 });
 

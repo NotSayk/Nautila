@@ -1565,8 +1565,14 @@ const SECURITY = {
 /**
  * Politique de l'application web : scripts de l'origine seulement, WASM (SQLite, PDF),
  * styles en ligne (éditeur), images et médias de n'importe quel site (images insérées par
- * adresse), et connexions à n'importe quel serveur de synchronisation choisi par l'utilisateur.
+ * adresse). Connexions : ce serveur seulement (l'application qu'il sert se synchronise avec lui),
+ * plus les origines de CSP_CONNECT_SRC pour qui synchronise cette application web avec un autre
+ * serveur. Un script injecté ne peut donc pas envoyer les notes ailleurs.
  */
+const CONNECT_EXTRA = (env.CSP_CONNECT_SRC ?? "")
+  .split(/[\s,]+/)
+  .map((o) => o.trim().replace(/\/+$/, ""))
+  .filter((o) => /^https?:\/\/[\w.-]+(:\d+)?$/.test(o));
 const APP_CSP = [
   "default-src 'self'",
   "script-src 'self' 'wasm-unsafe-eval'",
@@ -1574,7 +1580,7 @@ const APP_CSP = [
   "img-src 'self' data: blob: https: http:",
   "media-src 'self' data: blob: https: http:",
   "font-src 'self' data:",
-  "connect-src 'self' https: http: data: blob:",
+  `connect-src 'self' ${CONNECT_EXTRA.map((o) => `${o} `).join("")}data: blob:`,
   "worker-src 'self' blob:",
   "frame-src 'self' blob:",
   "object-src 'none'",
